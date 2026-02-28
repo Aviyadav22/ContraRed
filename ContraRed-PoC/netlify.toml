@@ -1,0 +1,25 @@
+[build]
+  base = "ContraRed-PoC"
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+  # API_BASE_URL is set in Netlify dashboard environment variables
+  # Do NOT set here to avoid exposing in git history
+
+# Office Add-ins require specific CORS headers for the WebView container
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Methods = "GET, POST, OPTIONS"
+    Access-Control-Allow-Headers = "Content-Type, Authorization"
+    # Required for Office.js to load the add-in in WebView
+    X-Frame-Options = "ALLOWALL"
+
+# Fallback redirect for taskpane path
+[[redirects]]
+  from = "/taskpane"
+  to = "/taskpane.html"
+  status = 200

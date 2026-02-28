@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: contrared-api
+    runtime: python
+    region: oregon  # Change to singapore for Asia, oregon for US
+    plan: free      # Upgrade to 'starter' ($7/mo) for always-on
+    rootDir: backend
+    buildCommand: pip install -e .
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        sync: false   # Will be set manually in Render dashboard
+      - key: REDIS_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true  # Render auto-generates a random secure value
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: DEBUG
+        value: "false"
+      - key: ZERO_DATA_RETENTION
+        value: "true"
+      - key: ANALYSIS_MODE
+        value: "demo"
+      - key: AI_PROVIDER
+        value: "gemini"
+      - key: PYTHON_VERSION
+        value: "3.11.0"
+    healthCheckPath: /health

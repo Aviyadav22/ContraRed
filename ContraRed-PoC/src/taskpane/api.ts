@@ -3,7 +3,8 @@
  * Handles communication with the FastAPI backend
  */
 
-const API_BASE_URL = 'http://localhost:8000/api/v1';
+// @ts-expect-error process.env injected by webpack DefinePlugin
+const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8000/api/v1';
 
 // ============================================================================
 // Types - Matched to Phase 2 Backend Schema
@@ -395,7 +396,8 @@ class ContraRedAPI {
     // ========================================================================
 
     async healthCheck(): Promise<{ status: string; version: string }> {
-        const response = await fetch('http://localhost:8000/health');
+        const baseUrl = API_BASE_URL.replace('/api/v1', '');
+        const response = await fetch(`${baseUrl}/health`);
         return response.json();
     }
 }

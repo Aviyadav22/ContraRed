@@ -9,13 +9,20 @@ from sqlalchemy.orm import declarative_base
 from app.core.config import settings
 
 
+# Determine SSL requirement (Supabase requires SSL)
+connect_args = {}
+if "supabase.com" in settings.DATABASE_URL or "supabase.co" in settings.DATABASE_URL:
+    connect_args["ssl"] = "require"
+
 # Create async engine
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
     pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=5,          # Reduced for Supabase free tier (max 15 connections)
+    max_overflow=10,
+    pool_recycle=300,     # Recycle connections every 5 minutes
+    connect_args=connect_args,
 )
 
 # Create async session factory

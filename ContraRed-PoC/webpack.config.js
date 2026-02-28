@@ -4,6 +4,7 @@ const devCerts = require("office-addin-dev-certs");
 const CopyWebpackPlugin = require("copy-webpack-plugin");
 const HtmlWebpackPlugin = require("html-webpack-plugin");
 const path = require("path");
+const webpack = require("webpack");
 
 async function getHttpsOptions() {
     const httpsOptions = await devCerts.getHttpsServerOptions();
@@ -12,6 +13,9 @@ async function getHttpsOptions() {
 
 module.exports = async (env, options) => {
     const dev = options.mode === "development";
+
+    // Determine API URL: use env var or fall back to localhost
+    const apiBaseUrl = process.env.API_BASE_URL || "http://localhost:8000/api/v1";
 
     const config = {
         devtool: "source-map",
@@ -52,6 +56,10 @@ module.exports = async (env, options) => {
             ],
         },
         plugins: [
+            // Inject API URL at build time for Netlify env var support
+            new webpack.DefinePlugin({
+                "process.env.API_BASE_URL": JSON.stringify(apiBaseUrl),
+            }),
             new HtmlWebpackPlugin({
                 filename: "taskpane.html",
                 template: "./src/taskpane/taskpane.html",

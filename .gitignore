@@ -123,3 +123,10 @@ backend/__pycache__/
 backend/*.pyc
 backend/.pytest_cache/
 backend/.coverage
+
+# Claude Code and Netlify cache (not for version control)
+.claude/
+.netlify/
+
+# Production env template is safe, but production env is not
+.env.production

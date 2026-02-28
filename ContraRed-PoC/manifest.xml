@@ -11,11 +11,11 @@
   <DisplayName DefaultValue="ContraRed PoC"/>
   <Description DefaultValue="Redline PoC - Testing OOXML insertion for Track Changes"/>
   
-  <IconUrl DefaultValue="https://localhost:3000/assets/icon-32.png"/>
+  <IconUrl DefaultValue="https://contrared-addin.netlify.app/assets/icon-32.png"/>
   <SupportUrl DefaultValue="https://contrared.ai"/>
 
   <AppDomains>
-    <AppDomain>https://localhost:3000</AppDomain>
+    <AppDomain>https://contrared-addin.netlify.app</AppDomain>
   </AppDomains>
 
   <Hosts>
@@ -23,7 +23,7 @@
   </Hosts>
 
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://localhost:3000/taskpane.html"/>
+    <SourceLocation DefaultValue="https://contrared-addin.netlify.app/taskpane.html"/>
   </DefaultSettings>
 
   <Permissions>ReadWriteDocument</Permissions>

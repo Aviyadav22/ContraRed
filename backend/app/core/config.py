@@ -3,6 +3,7 @@ Application configuration using Pydantic Settings.
 """
 
 from typing import List
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -48,6 +49,19 @@ class Settings(BaseSettings):
         "https://localhost:5173",  # Dashboard (HTTPS)
         "http://localhost:5173",   # Dashboard (Vite dev)
     ]
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, v):
+        """Parse CORS_ORIGINS from JSON string env var."""
+        if isinstance(v, str):
+            import json
+            try:
+                return json.loads(v)
+            except json.JSONDecodeError:
+                # Support comma-separated string fallback
+                return [origin.strip() for origin in v.split(",")]
+        return v
     
     # Subscription Limits
     FREE_TIER_SCANS: int = 5
