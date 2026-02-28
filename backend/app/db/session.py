@@ -16,11 +16,15 @@ import ssl as _ssl
 connect_args = {
     "timeout": 30,  # Increased timeout for cross-region connections
 }
-if "supabase.com" in settings.DATABASE_URL or "supabase.co" in settings.DATABASE_URL:
+_is_supabase = "supabase.com" in settings.DATABASE_URL or "supabase.co" in settings.DATABASE_URL
+if _is_supabase:
     _ssl_ctx = _ssl.create_default_context()
     _ssl_ctx.check_hostname = False   # Supabase uses project-specific hostnames
     _ssl_ctx.verify_mode = _ssl.CERT_NONE  # Skip cert verify (encrypted but not verified)
     connect_args["ssl"] = _ssl_ctx
+    # Transaction pooler (port 6543) requires disabling prepared statements
+    if ":6543/" in settings.DATABASE_URL:
+        connect_args["statement_cache_size"] = 0
 
 # Create async engine
 engine = create_async_engine(
