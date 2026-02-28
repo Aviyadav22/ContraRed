@@ -87,35 +87,44 @@ async def register(
     db: AsyncSession = Depends(get_db)
 ):
     """Register a new user."""
-    # Check if email already exists
-    result = await db.execute(select(User).where(User.email == user_data.email))
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Email already registered"
+    try:
+        # Check if email already exists
+        result = await db.execute(select(User).where(User.email == user_data.email))
+        if result.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email already registered"
+            )
+        
+        # Create new user
+        user = User(
+            email=user_data.email,
+            name=user_data.name,
+            password_hash=get_password_hash(user_data.password),
+            role=UserRole.USER,
+            subscription_tier=SubscriptionTier.FREE,
         )
-    
-    # Create new user
-    user = User(
-        email=user_data.email,
-        name=user_data.name,
-        password_hash=get_password_hash(user_data.password),
-        role=UserRole.USER,
-        subscription_tier=SubscriptionTier.FREE,
-    )
-    
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
-    
-    return UserResponse(
-        id=str(user.id),
-        email=user.email,
-        name=user.name,
-        role=user.role.value,
-        subscription_tier=user.subscription_tier.value,
-        organization_id=str(user.organization_id) if user.organization_id else None,
-    )
+        
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        
+        return UserResponse(
+            id=str(user.id),
+            email=user.email,
+            name=user.name,
+            role=user.role.value,
+            subscription_tier=user.subscription_tier.value,
+            organization_id=str(user.organization_id) if user.organization_id else None,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Registration error: {type(e).__name__}: {str(e)}"
+        )
 
 
 @router.post("/login", response_model=LoginResponse)
