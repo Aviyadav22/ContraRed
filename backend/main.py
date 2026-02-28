@@ -54,3 +54,16 @@ app.include_router(api_router, prefix="/api/v1")
 async def health_check():
     """Health check endpoint."""
     return {"status": "healthy", "version": "1.0.0"}
+
+
+@app.get("/health/db")
+async def db_health_check():
+    """Database connectivity check — returns actual error if DB is unreachable."""
+    from sqlalchemy import text
+    from app.db.session import engine
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT 1"))
+        return {"status": "connected"}
+    except Exception as e:
+        return {"status": "error", "detail": str(e), "type": type(e).__name__}

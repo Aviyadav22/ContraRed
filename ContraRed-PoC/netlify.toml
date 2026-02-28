@@ -18,7 +18,12 @@
     # Required for Office.js to load the add-in in WebView
     X-Frame-Options = "ALLOWALL"
 
-# Fallback redirect for taskpane path
+# Redirect root to taskpane
+[[redirects]]
+  from = "/"
+  to = "/taskpane.html"
+  status = 301
+
 [[redirects]]
   from = "/taskpane"
   to = "/taskpane.html"

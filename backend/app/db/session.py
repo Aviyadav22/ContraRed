@@ -9,12 +9,18 @@ from sqlalchemy.orm import declarative_base
 from app.core.config import settings
 
 
-# Determine SSL requirement (Supabase requires SSL; asyncpg uses bool, not "require")
+# Determine SSL requirement (Supabase requires SSL)
+# Use explicit SSLContext so hostname mismatch doesn't block connection
+import ssl as _ssl
+
 connect_args = {
-    "timeout": 15,  # Fail fast if DB is unreachable (default is 60s)
+    "timeout": 30,  # Increased timeout for cross-region connections
 }
 if "supabase.com" in settings.DATABASE_URL or "supabase.co" in settings.DATABASE_URL:
-    connect_args["ssl"] = True
+    _ssl_ctx = _ssl.create_default_context()
+    _ssl_ctx.check_hostname = False   # Supabase uses project-specific hostnames
+    _ssl_ctx.verify_mode = _ssl.CERT_NONE  # Skip cert verify (encrypted but not verified)
+    connect_args["ssl"] = _ssl_ctx
 
 # Create async engine
 engine = create_async_engine(
