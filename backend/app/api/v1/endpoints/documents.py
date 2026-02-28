@@ -12,6 +12,7 @@ ZERO DATA RETENTION (ZDR) MODE:
 import asyncio
 import base64
 from typing import List, Optional, Literal, Dict
+from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File, Form, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
