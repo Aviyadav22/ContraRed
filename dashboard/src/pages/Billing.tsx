@@ -38,7 +38,7 @@ export default function Billing() {
             <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex justify-between items-center h-16">
-                        <Link to="/" className="flex items-center gap-2">
+                        <Link to="/dashboard" className="flex items-center gap-2">
                             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
                                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -48,7 +48,7 @@ export default function Billing() {
                         </Link>
 
                         <nav className="flex items-center gap-6">
-                            <Link to="/" className="text-slate-600 dark:text-slate-300 hover:text-blue-600 font-medium">Dashboard</Link>
+                            <Link to="/dashboard" className="text-slate-600 dark:text-slate-300 hover:text-blue-600 font-medium">Dashboard</Link>
                             <Link to="/playbooks" className="text-slate-600 dark:text-slate-300 hover:text-blue-600 font-medium">Playbooks</Link>
                             <Link to="/billing" className="text-blue-600 dark:text-blue-400 font-semibold">Billing</Link>
                         </nav>
@@ -68,10 +68,10 @@ export default function Billing() {
                         <div
                             key={plan.name}
                             className={`bg-white dark:bg-slate-800 rounded-xl border-2 p-6 relative ${plan.popular
-                                    ? 'border-blue-500 shadow-lg'
-                                    : plan.current
-                                        ? 'border-green-500'
-                                        : 'border-slate-200 dark:border-slate-700'
+                                ? 'border-blue-500 shadow-lg'
+                                : plan.current
+                                    ? 'border-green-500'
+                                    : 'border-slate-200 dark:border-slate-700'
                                 }`}
                         >
                             {plan.popular && (
@@ -105,10 +105,10 @@ export default function Billing() {
                             <button
                                 disabled={plan.current}
                                 className={`w-full py-3 rounded-lg font-medium transition ${plan.current
-                                        ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                                        : plan.popular
-                                            ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                                            : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
+                                    ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                    : plan.popular
+                                        ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                                        : 'bg-slate-200 hover:bg-slate-300 text-slate-700'
                                     }`}
                             >
                                 {plan.current ? 'Current Plan' : `Upgrade to ${plan.name}`}

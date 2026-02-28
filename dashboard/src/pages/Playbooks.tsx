@@ -1,14 +1,18 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
-import { listPlaybooks, createPlaybook, deletePlaybook, togglePlaybookPublish, type Playbook } from '@/api/client';
+import { listPlaybooks, createPlaybook, deletePlaybook, togglePlaybookPublish, getStoredUser, type Playbook } from '@/api/client';
 
 export default function Playbooks() {
     const queryClient = useQueryClient();
     const navigate = useNavigate();
     const [showCreate, setShowCreate] = useState(false);
+    const [showUpgrade, setShowUpgrade] = useState(false);
     const [newName, setNewName] = useState('');
     const [newDescription, setNewDescription] = useState('');
+
+    const user = getStoredUser();
+    const isFreeTier = user?.subscription_tier === 'free';
 
     const { data: playbooks, isLoading, error } = useQuery({
         queryKey: ['playbooks'],
@@ -23,6 +27,13 @@ export default function Playbooks() {
             setNewName('');
             setNewDescription('');
             navigate(`/playbooks/${newPlaybook.id}`);
+        },
+        onError: (err: Error) => {
+            // If backend returns 403 for free tier, show upgrade modal
+            if (err.message?.includes('Upgrade to Pro')) {
+                setShowCreate(false);
+                setShowUpgrade(true);
+            }
         },
     });
 
@@ -43,6 +54,14 @@ export default function Playbooks() {
         }
     };
 
+    const handleNewPlaybookClick = () => {
+        if (isFreeTier) {
+            setShowUpgrade(true);
+        } else {
+            setShowCreate(true);
+        }
+    };
+
     const categoryColors: Record<string, string> = {
         saas: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
         nda: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
@@ -58,7 +77,7 @@ export default function Playbooks() {
             <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
                 <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                     <div className="flex justify-between items-center h-16">
-                        <Link to="/" className="flex items-center gap-2">
+                        <Link to="/dashboard" className="flex items-center gap-2">
                             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
                                 <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -68,7 +87,7 @@ export default function Playbooks() {
                         </Link>
 
                         <nav className="flex items-center gap-6">
-                            <Link to="/" className="text-slate-600 dark:text-slate-300 hover:text-blue-600 font-medium">Dashboard</Link>
+                            <Link to="/dashboard" className="text-slate-600 dark:text-slate-300 hover:text-blue-600 font-medium">Dashboard</Link>
                             <Link to="/playbooks" className="text-blue-600 dark:text-blue-400 font-semibold">Playbooks</Link>
                             <Link to="/billing" className="text-slate-600 dark:text-slate-300 hover:text-blue-600 font-medium">Billing</Link>
                         </nav>
@@ -79,17 +98,61 @@ export default function Playbooks() {
             {/* Main */}
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 <div className="flex justify-between items-center mb-8">
-                    <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Playbooks</h1>
+                    <div>
+                        <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Playbooks</h1>
+                        {isFreeTier && (
+                            <p className="text-sm text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                </svg>
+                                Free plan — view only. Upgrade to create custom playbooks.
+                            </p>
+                        )}
+                    </div>
                     <button
-                        onClick={() => setShowCreate(true)}
-                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition flex items-center gap-2"
+                        onClick={handleNewPlaybookClick}
+                        className={`px-4 py-2 font-medium rounded-lg transition flex items-center gap-2 ${isFreeTier
+                                ? 'bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-pointer hover:bg-amber-100 hover:text-amber-700 dark:hover:bg-amber-900/30 dark:hover:text-amber-400'
+                                : 'bg-blue-600 hover:bg-blue-700 text-white'
+                            }`}
                     >
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                         </svg>
-                        New Playbook
+                        {isFreeTier ? '🔒 Upgrade to Create' : 'New Playbook'}
                     </button>
                 </div>
+
+                {/* Upgrade Modal */}
+                {showUpgrade && (
+                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+                        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xl p-6 w-full max-w-md text-center">
+                            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center">
+                                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                                </svg>
+                            </div>
+                            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Upgrade to Pro</h2>
+                            <p className="text-slate-500 dark:text-slate-400 mb-6">
+                                Custom playbooks are available on the Pro plan. Unlock unlimited playbook creation, advanced rule configuration, and priority support.
+                            </p>
+                            <div className="flex justify-center gap-3">
+                                <button
+                                    onClick={() => setShowUpgrade(false)}
+                                    className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition"
+                                >
+                                    Maybe Later
+                                </button>
+                                <Link
+                                    to="/billing"
+                                    className="px-6 py-2 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-medium rounded-lg transition shadow-lg shadow-blue-500/25"
+                                >
+                                    View Plans →
+                                </Link>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* Create Modal */}
                 {showCreate && (
@@ -188,7 +251,8 @@ export default function Playbooks() {
                                         <td className="px-6 py-4">
                                             <button
                                                 onClick={() => publishMutation.mutate(playbook.id)}
-                                                className={`text-xs font-medium px-2 py-1 rounded ${playbook.is_public ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400'}`}
+                                                disabled={isFreeTier}
+                                                className={`text-xs font-medium px-2 py-1 rounded ${playbook.is_public ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400'} ${isFreeTier ? 'opacity-50 cursor-not-allowed' : ''}`}
                                             >
                                                 {playbook.is_public ? '🌐 Public' : '🔒 Private'}
                                             </button>
@@ -198,18 +262,20 @@ export default function Playbooks() {
                                                 to={`/playbooks/${playbook.id}`}
                                                 className="text-blue-600 hover:text-blue-700 font-medium mr-4"
                                             >
-                                                Edit
+                                                {isFreeTier ? 'View' : 'Edit'}
                                             </Link>
-                                            <button
-                                                onClick={() => {
-                                                    if (confirm('Delete this playbook?')) {
-                                                        deleteMutation.mutate(playbook.id);
-                                                    }
-                                                }}
-                                                className="text-red-600 hover:text-red-700 font-medium"
-                                            >
-                                                Delete
-                                            </button>
+                                            {!isFreeTier && (
+                                                <button
+                                                    onClick={() => {
+                                                        if (confirm('Delete this playbook?')) {
+                                                            deleteMutation.mutate(playbook.id);
+                                                        }
+                                                    }}
+                                                    className="text-red-600 hover:text-red-700 font-medium"
+                                                >
+                                                    Delete
+                                                </button>
+                                            )}
                                         </td>
                                     </tr>
                                 ))}
@@ -225,12 +291,19 @@ export default function Playbooks() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
                         <h3 className="text-lg font-medium text-slate-900 dark:text-white mb-2">No playbooks yet</h3>
-                        <p className="text-slate-500 dark:text-slate-400 mb-4">Create your first playbook to start detecting contract risks.</p>
+                        <p className="text-slate-500 dark:text-slate-400 mb-4">
+                            {isFreeTier
+                                ? 'Upgrade to Pro to create custom playbooks for your contract types.'
+                                : 'Create your first playbook to start detecting contract risks.'}
+                        </p>
                         <button
-                            onClick={() => setShowCreate(true)}
-                            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition"
+                            onClick={handleNewPlaybookClick}
+                            className={`px-4 py-2 font-medium rounded-lg transition ${isFreeTier
+                                    ? 'bg-gradient-to-r from-blue-600 to-blue-500 text-white hover:from-blue-500 hover:to-blue-400'
+                                    : 'bg-blue-600 hover:bg-blue-700 text-white'
+                                }`}
                         >
-                            Create Playbook
+                            {isFreeTier ? 'Upgrade to Pro' : 'Create Playbook'}
                         </button>
                     </div>
                 )}

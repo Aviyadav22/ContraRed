@@ -168,7 +168,23 @@ export async function login(email: string, password: string): Promise<{ user: Us
 
 export function logout(): void {
     clearAuth();
-    window.location.href = '/login';
+    window.location.href = '/';
+}
+
+export async function register(name: string, email: string, password: string): Promise<{ user: User }> {
+    const response = await fetch(`${API_BASE_URL}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password }),
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Registration failed' }));
+        throw new Error(error.detail || 'Registration failed');
+    }
+
+    // Auto-login after successful registration
+    return login(email, password);
 }
 
 export async function getCurrentUser(): Promise<User> {

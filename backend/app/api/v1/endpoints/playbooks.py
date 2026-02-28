@@ -140,6 +140,14 @@ async def create_playbook(
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new playbook."""
+    # ── Tier enforcement: free-tier users cannot create custom playbooks ──
+    from app.models.user import SubscriptionTier
+    if current_user.subscription_tier == SubscriptionTier.FREE:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Upgrade to Pro to create custom playbooks"
+        )
+    
     try:
         category = PlaybookCategory(playbook_data.category)
     except ValueError:

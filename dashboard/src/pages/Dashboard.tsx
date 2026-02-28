@@ -25,7 +25,7 @@ export default function Dashboard() {
                         </div>
 
                         <nav className="flex items-center gap-6">
-                            <Link to="/" className="text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 font-medium">
+                            <Link to="/dashboard" className="text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 font-medium">
                                 Dashboard
                             </Link>
                             <Link to="/playbooks" className="text-slate-600 dark:text-slate-300 hover:text-blue-600 dark:hover:text-blue-400 font-medium">

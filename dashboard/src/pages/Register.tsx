@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { login } from '@/api/client';
+import { register } from '@/api/client';
 
-export default function Login() {
+export default function Register() {
+    const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
+    const [confirmPassword, setConfirmPassword] = useState('');
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
@@ -12,13 +14,24 @@ export default function Login() {
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
+
+        if (password !== confirmPassword) {
+            setError('Passwords do not match');
+            return;
+        }
+
+        if (password.length < 6) {
+            setError('Password must be at least 6 characters');
+            return;
+        }
+
         setLoading(true);
 
         try {
-            await login(email, password);
+            await register(name, email, password);
             navigate('/dashboard');
         } catch (err) {
-            setError((err as Error).message || 'Login failed');
+            setError((err as Error).message || 'Registration failed');
         } finally {
             setLoading(false);
         }
@@ -38,14 +51,29 @@ export default function Login() {
                             </div>
                             <span className="text-2xl font-bold text-slate-900 dark:text-white">Contra<span className="text-red-500">Red</span></span>
                         </div>
-                        <p className="text-slate-500 dark:text-slate-400">Sign in to your account</p>
+                        <p className="text-slate-500 dark:text-slate-400">Create your account</p>
                     </div>
 
                     {/* Form */}
-                    <form onSubmit={handleSubmit} className="space-y-6">
+                    <form onSubmit={handleSubmit} className="space-y-5">
+                        <div>
+                            <label htmlFor="name" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                                Full Name
+                            </label>
+                            <input
+                                id="name"
+                                type="text"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                                placeholder="John Doe"
+                                required
+                            />
+                        </div>
+
                         <div>
                             <label htmlFor="email" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                                Email
+                                Work Email
                             </label>
                             <input
                                 id="email"
@@ -70,6 +98,23 @@ export default function Login() {
                                 className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
                                 placeholder="••••••••"
                                 required
+                                minLength={6}
+                            />
+                        </div>
+
+                        <div>
+                            <label htmlFor="confirmPassword" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                                Confirm Password
+                            </label>
+                            <input
+                                id="confirmPassword"
+                                type="password"
+                                value={confirmPassword}
+                                onChange={(e) => setConfirmPassword(e.target.value)}
+                                className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                                placeholder="••••••••"
+                                required
+                                minLength={6}
                             />
                         </div>
 
@@ -87,20 +132,28 @@ export default function Login() {
                             {loading ? (
                                 <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                             ) : (
-                                'Sign In'
+                                'Create Account'
                             )}
                         </button>
                     </form>
 
-                    {/* Sign Up link */}
+                    {/* Sign In link */}
                     <div className="mt-6 text-center">
                         <p className="text-sm text-slate-500 dark:text-slate-400">
-                            Don't have an account?{' '}
-                            <Link to="/register" className="text-blue-600 hover:text-blue-500 font-medium">
-                                Sign Up
+                            Already have an account?{' '}
+                            <Link to="/login" className="text-blue-600 hover:text-blue-500 font-medium">
+                                Sign In
                             </Link>
                         </p>
                     </div>
+
+                    {/* Terms */}
+                    <p className="mt-4 text-xs text-slate-400 dark:text-slate-500 text-center leading-relaxed">
+                        By creating an account, you agree to our{' '}
+                        <a href="#" className="underline hover:text-slate-300">Terms of Service</a>{' '}
+                        and{' '}
+                        <a href="#" className="underline hover:text-slate-300">Privacy Policy</a>.
+                    </p>
                 </div>
             </div>
         </div>
