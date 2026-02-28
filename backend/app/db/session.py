@@ -10,7 +10,9 @@ from app.core.config import settings
 
 
 # Determine SSL requirement (Supabase requires SSL; asyncpg uses bool, not "require")
-connect_args = {}
+connect_args = {
+    "timeout": 15,  # Fail fast if DB is unreachable (default is 60s)
+}
 if "supabase.com" in settings.DATABASE_URL or "supabase.co" in settings.DATABASE_URL:
     connect_args["ssl"] = True
 
