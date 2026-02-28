@@ -958,34 +958,3 @@ async def get_document(
             for risk in risks
         ]
     )
-
-# ============================================================================
-# Word Add-in Manifest Download Endpoint
-# ============================================================================
-
-import httpx
-from fastapi.responses import Response
-
-@router.get("/manifest", response_class=Response)
-async def download_manifest():
-    """
-    Download the Word Add-in manifest.xml file.
-    Fetches the raw file from GitHub and serves it with the correct
-    Content-Disposition headers to force a download instead of displaying in browser.
-    """
-    github_url = "https://raw.githubusercontent.com/Aviyadav22/ContraRed/main/ContraRed-PoC/manifest.xml"
-    
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(github_url)
-            
-        if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail="Failed to fetch manifest from repository")
-            
-        return Response(
-            content=response.content,
-            media_type="application/xml",
-            headers={"Content-Disposition": 'attachment; filename="contrared-manifest.xml"'}
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error serving manifest: {str(e)}")
