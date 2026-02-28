@@ -16,8 +16,12 @@ from app.db.session import init_db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
-    # Startup
-    await init_db()
+    # Startup - non-fatal DB init (app stays healthy even if DB is temporarily unreachable)
+    try:
+        await init_db()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"DB init failed on startup: {e}. App will still start.")
     yield
     # Shutdown
     pass

@@ -9,10 +9,10 @@ from sqlalchemy.orm import declarative_base
 from app.core.config import settings
 
 
-# Determine SSL requirement (Supabase requires SSL)
+# Determine SSL requirement (Supabase requires SSL; asyncpg uses bool, not "require")
 connect_args = {}
 if "supabase.com" in settings.DATABASE_URL or "supabase.co" in settings.DATABASE_URL:
-    connect_args["ssl"] = "require"
+    connect_args["ssl"] = True
 
 # Create async engine
 engine = create_async_engine(
