@@ -77,6 +77,7 @@ logs/
 *.txt
 !README.md
 !ARCHITECTURE.md
+!backend/requirements.txt
 
 # Test outputs
 test_*.txt
