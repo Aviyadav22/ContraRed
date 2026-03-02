@@ -291,3 +291,42 @@ async def get_me(current_user: User = Depends(get_current_user)):
         subscription_tier=current_user.subscription_tier.value,
         organization_id=str(current_user.organization_id) if current_user.organization_id else None,
     )
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+    @field_validator('new_password')
+    @classmethod
+    def validate_new_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters')
+        return v
+
+
+@router.post("/change-password")
+async def change_password(
+    request: Request,
+    data: ChangePasswordRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Change current user's password."""
+    if not verify_password(data.current_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Current password is incorrect"
+        )
+
+    current_user.password_hash = get_password_hash(data.new_password)
+    await db.commit()
+
+    await log_audit_event(
+        db=db, user=current_user, action="password_changed",
+        resource_type="auth", resource_name=current_user.email,
+        ip_address=request.client.host if request.client else None,
+    )
+    await db.commit()
+
+    return {"message": "Password changed successfully"}
