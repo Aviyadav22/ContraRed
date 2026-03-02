@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { getStoredUser, logout, isAdmin, getAuditLogs, type User, type AuditLogPage } from '@/api/client';
+import { getStoredUser, logout, isAdmin, getAuditLogs, type AuditLogPage } from '@/api/client';
 
 export default function AuditLogs() {
     const user = getStoredUser();
