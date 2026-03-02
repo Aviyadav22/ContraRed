@@ -696,6 +696,7 @@ async def analyze_file(
 @router.post("/summarize", response_model=SummaryResponse)
 async def summarize_contract(
     request: SummaryRequest,
+    http_request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -798,6 +799,15 @@ async def summarize_contract(
     if not key_concerns:
         key_concerns = ["Review detected risks before signing"]
     
+    # Audit log for summary generation
+    client_ip = http_request.client.host if http_request.client else None
+    await log_audit_event(
+        db=db, user=current_user, action="summary_generated",
+        resource_type="document", resource_name=request.document_id,
+        ip_address=client_ip, status="success",
+    )
+    await db.commit()
+
     return SummaryResponse(
         document_id=request.document_id,
         summary=summary_text,
@@ -815,6 +825,7 @@ async def summarize_contract(
 @router.post("/redline", response_model=RedlineResponse)
 async def generate_redline(
     request: RedlineRequest,
+    http_request: Request,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -833,6 +844,19 @@ async def generate_redline(
     # Initialize redline implementer
     implementer = RedlineImplementer()
     
+    # Track usage and audit for redline
+    async def _log_redline_usage():
+        from app.models.document import UsageLog, UsageAction
+        usage = UsageLog(user_id=current_user.id, action=UsageAction.REDLINE)
+        db.add(usage)
+        client_ip = http_request.client.host if http_request.client else None
+        await log_audit_event(
+            db=db, user=current_user, action="redline_generated",
+            resource_type="document", resource_name=request.document_id,
+            ip_address=client_ip, status="success",
+        )
+        await db.commit()
+
     # Mode 1: ZDR Mode - text provided directly in request
     if request.original_text and request.suggested_text:
         result = implementer.apply_redline(
@@ -840,9 +864,10 @@ async def generate_redline(
             suggested_text=request.suggested_text,
             paragraph_hash=request.paragraph_hash
         )
-        
+
+        await _log_redline_usage()
+
         if not result.success:
-            # Even if anchor not found, still generate OOXML with provided text
             ooxml = implementer.generate_track_changes_ooxml(
                 original=request.original_text,
                 replacement=request.suggested_text
@@ -854,7 +879,7 @@ async def generate_redline(
                 match_confidence=0.0,
                 match_method="direct"
             )
-        
+
         return RedlineResponse(
             original_text=result.original,
             suggested_text=result.replacement,
@@ -897,12 +922,14 @@ async def generate_redline(
     # Generate redline using implementer
     original = risk.clause_text
     suggested = risk.suggested_fix or risk.clause_text
-    
+
     redline_result = implementer.apply_redline(
         original_text=original,
         suggested_text=suggested
     )
-    
+
+    await _log_redline_usage()
+
     return RedlineResponse(
         original_text=original,
         suggested_text=suggested,
@@ -941,6 +968,44 @@ async def download_manifest():
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error serving manifest: {str(e)}")
+
+import io
+import zipfile
+
+@router.get("/installer", response_class=Response)
+async def download_installer():
+    """
+    Download the ContraRed installer package as a ZIP file.
+    Contains Install-ContraRed.bat and manifest.xml.
+    """
+    github_base = "https://raw.githubusercontent.com/Aviyadav22/ContraRed/main"
+    manifest_url = f"{github_base}/ContraRed-PoC/manifest.xml"
+    bat_url = f"{github_base}/dashboard/public/Install-ContraRed.bat"
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            manifest_resp, bat_resp = await client.get(manifest_url), await client.get(bat_url)
+        
+        if manifest_resp.status_code != 200 or bat_resp.status_code != 200:
+            raise HTTPException(status_code=502, detail="Failed to fetch installer files from repository")
+        
+        # Create ZIP in memory
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("manifest.xml", manifest_resp.content)
+            zf.writestr("Install-ContraRed.bat", bat_resp.content)
+        
+        zip_buffer.seek(0)
+        
+        return Response(
+            content=zip_buffer.getvalue(),
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="ContraRed-Installer.zip"'}
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error creating installer: {str(e)}")
 
 
 # ============================================================================

@@ -54,7 +54,7 @@ async def init_db():
     """Initialize database tables."""
     async with engine.begin() as conn:
         # Import models to register them
-        from app.models import user, organization, playbook, document  # noqa
+        from app.models import user, organization, playbook, document, audit_log  # noqa
         await conn.run_sync(Base.metadata.create_all)
 
 

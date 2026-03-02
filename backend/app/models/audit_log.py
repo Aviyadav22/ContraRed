@@ -29,7 +29,7 @@ class AuditLog(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     
     # WHO
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     user_email: Mapped[str] = mapped_column(String(255))  # Denormalized for query efficiency
     organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
     
@@ -56,44 +56,54 @@ class AuditLog(Base):
 # Helper function to create audit log entries
 async def log_audit_event(
     db,
-    user,
-    action: str,
-    resource_type: str,
-    resource_name: str,
+    user=None,
+    action: str = "",
+    resource_type: str = "",
+    resource_name: str = "",
     ip_address: Optional[str] = None,
     user_agent: Optional[str] = None,
     status: str = "success",
     risk_count: Optional[int] = None,
-    details: Optional[str] = None
+    details: Optional[str] = None,
+    user_email: Optional[str] = None,
+    organization_id=None,
 ):
     """
     Create an audit log entry.
-    
+
     Args:
         db: Database session
-        user: User object
-        action: What was done (analyze, export, view, redline)
-        resource_type: What type of thing (document, playbook)
+        user: User object (optional — pass None for failed login attempts)
+        action: What was done (analyze, export, view, redline, login_success, etc.)
+        resource_type: What type of thing (document, playbook, auth)
         resource_name: FILENAME ONLY, never content
         ip_address: Client IP
         user_agent: Browser/client info
         status: success/failure/denied
         risk_count: Number of risks found (for analyze)
         details: JSON metadata (NEVER document content)
+        user_email: Override email (used when user object is None)
+        organization_id: Override org ID (used when user object is None)
     """
-    entry = AuditLog(
-        user_id=user.id,
-        user_email=user.email,
-        organization_id=user.organization_id,
-        action=action,
-        resource_type=resource_type,
-        resource_name=resource_name[:255],  # Truncate long filenames
-        ip_address=ip_address,
-        user_agent=user_agent[:500] if user_agent else None,
-        status=status,
-        risk_count=risk_count,
-        details=details,
-    )
-    db.add(entry)
-    # Note: Caller should await db.commit() or use db.flush()
-    return entry
+    try:
+        entry = AuditLog(
+            user_id=user.id if user else None,
+            user_email=user_email or (user.email if user else "unknown"),
+            organization_id=organization_id or (user.organization_id if user else None),
+            action=action,
+            resource_type=resource_type,
+            resource_name=resource_name[:255] if resource_name else "",
+            ip_address=ip_address,
+            user_agent=user_agent[:500] if user_agent else None,
+            status=status,
+            risk_count=risk_count,
+            details=details,
+        )
+        db.add(entry)
+        # Note: Caller should await db.commit() or use db.flush()
+        return entry
+    except Exception as e:
+        # Never let audit logging crash the main operation
+        import logging
+        logging.getLogger(__name__).error(f"Audit log failed: {e}")
+        return None

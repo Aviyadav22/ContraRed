@@ -810,15 +810,8 @@
         <!-- Header -->
         <header class="header">
             <div class="logo">
-                <div class="logo-icon">
-                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                    </svg>
-                </div>
-                <div class="logo-text">Contra<span>Red</span></div>
+                <img src="../assets/logo.png" alt="ContraRed" style="height: 24px; object-fit: contain;" />
             </div>
-            <span class="version-badge">v1.0</span>
         </header>
 
         <!-- ================================================================ -->
@@ -865,6 +858,53 @@
                     </div>
                 </div>
                 <button id="logoutBtn" class="btn btn-ghost btn-sm">Logout</button>
+            </div>
+
+            <!-- Admin Actions (hidden for non-admins, shown via JS) -->
+            <div id="adminActions" style="display: none; margin-bottom: 12px;">
+                <div style="display: flex; gap: 8px;">
+                    <button id="addPlaybookBtn" class="btn btn-secondary btn-sm" style="flex: 1;">
+                        + New Playbook
+                    </button>
+                    <a id="dashboardLink" href="https://contrared-dashboard.netlify.app/dashboard"
+                       target="_blank" class="btn btn-ghost btn-sm"
+                       style="flex: 1; text-decoration: none; text-align: center;">
+                        Dashboard
+                    </a>
+                </div>
+            </div>
+
+            <!-- Create Playbook Modal (hidden by default) -->
+            <div id="createPlaybookModal" style="display: none; margin-bottom: 16px;">
+                <div style="background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 16px;">
+                    <div class="section-header" style="margin-bottom: 12px;">
+                        <span class="section-title">New Playbook</span>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="newPlaybookName">Name</label>
+                        <input type="text" id="newPlaybookName" class="form-input" placeholder="e.g. SaaS Agreement Review">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="newPlaybookDesc">Description (optional)</label>
+                        <input type="text" id="newPlaybookDesc" class="form-input" placeholder="Brief description...">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="newPlaybookCategory">Category</label>
+                        <select id="newPlaybookCategory" class="form-input">
+                            <option value="custom">Custom</option>
+                            <option value="saas">SaaS</option>
+                            <option value="nda">NDA</option>
+                            <option value="dpa">DPA</option>
+                            <option value="employment">Employment</option>
+                            <option value="msa">MSA</option>
+                        </select>
+                    </div>
+                    <div id="createPlaybookError" class="error-msg"></div>
+                    <div style="display: flex; gap: 8px; margin-top: 8px;">
+                        <button id="createPlaybookSubmit" class="btn btn-primary btn-sm" style="flex: 1;">Create</button>
+                        <button id="createPlaybookCancel" class="btn btn-secondary btn-sm" style="flex: 1;">Cancel</button>
+                    </div>
+                </div>
             </div>
 
             <!-- Scan Section -->
@@ -955,7 +995,7 @@
                 <!-- AI Executive Summary (populated after scan) -->
                 <div id="aiSummarySection" style="display: none;">
                     <div class="section-header" style="margin-top: 16px;">
-                        <span class="section-title">AI Analysis</span>
+                        <span class="section-title">Contract Analysis</span>
                         <span id="riskLevelBadge" class="version-badge">Loading...</span>
                     </div>
                     <div id="aiSummaryCard"

@@ -2,16 +2,20 @@
 Authentication endpoints.
 """
 
-from datetime import datetime
+import re
+from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.db.session import get_db
 from app.models.user import User, UserRole, SubscriptionTier
+from app.models.audit_log import log_audit_event
 from app.core.security import (
     verify_password,
     get_password_hash,
@@ -21,6 +25,10 @@ from app.core.security import (
     Token,
 )
 
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_DURATION_MINUTES = 15
+
+limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
@@ -31,6 +39,21 @@ class UserCreate(BaseModel):
     email: EmailStr
     name: str
     password: str
+
+    @field_validator('password')
+    @classmethod
+    def validate_password(cls, v: str) -> str:
+        if len(v) < 8:
+            raise ValueError('Password must be at least 8 characters')
+        if not re.search(r'[A-Z]', v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not re.search(r'[a-z]', v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not re.search(r'\d', v):
+            raise ValueError('Password must contain at least one digit')
+        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', v):
+            raise ValueError('Password must contain at least one special character')
+        return v
 
 
 class UserResponse(BaseModel):
@@ -82,7 +105,9 @@ async def get_current_user(
 
 
 @router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("3/minute")
 async def register(
+    request: Request,
     user_data: UserCreate,
     db: AsyncSession = Depends(get_db)
 ):
@@ -101,14 +126,23 @@ async def register(
             email=user_data.email,
             name=user_data.name,
             password_hash=get_password_hash(user_data.password),
-            role=UserRole.USER,
+            role=UserRole.ANALYST,
             subscription_tier=SubscriptionTier.FREE,
         )
         
         db.add(user)
         await db.commit()
         await db.refresh(user)
-        
+
+        # Audit log
+        await log_audit_event(
+            db, user=user, action="user_registered", resource_type="auth",
+            resource_name=user.email,
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+        )
+        await db.commit()
+
         return UserResponse(
             id=str(user.id),
             email=user.email,
@@ -128,31 +162,64 @@ async def register(
 
 
 @router.post("/login", response_model=LoginResponse)
+@limiter.limit("5/minute")
 async def login(
+    request: Request,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db)
 ):
     """Login with email and password."""
     result = await db.execute(select(User).where(User.email == form_data.username))
     user = result.scalar_one_or_none()
-    
+
+    # Check account lockout
+    if user and user.locked_until and user.locked_until > datetime.utcnow():
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail="Account temporarily locked due to too many failed attempts. Try again later.",
+        )
+
     if not user or not verify_password(form_data.password, user.password_hash):
+        # Track failed login attempts
+        if user:
+            user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+            if user.failed_login_attempts >= MAX_LOGIN_ATTEMPTS:
+                user.locked_until = datetime.utcnow() + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+        # Audit log failed login
+        await log_audit_event(
+            db, user=user, action="login_failed", resource_type="auth",
+            resource_name=form_data.username, status="failure",
+            ip_address=request.client.host if request.client else None,
+            user_agent=request.headers.get("user-agent"),
+            user_email=form_data.username,
+        )
+        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Account is disabled"
         )
-    
-    # Update last login
+
+    # Reset lockout on successful login
+    user.failed_login_attempts = 0
+    user.locked_until = None
     user.last_login = datetime.utcnow()
+
+    # Audit log successful login
+    await log_audit_event(
+        db, user=user, action="login_success", resource_type="auth",
+        resource_name=user.email,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
     await db.commit()
-    
+
     # Create tokens
     token_data = {
         "sub": str(user.id),

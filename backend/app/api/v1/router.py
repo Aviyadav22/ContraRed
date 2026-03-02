@@ -4,7 +4,7 @@ API V1 Router - Aggregates all endpoint routers.
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, users, documents, playbooks, billing
+from app.api.v1.endpoints import auth, users, documents, playbooks, billing, audit, team
 
 api_router = APIRouter()
 
@@ -41,4 +41,18 @@ api_router.include_router(
     billing.router,
     prefix="/billing",
     tags=["Billing"]
+)
+
+# Audit Logs
+api_router.include_router(
+    audit.router,
+    prefix="/audit-logs",
+    tags=["Audit Logs"]
+)
+
+# Team Management
+api_router.include_router(
+    team.router,
+    prefix="/team",
+    tags=["Team Management"]
 )

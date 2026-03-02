@@ -1,18 +1,17 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
-import { listPlaybooks, createPlaybook, deletePlaybook, togglePlaybookPublish, getStoredUser, type Playbook } from '@/api/client';
+import { listPlaybooks, createPlaybook, deletePlaybook, togglePlaybookPublish, getStoredUser, isAdmin, type Playbook } from '@/api/client';
 
 export default function Playbooks() {
     const queryClient = useQueryClient();
     const navigate = useNavigate();
     const [showCreate, setShowCreate] = useState(false);
-    const [showUpgrade, setShowUpgrade] = useState(false);
     const [newName, setNewName] = useState('');
     const [newDescription, setNewDescription] = useState('');
+    const admin = isAdmin();
 
     const user = getStoredUser();
-    const isFreeTier = user?.subscription_tier === 'free';
 
     const { data: playbooks, isLoading, error } = useQuery({
         queryKey: ['playbooks'],
@@ -27,13 +26,6 @@ export default function Playbooks() {
             setNewName('');
             setNewDescription('');
             navigate(`/playbooks/${newPlaybook.id}`);
-        },
-        onError: (err: Error) => {
-            // If backend returns 403 for free tier, show upgrade modal
-            if (err.message?.includes('Upgrade to Pro')) {
-                setShowCreate(false);
-                setShowUpgrade(true);
-            }
         },
     });
 
@@ -54,145 +46,143 @@ export default function Playbooks() {
         }
     };
 
-    const handleNewPlaybookClick = () => {
-        if (isFreeTier) {
-            setShowUpgrade(true);
-        } else {
-            setShowCreate(true);
-        }
-    };
-
-    const categoryColors: Record<string, string> = {
-        saas: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
-        nda: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
-        dpa: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
-        employment: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
-        msa: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400',
-        custom: 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300',
+    const categoryStyles: Record<string, { bg: string; text: string }> = {
+        saas: { bg: '#eff6ff', text: '#2563eb' },
+        nda: { bg: '#faf5ff', text: '#7c3aed' },
+        dpa: { bg: '#f0fdf4', text: '#16a34a' },
+        employment: { bg: '#fff7ed', text: '#ea580c' },
+        msa: { bg: '#eef2ff', text: '#4f46e5' },
+        custom: { bg: '#f1f5f9', text: '#475569' },
     };
 
     return (
-        <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
+        <div style={{ fontFamily: "'Inter', system-ui, sans-serif", minHeight: '100vh', backgroundColor: '#f8fafc' }}>
             {/* Header */}
-            <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="flex justify-between items-center h-16">
-                        <Link to="/dashboard" className="flex items-center gap-2">
-                            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-                                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                </svg>
-                            </div>
-                            <span className="text-xl font-bold text-slate-900 dark:text-white">Contra<span className="text-red-500">Red</span></span>
-                        </Link>
-
-                        <nav className="flex items-center gap-6">
-                            <Link to="/dashboard" className="text-slate-600 dark:text-slate-300 hover:text-blue-600 font-medium">Dashboard</Link>
-                            <Link to="/playbooks" className="text-blue-600 dark:text-blue-400 font-semibold">Playbooks</Link>
-                            <Link to="/billing" className="text-slate-600 dark:text-slate-300 hover:text-blue-600 font-medium">Billing</Link>
-                        </nav>
+            <header style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e2e8f0' }}>
+                <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 32px', height: 64, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <Link to="/dashboard" style={{ display: 'flex', alignItems: 'center' }}>
+                        <img src="/logo.png" alt="ContraRed" style={{ height: 32 }} />
+                    </Link>
+                    <nav style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
+                        <Link to="/dashboard" style={{ fontSize: 14, fontWeight: 500, color: '#64748b', textDecoration: 'none' }}>Dashboard</Link>
+                        <Link to="/playbooks" style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', textDecoration: 'none' }}>Playbooks</Link>
+                    </nav>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                        <span style={{ fontSize: 14, color: '#64748b' }}>{user?.name}</span>
                     </div>
                 </div>
             </header>
 
             {/* Main */}
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                <div className="flex justify-between items-center mb-8">
+            <main style={{ maxWidth: 1280, margin: '0 auto', padding: '40px 32px' }}>
+                {/* Title row */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
                     <div>
-                        <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Playbooks</h1>
-                        {isFreeTier && (
-                            <p className="text-sm text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                                </svg>
-                                Free plan — view only. Upgrade to create custom playbooks.
-                            </p>
-                        )}
+                        <h1 style={{ fontSize: 28, fontWeight: 700, color: '#0f172a', margin: 0 }}>Playbooks</h1>
+                        <p style={{ fontSize: 14, color: '#64748b', margin: '4px 0 0' }}>
+                            Define custom rule sets for different contract types.
+                        </p>
                     </div>
-                    <button
-                        onClick={handleNewPlaybookClick}
-                        className={`px-4 py-2 font-medium rounded-lg transition flex items-center gap-2 ${isFreeTier
-                                ? 'bg-slate-300 dark:bg-slate-600 text-slate-500 dark:text-slate-400 cursor-pointer hover:bg-amber-100 hover:text-amber-700 dark:hover:bg-amber-900/30 dark:hover:text-amber-400'
-                                : 'bg-blue-600 hover:bg-blue-700 text-white'
-                            }`}
-                    >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-                        </svg>
-                        {isFreeTier ? '🔒 Upgrade to Create' : 'New Playbook'}
-                    </button>
+                    {admin && (
+                        <button
+                            onClick={() => setShowCreate(true)}
+                            style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: 8,
+                                padding: '10px 20px',
+                                backgroundColor: '#0f172a',
+                                color: '#ffffff',
+                                fontSize: 14,
+                                fontWeight: 600,
+                                borderRadius: 8,
+                                border: 'none',
+                                cursor: 'pointer',
+                            }}
+                        >
+                            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                            New Playbook
+                        </button>
+                    )}
                 </div>
-
-                {/* Upgrade Modal */}
-                {showUpgrade && (
-                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xl p-6 w-full max-w-md text-center">
-                            <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-amber-400 to-orange-500 flex items-center justify-center">
-                                <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
-                                </svg>
-                            </div>
-                            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Upgrade to Pro</h2>
-                            <p className="text-slate-500 dark:text-slate-400 mb-6">
-                                Custom playbooks are available on the Pro plan. Unlock unlimited playbook creation, advanced rule configuration, and priority support.
-                            </p>
-                            <div className="flex justify-center gap-3">
-                                <button
-                                    onClick={() => setShowUpgrade(false)}
-                                    className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition"
-                                >
-                                    Maybe Later
-                                </button>
-                                <Link
-                                    to="/billing"
-                                    className="px-6 py-2 bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400 text-white font-medium rounded-lg transition shadow-lg shadow-blue-500/25"
-                                >
-                                    View Plans →
-                                </Link>
-                            </div>
-                        </div>
-                    </div>
-                )}
 
                 {/* Create Modal */}
                 {showCreate && (
-                    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-                        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-xl p-6 w-full max-w-md">
-                            <h2 className="text-xl font-semibold text-slate-900 dark:text-white mb-4">Create Playbook</h2>
-                            <form onSubmit={handleCreate} className="space-y-4">
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Name</label>
+                    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
+                        <div style={{ backgroundColor: '#ffffff', borderRadius: 16, padding: 32, width: '100%', maxWidth: 480, boxShadow: '0 24px 48px rgba(0,0,0,0.12)' }}>
+                            <h2 style={{ fontSize: 20, fontWeight: 700, color: '#0f172a', margin: '0 0 24px' }}>Create Playbook</h2>
+                            <form onSubmit={handleCreate}>
+                                <div style={{ marginBottom: 20 }}>
+                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 6 }}>Name</label>
                                     <input
                                         type="text"
                                         value={newName}
                                         onChange={(e) => setNewName(e.target.value)}
-                                        className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
-                                        placeholder="My SaaS Playbook"
+                                        style={{
+                                            width: '100%',
+                                            padding: '10px 14px',
+                                            borderRadius: 8,
+                                            border: '1px solid #e2e8f0',
+                                            fontSize: 14,
+                                            color: '#0f172a',
+                                            outline: 'none',
+                                            boxSizing: 'border-box',
+                                        }}
+                                        placeholder="e.g. SaaS Vendor Agreement"
                                         required
                                     />
                                 </div>
-                                <div>
-                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Description</label>
+                                <div style={{ marginBottom: 24 }}>
+                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 6 }}>Description (optional)</label>
                                     <textarea
                                         value={newDescription}
                                         onChange={(e) => setNewDescription(e.target.value)}
-                                        className="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
-                                        rows={3}
+                                        style={{
+                                            width: '100%',
+                                            padding: '10px 14px',
+                                            borderRadius: 8,
+                                            border: '1px solid #e2e8f0',
+                                            fontSize: 14,
+                                            color: '#0f172a',
+                                            outline: 'none',
+                                            resize: 'vertical',
+                                            minHeight: 80,
+                                            boxSizing: 'border-box',
+                                        }}
                                         placeholder="Rules for reviewing SaaS vendor contracts..."
                                     />
                                 </div>
-                                <div className="flex justify-end gap-3 pt-2">
+                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
                                     <button
                                         type="button"
                                         onClick={() => setShowCreate(false)}
-                                        className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition"
+                                        style={{
+                                            padding: '10px 20px',
+                                            fontSize: 14,
+                                            fontWeight: 500,
+                                            color: '#64748b',
+                                            backgroundColor: 'transparent',
+                                            border: '1px solid #e2e8f0',
+                                            borderRadius: 8,
+                                            cursor: 'pointer',
+                                        }}
                                     >
                                         Cancel
                                     </button>
                                     <button
                                         type="submit"
                                         disabled={createMutation.isPending}
-                                        className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition disabled:opacity-50"
+                                        style={{
+                                            padding: '10px 20px',
+                                            fontSize: 14,
+                                            fontWeight: 600,
+                                            color: '#ffffff',
+                                            backgroundColor: '#0f172a',
+                                            border: 'none',
+                                            borderRadius: 8,
+                                            cursor: 'pointer',
+                                            opacity: createMutation.isPending ? 0.6 : 1,
+                                        }}
                                     >
                                         {createMutation.isPending ? 'Creating...' : 'Create'}
                                     </button>
@@ -204,81 +194,127 @@ export default function Playbooks() {
 
                 {/* Loading */}
                 {isLoading && (
-                    <div className="text-center py-12">
-                        <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto" />
+                    <div style={{ textAlign: 'center', padding: '64px 0' }}>
+                        <div style={{
+                            width: 32, height: 32, border: '3px solid #e2e8f0', borderTopColor: '#0f172a',
+                            borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto',
+                        }} />
+                        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
                     </div>
                 )}
 
                 {/* Error */}
                 {error && (
-                    <div className="bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 p-4 rounded-lg">
+                    <div style={{ backgroundColor: '#fef2f2', color: '#dc2626', padding: '16px 20px', borderRadius: 10, fontSize: 14, border: '1px solid #fecaca' }}>
                         Error loading playbooks: {(error as Error).message}
                     </div>
                 )}
 
                 {/* Table */}
                 {playbooks && playbooks.length > 0 && (
-                    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-                        <table className="w-full">
-                            <thead className="bg-slate-50 dark:bg-slate-700/50">
-                                <tr>
-                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Name</th>
-                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Category</th>
-                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Rules</th>
-                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Status</th>
-                                    <th className="text-right px-6 py-3 text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">Actions</th>
+                    <div style={{ backgroundColor: '#ffffff', borderRadius: 12, border: '1px solid #e2e8f0', overflow: 'hidden' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
+                                    <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Name</th>
+                                    <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Category</th>
+                                    <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Rules</th>
+                                    <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Status</th>
+                                    <th style={{ textAlign: 'right', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Actions</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y divide-slate-200 dark:divide-slate-700">
-                                {playbooks.map((playbook: Playbook) => (
-                                    <tr key={playbook.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition">
-                                        <td className="px-6 py-4">
-                                            <Link to={`/playbooks/${playbook.id}`} className="font-medium text-slate-900 dark:text-white hover:text-blue-600">
-                                                {playbook.name}
-                                            </Link>
-                                            {playbook.description && (
-                                                <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5 truncate max-w-xs">{playbook.description}</p>
-                                            )}
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <span className={`px-2 py-1 text-xs font-medium rounded-full ${categoryColors[playbook.category] || categoryColors.custom}`}>
-                                                {playbook.category}
-                                            </span>
-                                        </td>
-                                        <td className="px-6 py-4 text-slate-600 dark:text-slate-400">
-                                            {playbook.rules_count} rules
-                                        </td>
-                                        <td className="px-6 py-4">
-                                            <button
-                                                onClick={() => publishMutation.mutate(playbook.id)}
-                                                disabled={isFreeTier}
-                                                className={`text-xs font-medium px-2 py-1 rounded ${playbook.is_public ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400'} ${isFreeTier ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                            >
-                                                {playbook.is_public ? '🌐 Public' : '🔒 Private'}
-                                            </button>
-                                        </td>
-                                        <td className="px-6 py-4 text-right">
-                                            <Link
-                                                to={`/playbooks/${playbook.id}`}
-                                                className="text-blue-600 hover:text-blue-700 font-medium mr-4"
-                                            >
-                                                {isFreeTier ? 'View' : 'Edit'}
-                                            </Link>
-                                            {!isFreeTier && (
-                                                <button
-                                                    onClick={() => {
-                                                        if (confirm('Delete this playbook?')) {
-                                                            deleteMutation.mutate(playbook.id);
-                                                        }
-                                                    }}
-                                                    className="text-red-600 hover:text-red-700 font-medium"
-                                                >
-                                                    Delete
-                                                </button>
-                                            )}
-                                        </td>
-                                    </tr>
-                                ))}
+                            <tbody>
+                                {playbooks.map((playbook: Playbook) => {
+                                    const cat = categoryStyles[playbook.category] || categoryStyles.custom;
+                                    return (
+                                        <tr key={playbook.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                            <td style={{ padding: '16px 24px' }}>
+                                                <Link to={`/playbooks/${playbook.id}`} style={{ fontWeight: 600, color: '#0f172a', textDecoration: 'none', fontSize: 14 }}>
+                                                    {playbook.name}
+                                                </Link>
+                                                {playbook.description && (
+                                                    <p style={{ fontSize: 13, color: '#94a3b8', margin: '2px 0 0', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                        {playbook.description}
+                                                    </p>
+                                                )}
+                                            </td>
+                                            <td style={{ padding: '16px 24px' }}>
+                                                <span style={{ padding: '4px 10px', fontSize: 12, fontWeight: 600, borderRadius: 6, backgroundColor: cat.bg, color: cat.text }}>
+                                                    {playbook.category}
+                                                </span>
+                                            </td>
+                                            <td style={{ padding: '16px 24px', fontSize: 14, color: '#64748b' }}>
+                                                {playbook.rules_count} rules
+                                            </td>
+                                            <td style={{ padding: '16px 24px' }}>
+                                                {admin ? (
+                                                    <button
+                                                        onClick={() => publishMutation.mutate(playbook.id)}
+                                                        style={{
+                                                            display: 'inline-flex',
+                                                            alignItems: 'center',
+                                                            gap: 4,
+                                                            padding: '4px 10px',
+                                                            fontSize: 12,
+                                                            fontWeight: 600,
+                                                            borderRadius: 6,
+                                                            border: 'none',
+                                                            cursor: 'pointer',
+                                                            backgroundColor: playbook.is_public ? '#f0fdf4' : '#f1f5f9',
+                                                            color: playbook.is_public ? '#16a34a' : '#64748b',
+                                                        }}
+                                                    >
+                                                        <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            {playbook.is_public
+                                                                ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                                                : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                                            }
+                                                        </svg>
+                                                        {playbook.is_public ? 'Public' : 'Private'}
+                                                    </button>
+                                                ) : (
+                                                    <span style={{
+                                                        display: 'inline-flex',
+                                                        alignItems: 'center',
+                                                        gap: 4,
+                                                        padding: '4px 10px',
+                                                        fontSize: 12,
+                                                        fontWeight: 600,
+                                                        borderRadius: 6,
+                                                        backgroundColor: playbook.is_public ? '#f0fdf4' : '#f1f5f9',
+                                                        color: playbook.is_public ? '#16a34a' : '#64748b',
+                                                    }}>
+                                                        {playbook.is_public ? 'Public' : 'Private'}
+                                                    </span>
+                                                )}
+                                            </td>
+                                            <td style={{ padding: '16px 24px', textAlign: 'right' }}>
+                                                {admin ? (
+                                                    <>
+                                                        <Link
+                                                            to={`/playbooks/${playbook.id}`}
+                                                            style={{ fontSize: 13, fontWeight: 600, color: '#2563eb', textDecoration: 'none', marginRight: 16 }}
+                                                        >
+                                                            Edit
+                                                        </Link>
+                                                        <button
+                                                            onClick={() => {
+                                                                if (confirm('Delete this playbook?')) {
+                                                                    deleteMutation.mutate(playbook.id);
+                                                                }
+                                                            }}
+                                                            style={{ fontSize: 13, fontWeight: 600, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }}
+                                                        >
+                                                            Delete
+                                                        </button>
+                                                    </>
+                                                ) : (
+                                                    <span style={{ fontSize: 13, color: '#94a3b8' }}>View only</span>
+                                                )}
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     </div>
@@ -286,25 +322,33 @@ export default function Playbooks() {
 
                 {/* Empty State */}
                 {playbooks && playbooks.length === 0 && (
-                    <div className="text-center py-12 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
-                        <svg className="w-16 h-16 mx-auto text-slate-300 dark:text-slate-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div style={{ textAlign: 'center', padding: '64px 32px', backgroundColor: '#ffffff', borderRadius: 12, border: '1px solid #e2e8f0' }}>
+                        <svg width="48" height="48" fill="none" stroke="#cbd5e1" viewBox="0 0 24 24" style={{ margin: '0 auto 16px' }}>
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
-                        <h3 className="text-lg font-medium text-slate-900 dark:text-white mb-2">No playbooks yet</h3>
-                        <p className="text-slate-500 dark:text-slate-400 mb-4">
-                            {isFreeTier
-                                ? 'Upgrade to Pro to create custom playbooks for your contract types.'
-                                : 'Create your first playbook to start detecting contract risks.'}
+                        <h3 style={{ fontSize: 18, fontWeight: 600, color: '#0f172a', margin: '0 0 8px' }}>No playbooks yet</h3>
+                        <p style={{ fontSize: 14, color: '#64748b', margin: '0 0 24px' }}>
+                            {admin
+                                ? 'Create your first playbook to start detecting contract risks.'
+                                : 'No playbooks are available yet. Ask your admin to create one.'}
                         </p>
-                        <button
-                            onClick={handleNewPlaybookClick}
-                            className={`px-4 py-2 font-medium rounded-lg transition ${isFreeTier
-                                    ? 'bg-gradient-to-r from-blue-600 to-blue-500 text-white hover:from-blue-500 hover:to-blue-400'
-                                    : 'bg-blue-600 hover:bg-blue-700 text-white'
-                                }`}
-                        >
-                            {isFreeTier ? 'Upgrade to Pro' : 'Create Playbook'}
-                        </button>
+                        {admin && (
+                            <button
+                                onClick={() => setShowCreate(true)}
+                                style={{
+                                    padding: '10px 24px',
+                                    fontSize: 14,
+                                    fontWeight: 600,
+                                    color: '#ffffff',
+                                    backgroundColor: '#0f172a',
+                                    border: 'none',
+                                    borderRadius: 8,
+                                    cursor: 'pointer',
+                                }}
+                            >
+                                Create Playbook
+                            </button>
+                        )}
                     </div>
                 )}
             </main>

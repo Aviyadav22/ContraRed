@@ -111,10 +111,79 @@ function showMainPanel(): void {
     if (userAvatar()) userAvatar()!.textContent = initials;
     if (userName()) userName()!.textContent = user.name;
     if (userTier()) userTier()!.textContent = `${user.subscription_tier} tier`;
+
+    // Show admin actions if user is admin or super_admin
+    const adminActions = document.getElementById('adminActions');
+    if (adminActions && (user.role === 'admin' || user.role === 'super_admin')) {
+      adminActions.style.display = 'block';
+      bindAdminActions();
+    }
   }
 
   // Load available playbooks
   loadPlaybooks();
+}
+
+// Admin feature handlers
+function bindAdminActions(): void {
+  const addPlaybookBtn = document.getElementById('addPlaybookBtn');
+  const createSubmit = document.getElementById('createPlaybookSubmit');
+  const createCancel = document.getElementById('createPlaybookCancel');
+
+  addPlaybookBtn?.addEventListener('click', () => {
+    const modal = document.getElementById('createPlaybookModal');
+    if (modal) modal.style.display = 'block';
+  });
+
+  createCancel?.addEventListener('click', () => {
+    const modal = document.getElementById('createPlaybookModal');
+    if (modal) modal.style.display = 'none';
+    clearPlaybookForm();
+  });
+
+  createSubmit?.addEventListener('click', handleCreatePlaybook);
+}
+
+async function handleCreatePlaybook(): Promise<void> {
+  const nameInput = document.getElementById('newPlaybookName') as HTMLInputElement;
+  const descInput = document.getElementById('newPlaybookDesc') as HTMLInputElement;
+  const categorySelect = document.getElementById('newPlaybookCategory') as HTMLSelectElement;
+  const errorDiv = document.getElementById('createPlaybookError');
+  const submitBtn = document.getElementById('createPlaybookSubmit') as HTMLButtonElement;
+
+  const name = nameInput?.value?.trim();
+  if (!name) {
+    if (errorDiv) { errorDiv.textContent = 'Name is required'; errorDiv.classList.add('show'); }
+    return;
+  }
+
+  if (errorDiv) errorDiv.classList.remove('show');
+  if (submitBtn) submitBtn.disabled = true;
+
+  try {
+    await api.createPlaybook(name, descInput?.value?.trim() || undefined, categorySelect?.value || 'custom');
+    // Close modal and refresh playbooks
+    const modal = document.getElementById('createPlaybookModal');
+    if (modal) modal.style.display = 'none';
+    clearPlaybookForm();
+    await loadPlaybooks();
+  } catch (error) {
+    if (errorDiv) {
+      errorDiv.textContent = (error as Error).message || 'Failed to create playbook';
+      errorDiv.classList.add('show');
+    }
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+function clearPlaybookForm(): void {
+  const nameInput = document.getElementById('newPlaybookName') as HTMLInputElement;
+  const descInput = document.getElementById('newPlaybookDesc') as HTMLInputElement;
+  const errorDiv = document.getElementById('createPlaybookError');
+  if (nameInput) nameInput.value = '';
+  if (descInput) descInput.value = '';
+  if (errorDiv) errorDiv.classList.remove('show');
 }
 
 // Playbook selector element

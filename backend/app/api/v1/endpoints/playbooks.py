@@ -15,6 +15,8 @@ from app.db.session import get_db
 from app.models.user import User
 from app.models.playbook import Playbook, PlaybookRule, PlaybookCategory, RiskLevel
 from app.api.v1.endpoints.auth import get_current_user
+from app.api.dependencies import require_admin
+from app.models.audit_log import log_audit_event
 
 
 router = APIRouter()
@@ -136,17 +138,10 @@ async def list_playbooks(
 @router.post("/", response_model=PlaybookResponse, status_code=status.HTTP_201_CREATED)
 async def create_playbook(
     playbook_data: PlaybookCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Create a new playbook."""
-    # ── Tier enforcement: free-tier users cannot create custom playbooks ──
-    from app.models.user import SubscriptionTier
-    if current_user.subscription_tier == SubscriptionTier.FREE:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Upgrade to Pro to create custom playbooks"
-        )
+    """Create a new playbook. Requires ADMIN role."""
     
     try:
         category = PlaybookCategory(playbook_data.category)
@@ -165,7 +160,13 @@ async def create_playbook(
     db.add(playbook)
     await db.commit()
     await db.refresh(playbook)
-    
+
+    await log_audit_event(
+        db=db, user=current_user, action="playbook_created",
+        resource_type="playbook", resource_name=playbook.name, status="success",
+    )
+    await db.commit()
+
     return PlaybookResponse(
         id=str(playbook.id),
         name=playbook.name,
@@ -239,10 +240,10 @@ async def get_playbook(
 async def update_playbook(
     playbook_id: UUID,
     update_data: PlaybookUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Update playbook metadata."""
+    """Update playbook metadata. Requires ADMIN role."""
     result = await db.execute(
         select(Playbook).where(Playbook.id == playbook_id)
     )
@@ -267,10 +268,16 @@ async def update_playbook(
             pass
     
     playbook.version += 1
-    
+
     await db.commit()
     await db.refresh(playbook)
-    
+
+    await log_audit_event(
+        db=db, user=current_user, action="playbook_updated",
+        resource_type="playbook", resource_name=playbook.name, status="success",
+    )
+    await db.commit()
+
     return PlaybookResponse(
         id=str(playbook.id),
         name=playbook.name,
@@ -286,10 +293,10 @@ async def update_playbook(
 @router.delete("/{playbook_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_playbook(
     playbook_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Delete a playbook."""
+    """Delete a playbook. Requires ADMIN role."""
     result = await db.execute(
         select(Playbook).where(Playbook.id == playbook_id)
     )
@@ -297,21 +304,25 @@ async def delete_playbook(
     
     if not playbook:
         raise HTTPException(status_code=404, detail="Playbook not found")
-    
-    if playbook.created_by != current_user.id:
-        raise HTTPException(status_code=403, detail="Only the creator can delete this playbook")
-    
+
+    playbook_name = playbook.name
     await db.delete(playbook)
+    await db.commit()
+
+    await log_audit_event(
+        db=db, user=current_user, action="playbook_deleted",
+        resource_type="playbook", resource_name=playbook_name, status="success",
+    )
     await db.commit()
 
 
 @router.post("/{playbook_id}/publish", response_model=PlaybookResponse)
 async def toggle_publish(
     playbook_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Toggle playbook public/private status."""
+    """Toggle playbook public/private status. Requires ADMIN role."""
     result = await db.execute(
         select(Playbook).where(Playbook.id == playbook_id)
     )
@@ -349,10 +360,10 @@ async def toggle_publish(
 async def add_rule(
     playbook_id: UUID,
     rule_data: RuleCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Add a rule to a playbook."""
+    """Add a rule to a playbook. Requires ADMIN role."""
     result = await db.execute(
         select(Playbook)
         .options(selectinload(Playbook.rules_list))
@@ -412,10 +423,10 @@ async def update_rule(
     playbook_id: UUID,
     rule_id: UUID,
     update_data: RuleUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Update a rule in a playbook."""
+    """Update a rule in a playbook. Requires ADMIN role."""
     # Check playbook ownership
     playbook_result = await db.execute(
         select(Playbook).where(Playbook.id == playbook_id)
@@ -481,10 +492,10 @@ async def update_rule(
 async def delete_rule(
     playbook_id: UUID,
     rule_id: UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Delete a rule from a playbook."""
+    """Delete a rule from a playbook. Requires ADMIN role."""
     # Check playbook ownership
     playbook_result = await db.execute(
         select(Playbook).where(Playbook.id == playbook_id)
@@ -518,10 +529,10 @@ async def delete_rule(
 async def reorder_rules(
     playbook_id: UUID,
     reorder_data: ReorderRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
-    """Reorder rules within a playbook."""
+    """Reorder rules within a playbook. Requires ADMIN role."""
     playbook_result = await db.execute(
         select(Playbook)
         .options(selectinload(Playbook.rules_list))

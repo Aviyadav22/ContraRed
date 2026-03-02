@@ -17,6 +17,7 @@ from app.db.session import get_db
 from app.models.user import User, SubscriptionTier
 from app.models.organization import Subscription, SubscriptionStatus, PlanType
 from app.api.v1.endpoints.auth import get_current_user
+from app.api.dependencies import require_admin
 from app.core.config import settings
 
 
@@ -160,7 +161,7 @@ async def list_plans():
 @router.post("/create-subscription")
 async def create_subscription(
     request: CreateSubscriptionRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -204,7 +205,7 @@ async def create_subscription(
 @router.post("/verify")
 async def verify_payment(
     request: VerifyPaymentRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db)
 ):
     """

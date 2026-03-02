@@ -4,14 +4,70 @@ ContraRed Backend - AI Contract Redlining API
 Main application entry point.
 """
 
-from fastapi import FastAPI
+import logging
+import time
+
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from contextlib import asynccontextmanager
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from app.core.config import settings
 from app.api.v1.router import api_router
 from app.db.session import init_db
 
+logger = logging.getLogger("contrared")
+
+
+# =============================================================================
+# Security Headers Middleware
+# =============================================================================
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add security headers to all responses (SOC2 compliance)."""
+
+    async def dispatch(self, request: Request, call_next):
+        response: Response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+        return response
+
+
+# =============================================================================
+# Request Logging Middleware
+# =============================================================================
+
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Log all API requests for audit trail."""
+
+    async def dispatch(self, request: Request, call_next):
+        start = time.time()
+        response: Response = await call_next(request)
+        duration = time.time() - start
+
+        # Skip health check logs to reduce noise
+        if not request.url.path.startswith("/health"):
+            logger.info(
+                "method=%s path=%s status=%d duration=%.3fs ip=%s",
+                request.method,
+                request.url.path,
+                response.status_code,
+                duration,
+                request.client.host if request.client else "unknown",
+            )
+        return response
+
+
+# =============================================================================
+# Application Setup
+# =============================================================================
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -20,8 +76,7 @@ async def lifespan(app: FastAPI):
     try:
         await init_db()
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"DB init failed on startup: {e}. App will still start.")
+        logger.error(f"DB init failed on startup: {e}. App will still start.")
     yield
     # Shutdown
     pass
@@ -30,21 +85,33 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="ContraRed API",
     description="AI-powered contract redlining and review platform",
-    version="1.0.0",
+    version="1.1.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
     lifespan=lifespan,
 )
 
-# CORS Configuration
+# Middleware stack (order matters — last added runs first)
+# 1. Security headers on all responses
+app.add_middleware(SecurityHeadersMiddleware)
+
+# 2. Request logging
+app.add_middleware(RequestLoggingMiddleware)
+
+# 3. CORS — tightened from wildcard
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
+
+# Rate limiting exception handler
+from app.api.v1.endpoints.auth import limiter
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")
@@ -53,7 +120,7 @@ app.include_router(api_router, prefix="/api/v1")
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "version": "1.0.0"}
+    return {"status": "healthy", "version": "1.1.0"}
 
 
 @app.get("/health/db")

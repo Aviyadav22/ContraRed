@@ -25,26 +25,21 @@ export default function Login() {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800">
+        <div className="min-h-screen flex items-center justify-center bg-slate-50">
             <div className="w-full max-w-md">
-                <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-8">
+                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8">
                     {/* Logo */}
                     <div className="text-center mb-8">
-                        <div className="inline-flex items-center gap-2 mb-2">
-                            <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center">
-                                <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                                </svg>
-                            </div>
-                            <span className="text-2xl font-bold text-slate-900 dark:text-white">Contra<span className="text-red-500">Red</span></span>
-                        </div>
-                        <p className="text-slate-500 dark:text-slate-400">Sign in to your account</p>
+                        <Link to="/" className="inline-block mb-4">
+                            <img src="/logo.png" alt="ContraRed" className="h-8 mx-auto" />
+                        </Link>
+                        <p className="text-slate-500 text-sm">Sign in to your account</p>
                     </div>
 
                     {/* Form */}
-                    <form onSubmit={handleSubmit} className="space-y-6">
+                    <form onSubmit={handleSubmit} className="space-y-5">
                         <div>
-                            <label htmlFor="email" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                            <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1.5">
                                 Email
                             </label>
                             <input
@@ -52,14 +47,14 @@ export default function Login() {
                                 type="email"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
-                                className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-900 text-sm focus:ring-2 focus:ring-slate-900 focus:border-transparent transition placeholder:text-slate-400"
                                 placeholder="you@company.com"
                                 required
                             />
                         </div>
 
                         <div>
-                            <label htmlFor="password" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                            <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1.5">
                                 Password
                             </label>
                             <input
@@ -67,14 +62,14 @@ export default function Login() {
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                className="w-full px-4 py-3 rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-900 text-sm focus:ring-2 focus:ring-slate-900 focus:border-transparent transition placeholder:text-slate-400"
                                 placeholder="••••••••"
                                 required
                             />
                         </div>
 
                         {error && (
-                            <div className="p-3 rounded-lg bg-red-50 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-sm">
+                            <div className="p-3 rounded-lg bg-red-50 text-red-600 text-sm">
                                 {error}
                             </div>
                         )}
@@ -82,22 +77,22 @@ export default function Login() {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full py-3 px-4 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white font-medium rounded-lg transition flex items-center justify-center gap-2"
+                            className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white font-medium text-sm rounded-lg transition-colors flex items-center justify-center gap-2"
                         >
                             {loading ? (
-                                <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                             ) : (
                                 'Sign In'
                             )}
                         </button>
                     </form>
 
-                    {/* Sign Up link */}
+                    {/* Register link */}
                     <div className="mt-6 text-center">
-                        <p className="text-sm text-slate-500 dark:text-slate-400">
+                        <p className="text-sm text-slate-500">
                             Don't have an account?{' '}
-                            <Link to="/register" className="text-blue-600 hover:text-blue-500 font-medium">
-                                Sign Up
+                            <Link to="/register" className="text-slate-900 hover:text-slate-700 font-medium">
+                                Create one
                             </Link>
                         </p>
                     </div>

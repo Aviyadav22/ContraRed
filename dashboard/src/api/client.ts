@@ -107,6 +107,11 @@ export function isAuthenticated(): boolean {
     return !!getStoredTokens()?.access_token;
 }
 
+export function isAdmin(): boolean {
+    const user = getStoredUser();
+    return user?.role === 'admin' || user?.role === 'super_admin';
+}
+
 // ============================================================================
 // API Request Helper
 // ============================================================================
@@ -189,6 +194,98 @@ export async function register(name: string, email: string, password: string): P
 
 export async function getCurrentUser(): Promise<User> {
     return request('/auth/me');
+}
+
+// ============================================================================
+// Dashboard Stats API
+// ============================================================================
+
+export interface DashboardStats {
+    documents_analyzed: number;
+    total_risks_detected: number;
+    redlines_applied: number;
+    red_risks: number;
+    yellow_risks: number;
+    green_risks: number;
+}
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+    return request('/users/me/stats');
+}
+
+export async function getOrgStats(): Promise<DashboardStats> {
+    return request('/users/org/stats');
+}
+
+// ============================================================================
+// Audit Log API
+// ============================================================================
+
+export interface AuditLogEntry {
+    id: string;
+    user_email: string;
+    action: string;
+    resource_type: string;
+    resource_name: string;
+    timestamp: string;
+    ip_address: string | null;
+    status: string;
+    risk_count: number | null;
+    details: string | null;
+}
+
+export interface AuditLogPage {
+    items: AuditLogEntry[];
+    total: number;
+    page: number;
+    page_size: number;
+}
+
+export async function getAuditLogs(params?: {
+    page?: number;
+    page_size?: number;
+    action?: string;
+    user_email?: string;
+    date_from?: string;
+    date_to?: string;
+}): Promise<AuditLogPage> {
+    const searchParams = new URLSearchParams();
+    if (params?.page) searchParams.set('page', String(params.page));
+    if (params?.page_size) searchParams.set('page_size', String(params.page_size));
+    if (params?.action) searchParams.set('action', params.action);
+    if (params?.user_email) searchParams.set('user_email', params.user_email);
+    if (params?.date_from) searchParams.set('date_from', params.date_from);
+    if (params?.date_to) searchParams.set('date_to', params.date_to);
+    const qs = searchParams.toString();
+    return request(`/audit-logs/${qs ? '?' + qs : ''}`);
+}
+
+// ============================================================================
+// Team API
+// ============================================================================
+
+export interface TeamMember {
+    id: string;
+    email: string;
+    name: string;
+    role: string;
+    last_login: string | null;
+    is_active: boolean;
+}
+
+export async function getTeamMembers(): Promise<TeamMember[]> {
+    return request('/team/members');
+}
+
+export async function changeTeamMemberRole(userId: string, role: string): Promise<TeamMember> {
+    return request(`/team/members/${userId}/role`, {
+        method: 'PUT',
+        body: JSON.stringify({ role }),
+    });
+}
+
+export async function removeTeamMember(userId: string): Promise<void> {
+    return request(`/team/members/${userId}`, { method: 'DELETE' });
 }
 
 // ============================================================================
