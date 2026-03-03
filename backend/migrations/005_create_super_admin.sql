@@ -3,7 +3,7 @@
 -- Password: admin@123 (change via /api/v1/auth/change-password after first login)
 -- NOTE: SQLAlchemy uses enum NAMES (uppercase) as DB values
 
-INSERT INTO users (id, email, name, password_hash, role, subscription_tier, is_active, created_at)
+INSERT INTO users (id, email, name, password_hash, role, subscription_tier, is_active, is_verified, created_at, updated_at)
 VALUES (
     gen_random_uuid(),
     'aviyadav.official@gmail.com',
@@ -12,6 +12,8 @@ VALUES (
     'SUPER_ADMIN',
     'ENTERPRISE',
     true,
+    true,
+    NOW(),
     NOW()
 )
 ON CONFLICT (email) DO UPDATE SET
