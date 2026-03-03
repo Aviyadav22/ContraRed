@@ -2,4 +2,5 @@
 -- Safe: ADD VALUE IF NOT EXISTS is idempotent
 -- Run in Supabase SQL editor
 
-ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'analyst';
+-- SQLAlchemy uses enum NAMES (uppercase) as DB values
+ALTER TYPE userrole ADD VALUE IF NOT EXISTS 'ANALYST';

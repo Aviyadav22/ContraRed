@@ -1,6 +1,7 @@
 -- Migration 005: Create Super Admin user
 -- Run this in Supabase SQL Editor
 -- Password: admin@123 (change via /api/v1/auth/change-password after first login)
+-- NOTE: SQLAlchemy uses enum NAMES (uppercase) as DB values
 
 INSERT INTO users (id, email, name, password_hash, role, subscription_tier, is_active, created_at)
 VALUES (
@@ -8,12 +9,12 @@ VALUES (
     'aviyadav.official@gmail.com',
     'Avi Yadav',
     '$2b$12$VmlJ6IfllgkK93y/3o/GVuMFozfkpTbz6I3tNpD4soz2DaBz3026y',
-    'super_admin',
-    'enterprise',
+    'SUPER_ADMIN',
+    'ENTERPRISE',
     true,
     NOW()
 )
 ON CONFLICT (email) DO UPDATE SET
-    role = 'super_admin',
-    subscription_tier = 'enterprise',
+    role = 'SUPER_ADMIN',
+    subscription_tier = 'ENTERPRISE',
     password_hash = '$2b$12$VmlJ6IfllgkK93y/3o/GVuMFozfkpTbz6I3tNpD4soz2DaBz3026y';
