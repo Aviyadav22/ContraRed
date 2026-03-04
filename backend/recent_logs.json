@@ -1,0 +1,142 @@
+[
+  {
+    "action": "analyze",
+    "resource": "direct-test.docx",
+    "user": "aviyadav.personal@gmail.com",
+    "time": "2026-03-02T14:32:37.196567",
+    "status": "success"
+  },
+  {
+    "action": "analyze",
+    "resource": "direct-test.docx",
+    "user": "aviyadav.personal@gmail.com",
+    "time": "2026-03-02T14:27:21.974064",
+    "status": "success"
+  },
+  {
+    "action": "login",
+    "resource": "aviyadav.personal@gmail.com",
+    "user": "aviyadav.personal@gmail.com",
+    "time": "2026-03-02T13:30:55.145415",
+    "status": "success"
+  },
+  {
+    "action": "login",
+    "resource": "test@contrared.ai",
+    "user": "test@contrared.ai",
+    "time": "2026-03-02T13:29:09.830151",
+    "status": "success"
+  },
+  {
+    "action": "ai_full_analysis",
+    "resource": "document.docx",
+    "user": "demo@contrared.ai",
+    "time": "2026-02-07T08:20:30.080110",
+    "status": "success"
+  },
+  {
+    "action": "ai_full_analysis",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T20:31:33.420752",
+    "status": "success"
+  },
+  {
+    "action": "ai_full_analysis",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T20:21:14.244785",
+    "status": "success"
+  },
+  {
+    "action": "ai_full_analysis",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T19:12:30.912738",
+    "status": "success"
+  },
+  {
+    "action": "ai_full_analysis",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T19:01:13.541467",
+    "status": "success"
+  },
+  {
+    "action": "ai_full_analysis",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T18:55:10.452611",
+    "status": "success"
+  },
+  {
+    "action": "analyze",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T13:06:02.251768",
+    "status": "success"
+  },
+  {
+    "action": "analyze",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T13:03:47.795624",
+    "status": "success"
+  },
+  {
+    "action": "analyze",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T12:50:02.972026",
+    "status": "success"
+  },
+  {
+    "action": "analyze",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T12:41:42.288268",
+    "status": "success"
+  },
+  {
+    "action": "analyze",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T12:38:30.993314",
+    "status": "success"
+  },
+  {
+    "action": "analyze",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T12:38:23.400676",
+    "status": "success"
+  },
+  {
+    "action": "analyze",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T12:35:44.986892",
+    "status": "success"
+  },
+  {
+    "action": "analyze",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T12:35:32.411256",
+    "status": "success"
+  },
+  {
+    "action": "analyze",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T12:25:19.178469",
+    "status": "success"
+  },
+  {
+    "action": "analyze",
+    "resource": "document.docx",
+    "user": "test@contrared.ai",
+    "time": "2026-01-24T12:25:12.022508",
+    "status": "success"
+  }
+]

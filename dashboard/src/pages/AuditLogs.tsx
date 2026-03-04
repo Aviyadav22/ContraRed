@@ -1,12 +1,9 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { getStoredUser, logout, isAdmin, getAuditLogs, type AuditLogPage } from '@/api/client';
+import { getAuditLogs, type AuditLogPage } from '@/api/client';
+import AppHeader from '@/components/AppHeader';
 
 export default function AuditLogs() {
-    const user = getStoredUser();
-    const admin = isAdmin();
-
     const [page, setPage] = useState(1);
     const [actionFilter, setActionFilter] = useState('');
     const [emailFilter, setEmailFilter] = useState('');
@@ -25,31 +22,7 @@ export default function AuditLogs() {
 
     return (
         <div className="min-h-screen bg-slate-50">
-            {/* Header */}
-            <header className="bg-white border-b border-slate-200">
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="flex justify-between items-center h-16">
-                        <Link to="/dashboard" className="flex items-center">
-                            <img src="/logo.png" alt="ContraRed" className="h-7" />
-                        </Link>
-                        <nav className="flex items-center gap-6">
-                            <Link to="/dashboard" className="text-slate-500 hover:text-slate-900 font-medium text-sm transition-colors">Dashboard</Link>
-                            <Link to="/playbooks" className="text-slate-500 hover:text-slate-900 font-medium text-sm transition-colors">Playbooks</Link>
-                            <Link to="/audit-logs" className="text-slate-900 font-medium text-sm">Audit Logs</Link>
-                            {admin && (
-                                <>
-                                    <Link to="/team" className="text-slate-500 hover:text-slate-900 font-medium text-sm transition-colors">Team</Link>
-                                    <Link to="/billing" className="text-slate-500 hover:text-slate-900 font-medium text-sm transition-colors">Billing</Link>
-                                </>
-                            )}
-                        </nav>
-                        <div className="flex items-center gap-4">
-                            <span className="text-sm text-slate-500">{user?.name}</span>
-                            <button onClick={logout} className="text-sm text-slate-400 hover:text-slate-600 font-medium transition-colors">Logout</button>
-                        </div>
-                    </div>
-                </div>
-            </header>
+            <AppHeader />
 
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 <h1 className="text-2xl font-bold text-slate-900 mb-6">Audit Logs</h1>
@@ -110,22 +83,20 @@ export default function AuditLogs() {
                                         </td>
                                         <td className="px-4 py-3 text-slate-700">{log.user_email}</td>
                                         <td className="px-4 py-3">
-                                            <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${
-                                                log.action.includes('failed') || log.status === 'failure'
-                                                    ? 'bg-red-50 text-red-700'
-                                                    : log.action.includes('delete') || log.action.includes('removed')
-                                                        ? 'bg-amber-50 text-amber-700'
-                                                        : 'bg-slate-100 text-slate-700'
-                                            }`}>
+                                            <span className={`inline-flex px-2 py-0.5 rounded text-xs font-medium ${log.action.includes('failed') || log.status === 'failure'
+                                                ? 'bg-red-50 text-red-700'
+                                                : log.action.includes('delete') || log.action.includes('removed')
+                                                    ? 'bg-amber-50 text-amber-700'
+                                                    : 'bg-slate-100 text-slate-700'
+                                                }`}>
                                                 {log.action.replace(/_/g, ' ')}
                                             </span>
                                         </td>
                                         <td className="px-4 py-3 text-slate-600 max-w-[200px] truncate">{log.resource_name}</td>
                                         <td className="px-4 py-3">
-                                            <span className={`text-xs font-medium ${
-                                                log.status === 'success' ? 'text-green-600' :
+                                            <span className={`text-xs font-medium ${log.status === 'success' ? 'text-green-600' :
                                                 log.status === 'failure' ? 'text-red-600' : 'text-slate-500'
-                                            }`}>
+                                                }`}>
                                                 {log.status}
                                             </span>
                                         </td>

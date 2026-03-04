@@ -1,5 +1,5 @@
-import { Link } from 'react-router-dom';
 import { getStoredUser } from '@/api/client';
+import AppHeader from '@/components/AppHeader';
 
 export default function Billing() {
     const user = getStoredUser();
@@ -34,22 +34,7 @@ export default function Billing() {
 
     return (
         <div style={{ fontFamily: "'Inter', system-ui, sans-serif", minHeight: '100vh', backgroundColor: '#f8fafc' }}>
-            {/* Header */}
-            <header style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e2e8f0' }}>
-                <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 32px', height: 64, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <Link to="/dashboard" style={{ display: 'flex', alignItems: 'center' }}>
-                        <img src="/logo.png" alt="ContraRed" style={{ height: 32 }} />
-                    </Link>
-                    <nav style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
-                        <Link to="/dashboard" style={{ fontSize: 14, fontWeight: 500, color: '#64748b', textDecoration: 'none' }}>Dashboard</Link>
-                        <Link to="/playbooks" style={{ fontSize: 14, fontWeight: 500, color: '#64748b', textDecoration: 'none' }}>Playbooks</Link>
-                        <Link to="/billing" style={{ fontSize: 14, fontWeight: 600, color: '#0f172a', textDecoration: 'none' }}>Billing</Link>
-                    </nav>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                        <span style={{ fontSize: 14, color: '#64748b' }}>{user?.name}</span>
-                    </div>
-                </div>
-            </header>
+            <AppHeader />
 
             <main style={{ maxWidth: 1280, margin: '0 auto', padding: '40px 32px' }}>
                 <div style={{ marginBottom: 40 }}>

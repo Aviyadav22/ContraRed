@@ -1,15 +1,9 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import { getStoredUser, logout, isAdmin, getDashboardStats, type User, type DashboardStats } from '@/api/client';
+import { isAdmin, getDashboardStats, type DashboardStats } from '@/api/client';
+import AppHeader from '@/components/AppHeader';
 
 export default function Dashboard() {
-    const [user, setUser] = useState<User | null>(null);
-
-    useEffect(() => {
-        setUser(getStoredUser());
-    }, []);
-
     const { data: stats, isLoading: statsLoading } = useQuery<DashboardStats>({
         queryKey: ['dashboard-stats'],
         queryFn: getDashboardStats,
@@ -19,55 +13,7 @@ export default function Dashboard() {
 
     return (
         <div className="min-h-screen bg-slate-50">
-            {/* Header */}
-            <header className="bg-white border-b border-slate-200">
-                <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                    <div className="flex justify-between items-center h-16">
-                        <Link to="/dashboard" className="flex items-center">
-                            <img src="/logo.png" alt="ContraRed" className="h-7" />
-                        </Link>
-
-                        <nav className="flex items-center gap-6">
-                            <Link to="/dashboard" className="text-slate-900 font-medium text-sm">
-                                Dashboard
-                            </Link>
-                            <Link to="/playbooks" className="text-slate-500 hover:text-slate-900 font-medium text-sm transition-colors">
-                                Playbooks
-                            </Link>
-                            <Link to="/audit-logs" className="text-slate-500 hover:text-slate-900 font-medium text-sm transition-colors">
-                                Audit Logs
-                            </Link>
-                            {admin && (
-                                <>
-                                    <Link to="/team" className="text-slate-500 hover:text-slate-900 font-medium text-sm transition-colors">
-                                        Team
-                                    </Link>
-                                    <Link to="/billing" className="text-slate-500 hover:text-slate-900 font-medium text-sm transition-colors">
-                                        Billing
-                                    </Link>
-                                </>
-                            )}
-                        </nav>
-
-                        <div className="flex items-center gap-4">
-                            <span className="text-sm text-slate-500">
-                                {user?.name}
-                                {user?.role && (
-                                    <span className="ml-2 text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
-                                        {user.role}
-                                    </span>
-                                )}
-                            </span>
-                            <button
-                                onClick={logout}
-                                className="text-sm text-slate-400 hover:text-slate-600 font-medium transition-colors"
-                            >
-                                Logout
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </header>
+            <AppHeader />
 
             {/* Main Content */}
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
