@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
-import { listPlaybooks, createPlaybook, deletePlaybook, togglePlaybookPublish, getStoredUser, isAdmin, type Playbook } from '@/api/client';
+import { listPlaybooks, createPlaybook, deletePlaybook, togglePlaybookPublish, isAdmin, type Playbook } from '@/api/client';
 import AppHeader from '@/components/AppHeader';
 
 export default function Playbooks() {
@@ -11,8 +11,6 @@ export default function Playbooks() {
     const [newName, setNewName] = useState('');
     const [newDescription, setNewDescription] = useState('');
     const admin = isAdmin();
-
-    const user = getStoredUser();
 
     const { data: playbooks, isLoading, error } = useQuery({
         queryKey: ['playbooks'],
