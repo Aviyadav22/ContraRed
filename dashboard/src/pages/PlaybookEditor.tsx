@@ -4,9 +4,9 @@ import { useState } from 'react';
 import { getPlaybook, addRule, deleteRule, type PlaybookRule, type CreateRuleData } from '@/api/client';
 
 const RISK_LEVELS = [
-    { value: 'red', label: 'Critical', bg: '#fef2f2', color: '#dc2626' },
-    { value: 'yellow', label: 'Warning', bg: '#fffbeb', color: '#d97706' },
-    { value: 'green', label: 'Safe', bg: '#f0fdf4', color: '#16a34a' },
+    { value: 'red', label: 'Critical', className: 'bg-red-50 text-red-600' },
+    { value: 'yellow', label: 'Warning', className: 'bg-amber-50 text-amber-600' },
+    { value: 'green', label: 'Safe', className: 'bg-green-50 text-green-600' },
 ];
 
 const MATCH_TYPES = [
@@ -15,25 +15,8 @@ const MATCH_TYPES = [
     { value: 'regex', label: 'Regex', hint: 'For power users' },
 ];
 
-const inputStyle: React.CSSProperties = {
-    width: '100%',
-    padding: '10px 14px',
-    borderRadius: 8,
-    border: '1px solid #e2e8f0',
-    fontSize: 14,
-    color: '#0f172a',
-    outline: 'none',
-    backgroundColor: '#ffffff',
-    boxSizing: 'border-box',
-};
-
-const labelStyle: React.CSSProperties = {
-    display: 'block',
-    fontSize: 13,
-    fontWeight: 600,
-    color: '#334155',
-    marginBottom: 6,
-};
+const inputClass = "w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-900 outline-none bg-white focus:ring-2 focus:ring-slate-900 focus:border-transparent";
+const labelClass = "block text-[13px] font-semibold text-slate-700 mb-1.5";
 
 export default function PlaybookEditor() {
     const { id } = useParams<{ id: string }>();
@@ -91,19 +74,18 @@ export default function PlaybookEditor() {
 
     if (isLoading) {
         return (
-            <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc' }}>
-                <div style={{ width: 32, height: 32, border: '3px solid #e2e8f0', borderTopColor: '#0f172a', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+            <div className="min-h-screen flex items-center justify-center bg-slate-50">
+                <div className="w-8 h-8 border-3 border-slate-200 border-t-slate-900 rounded-full animate-spin" />
             </div>
         );
     }
 
     if (error || !playbook) {
         return (
-            <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#f8fafc' }}>
-                <div style={{ textAlign: 'center' }}>
-                    <p style={{ color: '#dc2626', marginBottom: 16 }}>Error loading playbook</p>
-                    <button onClick={() => navigate('/playbooks')} style={{ color: '#2563eb', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+            <div className="min-h-screen flex items-center justify-center bg-slate-50">
+                <div className="text-center">
+                    <p className="text-red-600 mb-4">Error loading playbook</p>
+                    <button onClick={() => navigate('/playbooks')} className="text-blue-600 bg-transparent border-none cursor-pointer underline">
                         Back to Playbooks
                     </button>
                 </div>
@@ -112,54 +94,42 @@ export default function PlaybookEditor() {
     }
 
     return (
-        <div style={{ fontFamily: "'Inter', system-ui, sans-serif", minHeight: '100vh', backgroundColor: '#f8fafc' }}>
+        <div className="font-['Inter',system-ui,sans-serif] min-h-screen bg-slate-50">
             {/* Header */}
-            <header style={{ backgroundColor: '#ffffff', borderBottom: '1px solid #e2e8f0' }}>
-                <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 32px', height: 64, display: 'flex', alignItems: 'center', gap: 16 }}>
-                    <Link to="/playbooks" style={{ display: 'flex', alignItems: 'center', color: '#64748b', textDecoration: 'none' }}>
+            <header className="bg-white border-b border-slate-200">
+                <div className="max-w-7xl mx-auto px-8 h-16 flex items-center gap-4">
+                    <Link to="/playbooks" className="flex items-center text-slate-500 no-underline hover:text-slate-700">
                         <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                         </svg>
                     </Link>
                     <Link to="/dashboard">
-                        <img src="/logo.png" alt="ContraRed" style={{ height: 32 }} />
+                        <img src="/logo.png" alt="ContraRed" className="h-8" />
                     </Link>
-                    <span style={{ color: '#e2e8f0', fontSize: 18 }}>›</span>
-                    <Link to="/playbooks" style={{ fontSize: 14, color: '#64748b', textDecoration: 'none', fontWeight: 500 }}>Playbooks</Link>
-                    <span style={{ color: '#e2e8f0', fontSize: 18 }}>›</span>
-                    <span style={{ fontSize: 14, fontWeight: 600, color: '#0f172a' }}>{playbook.name}</span>
-                    <span style={{
-                        marginLeft: 8,
-                        padding: '3px 10px',
-                        fontSize: 12,
-                        fontWeight: 600,
-                        borderRadius: 6,
-                        backgroundColor: playbook.is_public ? '#f0fdf4' : '#f1f5f9',
-                        color: playbook.is_public ? '#16a34a' : '#64748b',
-                    }}>
+                    <span className="text-slate-200 text-lg">&rsaquo;</span>
+                    <Link to="/playbooks" className="text-sm text-slate-500 no-underline font-medium hover:text-slate-700">Playbooks</Link>
+                    <span className="text-slate-200 text-lg">&rsaquo;</span>
+                    <span className="text-sm font-semibold text-slate-900">{playbook.name}</span>
+                    <span className={`ml-2 px-2.5 py-0.5 text-xs font-semibold rounded-md ${
+                        playbook.is_public ? 'bg-green-50 text-green-600' : 'bg-slate-100 text-slate-500'
+                    }`}>
                         {playbook.is_public ? 'Public' : 'Private'}
                     </span>
                 </div>
             </header>
 
-            <main style={{ maxWidth: 1280, margin: '0 auto', padding: '40px 32px' }}>
+            <main className="max-w-7xl mx-auto px-8 py-10">
                 {/* Title row */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
+                <div className="flex justify-between items-center mb-8">
                     <div>
-                        <h1 style={{ fontSize: 24, fontWeight: 700, color: '#0f172a', margin: 0 }}>Rules ({playbook.rules.length})</h1>
-                        <p style={{ fontSize: 14, color: '#64748b', margin: '4px 0 0' }}>
+                        <h1 className="text-2xl font-bold text-slate-900">Rules ({playbook.rules.length})</h1>
+                        <p className="text-sm text-slate-500 mt-1">
                             Detection rules applied when scanning documents with this playbook.
                         </p>
                     </div>
                     <button
                         onClick={() => setShowAddRule(true)}
-                        style={{
-                            display: 'flex', alignItems: 'center', gap: 8,
-                            padding: '10px 20px',
-                            backgroundColor: '#0f172a', color: '#ffffff',
-                            fontSize: 14, fontWeight: 600,
-                            borderRadius: 8, border: 'none', cursor: 'pointer',
-                        }}
+                        className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors"
                     >
                         <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
                         Add Rule
@@ -168,25 +138,25 @@ export default function PlaybookEditor() {
 
                 {/* Add Rule Panel */}
                 {showAddRule && (
-                    <div style={{ backgroundColor: '#ffffff', borderRadius: 12, border: '1px solid #e2e8f0', padding: 28, marginBottom: 24 }}>
-                        <h3 style={{ fontSize: 16, fontWeight: 700, color: '#0f172a', margin: '0 0 20px' }}>New Detection Rule</h3>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                    <div className="bg-white rounded-xl border border-slate-200 p-7 mb-6">
+                        <h3 className="text-base font-bold text-slate-900 mb-5">New Detection Rule</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
-                                <label style={labelStyle}>Clause Type</label>
+                                <label className={labelClass}>Clause Type</label>
                                 <input
                                     type="text"
                                     value={newRule.clause_type}
                                     onChange={(e) => setNewRule(prev => ({ ...prev, clause_type: e.target.value }))}
-                                    style={inputStyle}
+                                    className={inputClass}
                                     placeholder="e.g., Unlimited Liability"
                                 />
                             </div>
                             <div>
-                                <label style={labelStyle}>Risk Level</label>
+                                <label className={labelClass}>Risk Level</label>
                                 <select
                                     value={newRule.risk_level}
                                     onChange={(e) => setNewRule(prev => ({ ...prev, risk_level: e.target.value }))}
-                                    style={inputStyle}
+                                    className={inputClass}
                                 >
                                     {RISK_LEVELS.map(level => (
                                         <option key={level.value} value={level.value}>{level.label}</option>
@@ -194,101 +164,85 @@ export default function PlaybookEditor() {
                                 </select>
                             </div>
                             <div>
-                                <label style={labelStyle}>Match Type</label>
+                                <label className={labelClass}>Match Type</label>
                                 <select
                                     value={newRule.match_type}
                                     onChange={(e) => setNewRule(prev => ({ ...prev, match_type: e.target.value }))}
-                                    style={inputStyle}
+                                    className={inputClass}
                                 >
                                     {MATCH_TYPES.map(type => (
                                         <option key={type.value} value={type.value}>{type.label}</option>
                                     ))}
                                 </select>
-                                <p style={{ fontSize: 12, color: '#94a3b8', margin: '4px 0 0' }}>
+                                <p className="text-xs text-slate-400 mt-1">
                                     {MATCH_TYPES.find(t => t.value === newRule.match_type)?.hint}
                                 </p>
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingTop: 24 }}>
+                            <div className="flex items-center gap-2.5 pt-6">
                                 <input
                                     type="checkbox"
                                     id="dealBreaker"
                                     checked={newRule.is_deal_breaker}
                                     onChange={(e) => setNewRule(prev => ({ ...prev, is_deal_breaker: e.target.checked }))}
-                                    style={{ width: 16, height: 16, accentColor: '#0f172a', cursor: 'pointer' }}
+                                    className="w-4 h-4 accent-slate-900 cursor-pointer"
                                 />
-                                <label htmlFor="dealBreaker" style={{ fontSize: 14, fontWeight: 500, color: '#334155', cursor: 'pointer' }}>
+                                <label htmlFor="dealBreaker" className="text-sm font-medium text-slate-700 cursor-pointer">
                                     Deal Breaker
                                 </label>
                             </div>
-                            <div style={{ gridColumn: 'span 2' }}>
-                                <label style={labelStyle}>Suggested Fix</label>
+                            <div className="md:col-span-2">
+                                <label className={labelClass}>Suggested Fix</label>
                                 <input
                                     type="text"
                                     value={newRule.primary_position}
                                     onChange={(e) => setNewRule(prev => ({ ...prev, primary_position: e.target.value }))}
-                                    style={inputStyle}
+                                    className={inputClass}
                                     placeholder="e.g., Liability capped at 12 months of fees paid"
                                 />
                             </div>
-                            <div style={{ gridColumn: 'span 2' }}>
-                                <label style={labelStyle}>Detection Patterns</label>
-                                <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                            <div className="md:col-span-2">
+                                <label className={labelClass}>Detection Patterns</label>
+                                <div className="flex gap-2 mb-2">
                                     <input
                                         type="text"
                                         value={patternInput}
                                         onChange={(e) => setPatternInput(e.target.value)}
                                         onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), handleAddPattern())}
-                                        style={{ ...inputStyle, flex: 1 }}
+                                        className={`${inputClass} flex-1`}
                                         placeholder="e.g., unlimited liability"
                                     />
                                     <button
                                         type="button"
                                         onClick={handleAddPattern}
-                                        style={{
-                                            padding: '10px 16px', fontSize: 14, fontWeight: 500,
-                                            backgroundColor: '#f1f5f9', color: '#334155',
-                                            border: '1px solid #e2e8f0', borderRadius: 8, cursor: 'pointer',
-                                        }}
+                                        className="px-4 py-2.5 text-sm font-medium bg-slate-100 text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-200 transition-colors"
                                     >
                                         Add
                                     </button>
                                 </div>
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                                <div className="flex flex-wrap gap-2">
                                     {(newRule.detection_patterns || []).map((pattern, idx) => (
-                                        <span key={idx} style={{
-                                            display: 'inline-flex', alignItems: 'center', gap: 6,
-                                            padding: '4px 10px',
-                                            backgroundColor: '#eff6ff', color: '#2563eb',
-                                            fontSize: 13, borderRadius: 6, fontWeight: 500,
-                                        }}>
+                                        <span key={idx} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 text-blue-600 text-[13px] rounded-md font-medium">
                                             {pattern}
                                             <button
                                                 onClick={() => handleRemovePattern(idx)}
-                                                style={{ background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: 16, lineHeight: 1, padding: 0 }}
-                                            >×</button>
+                                                className="bg-transparent border-none text-slate-500 cursor-pointer text-base leading-none p-0 hover:text-slate-700"
+                                            >&times;</button>
                                         </span>
                                     ))}
                                 </div>
                             </div>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12, marginTop: 24, paddingTop: 20, borderTop: '1px solid #f1f5f9' }}>
+                        <div className="flex justify-end gap-3 mt-6 pt-5 border-t border-slate-100">
                             <button
                                 onClick={() => setShowAddRule(false)}
-                                style={{
-                                    padding: '10px 20px', fontSize: 14, fontWeight: 500, color: '#64748b',
-                                    backgroundColor: 'transparent', border: '1px solid #e2e8f0', borderRadius: 8, cursor: 'pointer',
-                                }}
+                                className="px-5 py-2.5 text-sm font-medium text-slate-500 bg-transparent border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
                             >
                                 Cancel
                             </button>
                             <button
                                 onClick={() => addRuleMutation.mutate(newRule)}
                                 disabled={!newRule.clause_type || !newRule.primary_position || addRuleMutation.isPending}
-                                style={{
-                                    padding: '10px 20px', fontSize: 14, fontWeight: 600, color: '#ffffff',
-                                    backgroundColor: '#0f172a', border: 'none', borderRadius: 8, cursor: 'pointer',
-                                    opacity: (!newRule.clause_type || !newRule.primary_position || addRuleMutation.isPending) ? 0.5 : 1,
-                                }}
+                                className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors disabled:opacity-50"
                             >
                                 {addRuleMutation.isPending ? 'Adding...' : 'Add Rule'}
                             </button>
@@ -298,54 +252,54 @@ export default function PlaybookEditor() {
 
                 {/* Rules Table */}
                 {playbook.rules.length > 0 ? (
-                    <div style={{ backgroundColor: '#ffffff', borderRadius: 12, border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                        <table className="w-full border-collapse">
                             <thead>
-                                <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                                    <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Clause Type</th>
-                                    <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Risk</th>
-                                    <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Match</th>
-                                    <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Patterns</th>
-                                    <th style={{ textAlign: 'right', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Actions</th>
+                                <tr className="bg-slate-50 border-b border-slate-200">
+                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Clause Type</th>
+                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Risk</th>
+                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Match</th>
+                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Patterns</th>
+                                    <th className="text-right px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {playbook.rules.map((rule: PlaybookRule) => {
                                     const riskLevel = RISK_LEVELS.find(l => l.value === rule.risk_level) || RISK_LEVELS[0];
                                     return (
-                                        <tr key={rule.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                            <td style={{ padding: '16px 24px' }}>
-                                                <span style={{ fontWeight: 600, color: '#0f172a', fontSize: 14 }}>{rule.clause_type}</span>
+                                        <tr key={rule.id} className="border-b border-slate-100">
+                                            <td className="px-6 py-4">
+                                                <span className="font-semibold text-slate-900 text-sm">{rule.clause_type}</span>
                                                 {rule.is_deal_breaker && (
-                                                    <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, backgroundColor: '#fef2f2', color: '#dc2626', padding: '2px 6px', borderRadius: 4 }}>
+                                                    <span className="ml-2 text-[11px] font-bold bg-red-50 text-red-600 px-1.5 py-0.5 rounded">
                                                         DEAL BREAKER
                                                     </span>
                                                 )}
                                             </td>
-                                            <td style={{ padding: '16px 24px' }}>
-                                                <span style={{ padding: '4px 10px', fontSize: 12, fontWeight: 600, borderRadius: 6, backgroundColor: riskLevel.bg, color: riskLevel.color }}>
+                                            <td className="px-6 py-4">
+                                                <span className={`px-2.5 py-1 text-xs font-semibold rounded-md ${riskLevel.className}`}>
                                                     {riskLevel.label}
                                                 </span>
                                             </td>
-                                            <td style={{ padding: '16px 24px', fontSize: 13, color: '#64748b' }}>{rule.match_type}</td>
-                                            <td style={{ padding: '16px 24px' }}>
-                                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxWidth: 260 }}>
+                                            <td className="px-6 py-4 text-[13px] text-slate-500">{rule.match_type}</td>
+                                            <td className="px-6 py-4">
+                                                <div className="flex flex-wrap gap-1 max-w-[260px]">
                                                     {rule.detection_patterns.slice(0, 3).map((p, i) => (
-                                                        <span key={i} style={{ fontSize: 12, backgroundColor: '#f1f5f9', color: '#475569', padding: '2px 8px', borderRadius: 4 }}>{p}</span>
+                                                        <span key={i} className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">{p}</span>
                                                     ))}
                                                     {rule.detection_patterns.length > 3 && (
-                                                        <span style={{ fontSize: 12, color: '#94a3b8' }}>+{rule.detection_patterns.length - 3} more</span>
+                                                        <span className="text-xs text-slate-400">+{rule.detection_patterns.length - 3} more</span>
                                                     )}
                                                 </div>
                                             </td>
-                                            <td style={{ padding: '16px 24px', textAlign: 'right' }}>
+                                            <td className="px-6 py-4 text-right">
                                                 <button
                                                     onClick={() => {
                                                         if (confirm('Delete this rule?')) {
                                                             deleteRuleMutation.mutate(rule.id);
                                                         }
                                                     }}
-                                                    style={{ fontSize: 13, fontWeight: 600, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }}
+                                                    className="text-[13px] font-semibold text-red-600 bg-transparent border-none cursor-pointer hover:text-red-700"
                                                 >
                                                     Delete
                                                 </button>
@@ -357,19 +311,15 @@ export default function PlaybookEditor() {
                         </table>
                     </div>
                 ) : (
-                    <div style={{ textAlign: 'center', padding: '64px 32px', backgroundColor: '#ffffff', borderRadius: 12, border: '1px solid #e2e8f0' }}>
-                        <svg width="48" height="48" fill="none" stroke="#cbd5e1" viewBox="0 0 24 24" style={{ margin: '0 auto 16px' }}>
+                    <div className="text-center py-16 px-8 bg-white rounded-xl border border-slate-200">
+                        <svg width="48" height="48" fill="none" stroke="#cbd5e1" viewBox="0 0 24 24" className="mx-auto mb-4">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                         </svg>
-                        <h3 style={{ fontSize: 18, fontWeight: 600, color: '#0f172a', margin: '0 0 8px' }}>No rules yet</h3>
-                        <p style={{ fontSize: 14, color: '#64748b', margin: '0 0 24px' }}>Add your first detection rule to start flagging risky clauses.</p>
+                        <h3 className="text-lg font-semibold text-slate-900 mb-2">No rules yet</h3>
+                        <p className="text-sm text-slate-500 mb-6">Add your first detection rule to start flagging risky clauses.</p>
                         <button
                             onClick={() => setShowAddRule(true)}
-                            style={{
-                                padding: '10px 24px', fontSize: 14, fontWeight: 600,
-                                color: '#ffffff', backgroundColor: '#0f172a',
-                                border: 'none', borderRadius: 8, cursor: 'pointer',
-                            }}
+                            className="px-6 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors"
                         >
                             Add Rule
                         </button>

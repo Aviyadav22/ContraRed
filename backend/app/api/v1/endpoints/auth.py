@@ -2,6 +2,7 @@
 Authentication endpoints.
 """
 
+import logging
 import re
 from datetime import datetime, timedelta
 from typing import Optional
@@ -24,6 +25,8 @@ from app.core.security import (
     decode_token,
     Token,
 )
+
+logger = logging.getLogger(__name__)
 
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_DURATION_MINUTES = 15
@@ -131,8 +134,7 @@ async def register(
         )
         
         db.add(user)
-        await db.commit()
-        await db.refresh(user)
+        await db.flush()
 
         # Audit log
         await log_audit_event(
@@ -142,6 +144,7 @@ async def register(
             user_agent=request.headers.get("user-agent"),
         )
         await db.commit()
+        await db.refresh(user)
 
         return UserResponse(
             id=str(user.id),
@@ -154,10 +157,10 @@ async def register(
     except HTTPException:
         raise
     except Exception as e:
-        import traceback
+        logger.error("Registration failed", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Registration error: {type(e).__name__}: {str(e)}"
+            detail="Registration failed. Please try again."
         )
 
 
@@ -320,7 +323,6 @@ async def change_password(
         )
 
     current_user.password_hash = get_password_hash(data.new_password)
-    await db.commit()
 
     await log_audit_event(
         db=db, user=current_user, action="password_changed",

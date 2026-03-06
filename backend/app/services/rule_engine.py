@@ -6,6 +6,7 @@ returning matched clauses with risk levels and exact text snippets
 for frontend highlighting.
 """
 
+import logging
 import re
 import hashlib
 from typing import List, Optional
@@ -13,6 +14,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from app.services.text_normalizer import normalize_text
+
+logger = logging.getLogger(__name__)
 
 
 class RiskLevel(str, Enum):
@@ -259,7 +262,7 @@ class RuleEngine:
                 try:
                     compiled_patterns.append(re.compile(pattern, re.IGNORECASE))
                 except re.error as e:
-                    print(f"Warning: Invalid pattern in rule {rule.id}: {e}")
+                    logger.warning("Invalid pattern in rule %s: %s", rule.id, e)
             self._compiled_rules.append((rule, compiled_patterns))
     
     def evaluate(self, text: str) -> List[RuleMatch]:
@@ -475,7 +478,7 @@ class RuleEngine:
                         safe_patterns.append(pattern)
                 except re.error as e:
                     # Skip invalid regex patterns instead of crashing
-                    print(f"Warning: Invalid regex pattern '{pattern}' in rule {rule.id}: {e}")
+                    logger.warning("Invalid regex pattern '%s' in rule %s: %s", pattern, rule.id, e)
                     continue
             
             # Skip rules with no valid patterns

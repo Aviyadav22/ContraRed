@@ -7,11 +7,14 @@ summary and redline suggestions.
 """
 
 import json
+import logging
 import re
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # The comprehensive ContraRed AI system prompt
 CONTRARED_SYSTEM_PROMPT = """
@@ -104,7 +107,7 @@ class GeminiAnalyzer:
                 genai.configure(api_key=settings.GEMINI_API_KEY)
                 self._client = genai.GenerativeModel(settings.GEMINI_MODEL)
             except ImportError:
-                print("google-generativeai not installed")
+                logger.warning("google-generativeai not installed")
                 self._enabled = False
         return self._client
     
@@ -200,14 +203,14 @@ Return your analysis as a single valid JSON object.
                     response_text = candidate.content.parts[0].text
             
             if not response_text:
-                print("Gemini returned empty response")
+                logger.warning("Gemini returned empty response")
                 return self._fallback_result()
             
             # Parse JSON from response
             return self._parse_response(response_text)
             
         except Exception as e:
-            print(f"Gemini analysis error: {type(e).__name__}: {e}")
+            logger.error("Gemini analysis error: %s: %s", type(e).__name__, e)
             return self._fallback_result()
     
     def _parse_response(self, response_text: str) -> AIAnalysisResult:
@@ -253,8 +256,8 @@ Return your analysis as a single valid JSON object.
             )
             
         except json.JSONDecodeError as e:
-            print(f"Failed to parse Gemini JSON: {e}")
-            print(f"Raw response: {response_text[:500]}...")
+            logger.error("Failed to parse Gemini JSON: %s", e)
+            logger.debug("Raw response: %s...", response_text[:500])
             return self._fallback_result(response_text)
     
     def _fallback_result(self, raw_response: str = "") -> AIAnalysisResult:

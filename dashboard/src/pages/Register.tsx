@@ -20,8 +20,16 @@ export default function Register() {
             return;
         }
 
-        if (password.length < 6) {
-            setError('Password must be at least 6 characters');
+        // Validate password strength (must match backend requirements)
+        const passwordErrors: string[] = [];
+        if (password.length < 8) passwordErrors.push('at least 8 characters');
+        if (!/[A-Z]/.test(password)) passwordErrors.push('an uppercase letter');
+        if (!/[a-z]/.test(password)) passwordErrors.push('a lowercase letter');
+        if (!/\d/.test(password)) passwordErrors.push('a digit');
+        if (!/[!@#$%^&*(),.?":{}|<>]/.test(password)) passwordErrors.push('a special character');
+
+        if (passwordErrors.length > 0) {
+            setError(`Password must contain ${passwordErrors.join(', ')}`);
             return;
         }
 
@@ -31,7 +39,7 @@ export default function Register() {
             await register(name, email, password);
             navigate('/dashboard');
         } catch (err) {
-            setError((err as Error).message || 'Registration failed');
+            setError(err instanceof Error ? err.message : 'Registration failed');
         } finally {
             setLoading(false);
         }
@@ -93,7 +101,7 @@ export default function Register() {
                                 className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-900 text-sm focus:ring-2 focus:ring-slate-900 focus:border-transparent transition placeholder:text-slate-400"
                                 placeholder="••••••••"
                                 required
-                                minLength={6}
+                                minLength={8}
                             />
                         </div>
 
@@ -109,7 +117,7 @@ export default function Register() {
                                 className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-900 text-sm focus:ring-2 focus:ring-slate-900 focus:border-transparent transition placeholder:text-slate-400"
                                 placeholder="••••••••"
                                 required
-                                minLength={6}
+                                minLength={8}
                             />
                         </div>
 

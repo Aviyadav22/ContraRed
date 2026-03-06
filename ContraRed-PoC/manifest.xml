@@ -8,11 +8,11 @@
   <Version>1.0.0.0</Version>
   <ProviderName>ContraRed</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="ContraRed PoC"/>
-  <Description DefaultValue="Redline PoC - Testing OOXML insertion for Track Changes"/>
-  
-  <IconUrl DefaultValue="https://contrared-addin.netlify.app/assets/icon-32.png"/>
-  <SupportUrl DefaultValue="https://contrared.ai"/>
+  <DisplayName DefaultValue="ContraRed"/>
+  <Description DefaultValue="AI-powered contract redlining and review for Microsoft Word"/>
+
+  <IconUrl DefaultValue="https://contrared-addin.netlify.app/assets/logo.png"/>
+  <SupportUrl DefaultValue="https://contrared-dashboard.netlify.app"/>
 
   <AppDomains>
     <AppDomain>https://contrared-addin.netlify.app</AppDomain>

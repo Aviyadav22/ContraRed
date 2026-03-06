@@ -10,6 +10,7 @@ import PlaybookEditor from '@/pages/PlaybookEditor';
 import Billing from '@/pages/Billing';
 import AuditLogs from '@/pages/AuditLogs';
 import Team from '@/pages/Team';
+import NotFound from '@/pages/NotFound';
 
 
 const queryClient = new QueryClient({
@@ -60,6 +61,8 @@ export default function App() {
           <Route path="/billing" element={<AdminRoute><Billing /></AdminRoute>} />
           <Route path="/team" element={<AdminRoute><Team /></AdminRoute>} />
 
+          {/* Catch-all 404 */}
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>

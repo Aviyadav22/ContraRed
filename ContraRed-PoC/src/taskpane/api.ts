@@ -23,44 +23,12 @@ interface User {
     subscription_tier: string;
 }
 
-interface RiskItem {
-    id: string;
-    clause_text: string;
-    risk_level: 'RED' | 'YELLOW' | 'GREEN';  // Strict uppercase enum
-    rule_name: string;
-    clause_type: string;
-    paragraph_hash?: string;  // SHA-256 for drift detection (Box 1)
-    ai_explanation?: string;
-    suggested_fix?: string;
-    is_deal_breaker: boolean;
-}
-
-interface AnalysisResult {
-    document_id: string;
-    filename: string;
-    total_risks: number;
-    risk_summary: { red: number; yellow: number; green: number };
-    risks: RiskItem[];
-    tokens_used: number;
-    paragraph_hashes?: Record<string, string>;  // hash -> text for drift detection
-    source_type?: 'text' | 'docx';
-}
-
 interface RedlineResponse {
     original_text: string;
     suggested_text: string;
     ooxml: string;
     match_confidence?: number;  // 0.0-1.0 confidence of text anchor match
     match_method?: string;  // "hash", "exact", or "fuzzy"
-}
-
-interface ContractSummary {
-    document_id: string;
-    summary: string;
-    risk_level: string;  // Critical/High/Medium/Low
-    key_concerns: string[];
-    recommendation: string;
-    tokens_used: number;
 }
 
 // AI-First Analysis Types (for /analyze-full endpoint)
@@ -148,7 +116,7 @@ class ContraRedAPI {
                 this.currentUser = JSON.parse(userStored);
             }
         } catch {
-            console.log('No stored tokens found');
+            console.log('[ContraRed] No stored tokens found');
         }
     }
 
@@ -244,51 +212,6 @@ class ContraRedAPI {
     // Document endpoints
     // ========================================================================
 
-    async analyzeDocument(text: string, filename?: string, playbookId?: string): Promise<AnalysisResult> {
-        return this.request('/documents/analyze', {
-            method: 'POST',
-            body: JSON.stringify({ text, filename, playbook_id: playbookId }),
-        });
-    }
-
-    /**
-     * Analyze a DOCX file using Box 1 Structure Extractor.
-     * Preserves document hierarchy and generates paragraph hashes.
-     */
-    async analyzeFile(file: Blob, filename: string, playbookId?: string): Promise<AnalysisResult> {
-        const formData = new FormData();
-        formData.append('file', file, filename);
-        if (playbookId) {
-            formData.append('playbook_id', playbookId);
-        }
-
-        const headers: HeadersInit = {};
-        if (this.accessToken) {
-            headers['Authorization'] = `Bearer ${this.accessToken}`;
-        }
-        // Note: Don't set Content-Type - browser will set it with boundary for FormData
-
-        const response = await fetch(`${API_BASE_URL}/documents/analyze-file`, {
-            method: 'POST',
-            headers,
-            body: formData,
-        });
-
-        if (!response.ok) {
-            const error = await response.json().catch(() => ({ detail: 'Analysis failed' }));
-            throw new Error(error.detail || `HTTP ${response.status}`);
-        }
-
-        return response.json();
-    }
-
-    async generateRedline(documentId: string, riskId: string): Promise<RedlineResponse> {
-        return this.request('/documents/redline', {
-            method: 'POST',
-            body: JSON.stringify({ document_id: documentId, risk_id: riskId }),
-        });
-    }
-
     /**
      * Generate redline in ZDR mode (no database lookup).
      * Use when document text was analyzed but not persisted.
@@ -308,21 +231,6 @@ class ContraRedAPI {
                 original_text: originalText,
                 suggested_text: suggestedText,
                 paragraph_hash: paragraphHash,
-            }),
-        });
-    }
-
-    /**
-     * Get AI-generated contract summary.
-     * Returns overall risk level, key concerns, and recommendation.
-     */
-    async getSummary(documentId: string, contractText: string, playbookId?: string): Promise<ContractSummary> {
-        return this.request('/documents/summarize', {
-            method: 'POST',
-            body: JSON.stringify({
-                document_id: documentId,
-                contract_text: contractText,
-                playbook_id: playbookId,
             }),
         });
     }
@@ -404,4 +312,4 @@ class ContraRedAPI {
 
 // Export singleton instance
 export const api = new ContraRedAPI();
-export type { User, RiskItem, AnalysisResult, RedlineResponse, ContractSummary, Playbook, PlaybookRule, PlaybookDetail, AIRedlineItem, AIAnalysisResult };
+export type { User, RedlineResponse, Playbook, PlaybookRule, PlaybookDetail, AIRedlineItem, AIAnalysisResult };

@@ -5,15 +5,14 @@
  * Now with AI-First analysis using Gemini for holistic contract review.
  */
 
-import { api, RiskItem, AnalysisResult, AIRedlineItem, AIAnalysisResult } from './api';
+import { api, AIRedlineItem, AIAnalysisResult } from './api';
 import Fuse from 'fuse.js';
 
 // ============================================================================
 // State
 // ============================================================================
 
-let currentAnalysis: AnalysisResult | null = null;
-let currentAIAnalysis: AIAnalysisResult | null = null;  // AI-first analysis result
+let currentAIAnalysis: AIAnalysisResult | null = null;
 const fixedRisks: Set<string> = new Set();
 
 // ============================================================================
@@ -212,7 +211,7 @@ async function loadPlaybooks(): Promise<void> {
       select.appendChild(option);
     });
   } catch (error) {
-    console.warn('Could not load playbooks:', error);
+    console.warn('[ContraRed] Could not load playbooks:', error);
     // Keep default option, don't crash
   }
 }
@@ -245,7 +244,7 @@ async function handleLogin(): Promise<void> {
 
 function handleLogout(): void {
   api.logout();
-  currentAnalysis = null;
+  currentAIAnalysis = null;
   fixedRisks.clear();
 
   // Reset UI
@@ -368,28 +367,22 @@ async function scanDocument(): Promise<void> {
 
     // Step 2: Call AI-First analysis API (with selected playbook)
     const selectedPlaybookId = playbookSelect()?.value || undefined;
-    console.log('Starting AI analysis with playbook:', selectedPlaybookId || 'Default');
-    console.log('Document text length:', documentText.length);
+    console.log('[ContraRed] Starting analysis...');
 
     const aiResult = await api.analyzeWithAI(documentText, 'document.docx', selectedPlaybookId);
-    console.log('AI analysis complete:', aiResult);
-    console.log('Executive summary:', aiResult.executive_summary);
-    console.log('Redlines count:', aiResult.redlines?.length);
 
     currentAIAnalysis = aiResult;
     fixedRisks.clear();
 
     // Step 3: Display AI results (executive summary + redlines)
-    console.log('Calling displayAIResults...');
     displayAIResults(aiResult);
 
     // Step 4: Highlight risks in document using three-tier search
-    console.log('Calling highlightAIRedlines...');
     await highlightAIRedlines(aiResult.redlines);
-    console.log('Scan complete!');
+    console.log('[ContraRed] Analysis complete:', { risks: aiResult.redlines?.length, tokens: aiResult.tokens_used });
 
   } catch (error) {
-    console.error('AI Scan failed:', error);
+    console.error('[ContraRed] Scan failed:', error);
     alert(`AI Scan failed: ${(error as Error).message}`);
   } finally {
     setScanLoading(false);
@@ -400,18 +393,13 @@ async function scanDocument(): Promise<void> {
  * Display AI analysis results in the UI.
  */
 function displayAIResults(result: AIAnalysisResult): void {
-  console.log('=== displayAIResults START ===');
-  console.log('Result object:', JSON.stringify(result, null, 2));
-
   // Show results section (uses inline style, not class)
   const results = document.getElementById('resultsSection') as HTMLElement | null;
-  console.log('resultsSection element:', results);
 
   if (results) {
     results.style.display = 'block';
-    console.log('✓ Results section style set to block');
   } else {
-    console.error('✗ resultsSection element not found in DOM!');
+    console.error('[ContraRed] resultsSection element not found in DOM');
     return;  // Can't continue if no results section
   }
 
@@ -439,11 +427,15 @@ function displayAIResults(result: AIAnalysisResult): void {
       riskLevelBadge.className = `risk-level-badge level-${level.toLowerCase()}`;
     }
 
-    // Display executive summary points
+    // Display executive summary points (safe DOM creation to prevent XSS)
     if (keyConcernsDiv && result.executive_summary.length > 0) {
-      keyConcernsDiv.innerHTML = result.executive_summary
-        .map(point => `<div class="concern-item">• ${point}</div>`)
-        .join('');
+      keyConcernsDiv.innerHTML = '';
+      result.executive_summary.forEach(point => {
+        const div = document.createElement('div');
+        div.className = 'concern-item';
+        div.textContent = '\u2022 ' + point;
+        keyConcernsDiv.appendChild(div);
+      });
     }
 
     if (recommendationDiv) {
@@ -451,15 +443,20 @@ function displayAIResults(result: AIAnalysisResult): void {
     }
   }
 
-  // Display redlines as risk cards
-  const list = riskList();
+  // Display redlines as risk cards — clean up old event listeners by replacing container
+  let list = riskList();
   if (!list) return;
+  const parent = list.parentNode;
+  if (parent) {
+    const newList = list.cloneNode(false) as HTMLElement;
+    parent.replaceChild(newList, list);
+    list = newList;
+  }
   list.innerHTML = '';
 
   if (result.redlines.length === 0) {
     const empty = emptyState();
     if (empty) empty.style.display = 'block';
-    console.log('No redlines - showing empty state');
     return;
   }
 
@@ -481,7 +478,7 @@ function displayAIResults(result: AIAnalysisResult): void {
 /**
  * Create a risk card for an AI redline item.
  */
-function createAIRedlineCard(redline: AIRedlineItem, documentId: string): HTMLElement {
+function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLElement {
   const card = document.createElement('div');
   card.className = 'risk-card';
   card.id = `risk-${redline.id}`;
@@ -490,21 +487,25 @@ function createAIRedlineCard(redline: AIRedlineItem, documentId: string): HTMLEl
   const truncatedClause = redline.original_text.length > 100
     ? redline.original_text.slice(0, 100) + '...'
     : redline.original_text;
+  const truncatedFix = redline.suggested_fix
+    ? (redline.suggested_fix.length > 150 ? redline.suggested_fix.slice(0, 150) + '...' : redline.suggested_fix)
+    : '';
 
+  // Use innerHTML for static structure only; dynamic text set via textContent below
   card.innerHTML = `
     <div class="risk-card-header">
       <div class="risk-indicator ${levelClass}"></div>
-      <div class="risk-title">${redline.rule_name}</div>
+      <div class="risk-title"></div>
     </div>
-    <div class="risk-clause">"${truncatedClause}"</div>
-    <div class="risk-explanation">${redline.explanation}</div>
+    <div class="risk-clause"></div>
+    <div class="risk-explanation"></div>
     ${redline.suggested_fix ? `
       <div class="suggested-fix">
-        <strong>Suggested Fix:</strong> ${redline.suggested_fix.slice(0, 150)}${redline.suggested_fix.length > 150 ? '...' : ''}
+        <strong>Suggested Fix:</strong> <span class="suggested-fix-text"></span>
       </div>
     ` : ''}
     <div class="risk-actions">
-      <button class="btn btn-secondary btn-sm highlight-btn" data-text="${encodeURIComponent(redline.original_text)}">
+      <button class="btn btn-secondary btn-sm highlight-btn">
         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
@@ -512,7 +513,7 @@ function createAIRedlineCard(redline: AIRedlineItem, documentId: string): HTMLEl
         Highlight
       </button>
       ${redline.suggested_fix ? `
-        <button class="btn btn-primary btn-sm fix-btn" data-docid="${documentId}" data-redlineid="${redline.id}">
+        <button class="btn btn-primary btn-sm fix-btn">
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
           </svg>
@@ -520,16 +521,25 @@ function createAIRedlineCard(redline: AIRedlineItem, documentId: string): HTMLEl
         </button>
       ` : ''}
     </div>
-    <div class="fixed-badge">✓ Fixed</div>
+    <div class="fixed-badge">\u2713 Fixed</div>
   `;
+
+  // Set dynamic text content safely to prevent XSS
+  const ruleNameEl = card.querySelector('.risk-title');
+  if (ruleNameEl) ruleNameEl.textContent = redline.rule_name;
+  const clauseEl = card.querySelector('.risk-clause');
+  if (clauseEl) clauseEl.textContent = '"' + truncatedClause + '"';
+  const explanationEl = card.querySelector('.risk-explanation');
+  if (explanationEl) explanationEl.textContent = redline.explanation;
+  const suggestedFixEl = card.querySelector('.suggested-fix-text');
+  if (suggestedFixEl) suggestedFixEl.textContent = truncatedFix;
 
   // Bind button handlers
   const highlightBtn = card.querySelector('.highlight-btn');
   const fixBtn = card.querySelector('.fix-btn');
 
   highlightBtn?.addEventListener('click', async () => {
-    const text = decodeURIComponent((highlightBtn as HTMLElement).dataset.text || '');
-    await highlightAIText(text, redline.risk_level);
+    await highlightAIText(redline.original_text, redline.risk_level);
   });
 
   fixBtn?.addEventListener('click', async () => {
@@ -554,14 +564,14 @@ async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW'):
         result.range.select();
         await context.sync();
 
-        console.log(`Highlighted using ${result.method} match (confidence: ${result.confidence.toFixed(2)})`);
+        console.log(`[ContraRed] Highlighted via ${result.method} match (confidence: ${result.confidence.toFixed(2)})`);
       } else {
-        console.warn('Could not find text in document:', searchText.slice(0, 50) + '...');
+        console.warn('[ContraRed] Could not find text in document:', searchText.slice(0, 50) + '...');
         alert('Could not locate this clause in the document. The text may have been modified.');
       }
     });
   } catch (error) {
-    console.error('Highlight error:', error);
+    console.error('[ContraRed] Highlight error:', error);
   }
 }
 
@@ -581,10 +591,10 @@ async function highlightAIRedlines(redlines: AIRedlineItem[]): Promise<void> {
         }
       }
       await context.sync();
-      console.log(`Highlighted ${redlines.length} AI redlines`);
+      console.log(`[ContraRed] Highlighted ${redlines.length} redlines in document`);
     });
   } catch (error) {
-    console.error('Bulk highlight error:', error);
+    console.error('[ContraRed] Bulk highlight error:', error);
   }
 }
 
@@ -622,61 +632,11 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement):
       fixedRisks.add(redline.id);
       cardElement.classList.add('fixed');
 
-      console.log('Applied AI fix for:', redline.rule_name);
+      console.log('[ContraRed] Applied fix for:', redline.rule_name);
     });
   } catch (error) {
-    console.error('Apply redline error:', error);
+    console.error('[ContraRed] Apply redline error:', error);
     alert(`Failed to apply fix: ${(error as Error).message}`);
-  }
-}
-
-async function fetchAndDisplaySummary(documentId: string, contractText: string, playbookId?: string): Promise<void> {
-  const summarySection = document.getElementById('aiSummarySection');
-  const riskLevelBadge = document.getElementById('riskLevelBadge');
-  const keyConcernsDiv = document.getElementById('keyConcerns');
-  const recommendationDiv = document.getElementById('recommendation');
-
-  if (!summarySection) return;
-
-  try {
-    // Show section with loading state
-    summarySection.style.display = 'block';
-    if (riskLevelBadge) riskLevelBadge.textContent = 'Analyzing...';
-    if (keyConcernsDiv) keyConcernsDiv.innerHTML = '<div style="color: var(--text-muted);">Generating AI summary...</div>';
-    if (recommendationDiv) recommendationDiv.textContent = '';
-
-    // Fetch AI summary
-    const summary = await api.getSummary(documentId, contractText, playbookId);
-
-    // Update risk level badge with appropriate color
-    if (riskLevelBadge) {
-      riskLevelBadge.textContent = summary.risk_level;
-      const levelColors: Record<string, string> = {
-        'Critical': 'var(--danger)',
-        'High': 'var(--warning)',
-        'Medium': 'var(--warning)',
-        'Low': 'var(--success)'
-      };
-      riskLevelBadge.style.color = levelColors[summary.risk_level] || 'var(--text-muted)';
-    }
-
-    // Display key concerns as bullet points
-    if (keyConcernsDiv && summary.key_concerns.length > 0) {
-      keyConcernsDiv.innerHTML = summary.key_concerns
-        .map(c => `<div style="font-size: 12px; color: var(--text-primary); margin-bottom: 4px;">• ${c}</div>`)
-        .join('');
-    }
-
-    // Display recommendation
-    if (recommendationDiv && summary.recommendation) {
-      recommendationDiv.textContent = `💡 ${summary.recommendation}`;
-    }
-
-  } catch (error) {
-    console.error('Summary fetch failed:', error);
-    if (keyConcernsDiv) {
-      keyConcernsDiv.innerHTML = '<div style="color: var(--warning);">Could not generate AI summary</div>';
-    }
   }
 }
 
@@ -822,252 +782,7 @@ function stopReasoningLoader(): void {
 }
 
 // ============================================================================
-// Results Display
-// ============================================================================
-
-function displayResults(result: AnalysisResult): void {
-  // Show results section
-  if (resultsSection()) resultsSection()!.style.display = 'block';
-
-  // Update summary counts
-  if (redCount()) redCount()!.textContent = String(result.risk_summary.red);
-  if (yellowCount()) yellowCount()!.textContent = String(result.risk_summary.yellow);
-  if (greenCount()) greenCount()!.textContent = String(result.risk_summary.green);
-  if (riskCount()) riskCount()!.textContent = `${result.total_risks} items`;
-
-  // Render risk cards
-  const list = riskList();
-  const empty = emptyState();
-
-  if (!list) return;
-  list.innerHTML = '';
-
-  if (result.risks.length === 0) {
-    if (empty) empty.style.display = 'block';
-    return;
-  }
-
-  if (empty) empty.style.display = 'none';
-
-  // Sort: RED first, then YELLOW, then GREEN
-  const sortedRisks = [...result.risks].sort((a, b) => {
-    const order = { RED: 0, YELLOW: 1, GREEN: 2 };
-    return order[a.risk_level] - order[b.risk_level];
-  });
-
-  sortedRisks.forEach((risk) => {
-    const card = createRiskCard(risk, result.document_id);
-    list.appendChild(card);
-  });
-}
-
-function createRiskCard(risk: RiskItem, documentId: string): HTMLElement {
-  const card = document.createElement('div');
-  card.className = 'risk-card';
-  card.id = `risk-${risk.id}`;
-
-  const levelClass = risk.risk_level.toLowerCase();
-  const truncatedClause = risk.clause_text.length > 100
-    ? risk.clause_text.slice(0, 100) + '...'
-    : risk.clause_text;
-
-  card.innerHTML = `
-        <div class="risk-card-header">
-            <div class="risk-indicator ${levelClass}"></div>
-            <div class="risk-title">${risk.rule_name}</div>
-            ${risk.is_deal_breaker ? '<span class="risk-deal-breaker">DEAL BREAKER</span>' : ''}
-        </div>
-        <div class="risk-clause">"${truncatedClause}"</div>
-        ${risk.ai_explanation ? `<div class="risk-explanation">${risk.ai_explanation}</div>` : ''}
-        <div class="risk-actions">
-            <button class="btn btn-secondary btn-sm highlight-btn" data-clause="${encodeURIComponent(risk.clause_text)}">
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
-                </svg>
-                Highlight
-            </button>
-            ${risk.risk_level !== 'GREEN' && risk.suggested_fix ? `
-                <button class="btn btn-primary btn-sm fix-btn" data-docid="${documentId}" data-riskid="${risk.id}">
-                    <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                    </svg>
-                    Fix
-                </button>
-            ` : ''}
-        </div>
-        <div class="fixed-badge">✓ Fixed</div>
-    `;
-
-  // Bind button handlers
-  const highlightBtn = card.querySelector('.highlight-btn');
-  const fixBtn = card.querySelector('.fix-btn');
-
-  highlightBtn?.addEventListener('click', () => {
-    const clause = decodeURIComponent((highlightBtn as HTMLElement).dataset.clause || '');
-    highlightRisk(clause, risk.risk_level);
-  });
-
-  fixBtn?.addEventListener('click', async () => {
-    const docId = (fixBtn as HTMLElement).dataset.docid!;
-    const riskId = (fixBtn as HTMLElement).dataset.riskid!;
-    await applyRedline(docId, riskId, risk, card);
-  });
-
-  return card;
-}
-
-// ============================================================================
-// Risk Highlighting
-// ============================================================================
-
-async function highlightRisk(clauseText: string, riskLevel: string): Promise<void> {
-  // Validate search string - Word API has a 255 character limit
-  if (!clauseText || clauseText.trim().length === 0) {
-    alert('No text to highlight.');
-    return;
-  }
-
-  // Truncate if too long (Word API limit is 255 chars)
-  let searchText = clauseText.trim();
-  if (searchText.length > 250) {
-    // Use first 250 chars to leave buffer for edge cases
-    searchText = searchText.substring(0, 250);
-  }
-
-  // Remove special characters that can break search
-  searchText = searchText.replace(/[\r\n\t]+/g, ' ').trim();
-
-  if (searchText.length < 3) {
-    alert('Search text too short to highlight reliably.');
-    return;
-  }
-
-  const colorMap: Record<string, string> = {
-    RED: 'Red',
-    YELLOW: 'Yellow',
-    GREEN: 'BrightGreen'
-  };
-  const highlightColor = colorMap[riskLevel] || 'Yellow';
-
-  try {
-    await Word.run(async (context) => {
-      // Search for ALL occurrences (handles duplicate text)
-      const searchResults = context.document.body.search(searchText, {
-        matchCase: false,
-        matchWholeWord: false
-      });
-      searchResults.load('font');
-      await context.sync();
-
-      if (searchResults.items.length === 0) {
-        alert('Could not find this text in the document. It may have been modified.');
-        return;
-      }
-
-      // Highlight ALL matches
-      searchResults.items.forEach((item) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        item.font.highlightColor = highlightColor as any;
-      });
-
-      // Scroll to the first match
-      searchResults.items[0].select();
-
-      await context.sync();
-    });
-  } catch (error) {
-    console.error('Highlight error:', error);
-    const errMsg = (error as Error).message || String(error);
-    if (errMsg.includes('SearchStringInvalidOrTooLong')) {
-      alert('Text is too long or contains special characters that cannot be searched.');
-    } else {
-      alert(`Highlight failed: ${errMsg}`);
-    }
-  }
-}
-
-// ============================================================================
-// Redline Application
-// ============================================================================
-
-async function applyRedline(
-  documentId: string,
-  riskId: string,
-  risk: RiskItem,
-  cardElement: HTMLElement
-): Promise<void> {
-  // Prevent double-clicks
-  if (fixedRisks.has(riskId)) return;
-
-  const fixBtn = cardElement.querySelector('.fix-btn') as HTMLButtonElement;
-  if (fixBtn) fixBtn.disabled = true;
-
-  // Validate and sanitize search text (same as highlightRisk)
-  let searchText = (risk.clause_text || '').trim();
-  if (searchText.length > 250) {
-    searchText = searchText.substring(0, 250);
-  }
-  searchText = searchText.replace(/[\r\n\t]+/g, ' ').trim();
-
-  if (searchText.length < 3) {
-    alert('Text too short to find in document.');
-    if (fixBtn) fixBtn.disabled = false;
-    return;
-  }
-
-  try {
-    // Use ZDR mode redline generation with paragraph_hash for better matching
-    const redline = await api.generateRedlineZDR(
-      documentId,
-      riskId,
-      risk.clause_text,
-      risk.suggested_fix || risk.clause_text,
-      risk.paragraph_hash
-    );
-
-    // Log match confidence for debugging
-    if (redline.match_confidence && redline.match_confidence < 1.0) {
-      console.log(`Redline matched with ${(redline.match_confidence * 100).toFixed(0)}% confidence (${redline.match_method})`);
-    }
-
-    // Apply in Word
-    await Word.run(async (context) => {
-      // Find the clause
-      const searchResults = context.document.body.search(searchText, {
-        matchCase: false
-      });
-      searchResults.load('items');
-      await context.sync();
-
-      if (searchResults.items.length === 0) {
-        throw new Error('Could not find this text in the document');
-      }
-
-      // Replace the FIRST match with the redline OOXML
-      const range = searchResults.items[0];
-      range.insertOoxml(redline.ooxml, Word.InsertLocation.replace);
-      await context.sync();
-    });
-
-    // Mark as fixed in UI
-    fixedRisks.add(riskId);
-    cardElement.classList.add('fixed');
-
-  } catch (error) {
-    console.error('Redline failed:', error);
-    const errMsg = (error as Error).message || String(error);
-    if (errMsg.includes('SearchStringInvalidOrTooLong')) {
-      alert('Text is too long or contains special characters that cannot be fixed automatically.');
-    } else {
-      alert(`Failed to apply fix: ${errMsg}`);
-    }
-    if (fixBtn) fixBtn.disabled = false;
-  }
-}
-
-// ============================================================================
 // Exports (for testing)
 // ============================================================================
 
-export { scanDocument, highlightRisk, applyRedline };
+export { scanDocument, highlightAIText, applyAIRedline };

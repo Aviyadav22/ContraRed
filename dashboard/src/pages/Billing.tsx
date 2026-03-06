@@ -7,83 +7,76 @@ export default function Billing() {
     const plans = [
         {
             name: 'Starter',
-            price: '₹0',
+            price: '\u20b90',
             period: '/month',
             features: ['Basic clause detection', '5 documents/month', 'Default playbook', 'Community support'],
             current: user?.subscription_tier === 'free',
-            accent: '#475569',
+            popular: false,
+            accent: 'slate',
         },
         {
             name: 'Pro',
-            price: '₹4,100',
+            price: '\u20b94,100',
             period: '/month',
             features: ['All clause detection', 'Unlimited documents', 'Custom playbooks', 'Priority support'],
             current: user?.subscription_tier === 'pro',
             popular: true,
-            accent: '#0f172a',
+            accent: 'slate',
         },
         {
             name: 'Enterprise',
-            price: '₹16,500',
+            price: '\u20b916,500',
             period: '/month',
             features: ['Everything in Pro', 'Custom integrations', 'SLA guarantee', 'Dedicated account manager'],
             current: user?.subscription_tier === 'enterprise',
-            accent: '#475569',
+            popular: false,
+            accent: 'slate',
         },
     ];
 
     return (
-        <div style={{ fontFamily: "'Inter', system-ui, sans-serif", minHeight: '100vh', backgroundColor: '#f8fafc' }}>
+        <div className="font-['Inter',system-ui,sans-serif] min-h-screen bg-slate-50">
             <AppHeader />
 
-            <main style={{ maxWidth: 1280, margin: '0 auto', padding: '40px 32px' }}>
-                <div style={{ marginBottom: 40 }}>
-                    <h1 style={{ fontSize: 28, fontWeight: 700, color: '#0f172a', margin: 0 }}>Billing & Subscription</h1>
-                    <p style={{ fontSize: 14, color: '#64748b', margin: '6px 0 0' }}>
-                        Current plan: <strong style={{ color: '#0f172a' }}>{user?.subscription_tier?.toUpperCase() || 'STARTER'}</strong>
+            <main className="max-w-7xl mx-auto px-8 py-10">
+                <div className="mb-10">
+                    <h1 className="text-2xl font-bold text-slate-900">Billing & Subscription</h1>
+                    <p className="text-sm text-slate-500 mt-1.5">
+                        Current plan: <strong className="text-slate-900">{user?.subscription_tier?.toUpperCase() || 'STARTER'}</strong>
                     </p>
                 </div>
 
                 {/* Plans Grid */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 24, marginBottom: 40 }}>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
                     {plans.map((plan) => (
                         <div
                             key={plan.name}
-                            style={{
-                                backgroundColor: '#ffffff',
-                                borderRadius: 12,
-                                border: `2px solid ${plan.popular ? '#0f172a' : plan.current ? '#16a34a' : '#e2e8f0'}`,
-                                padding: 28,
-                                position: 'relative',
-                            }}
+                            className={`bg-white rounded-xl p-7 relative border-2 ${
+                                plan.popular
+                                    ? 'border-slate-900'
+                                    : plan.current
+                                        ? 'border-green-600'
+                                        : 'border-slate-200'
+                            }`}
                         >
                             {plan.popular && (
-                                <span style={{
-                                    position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
-                                    backgroundColor: '#0f172a', color: '#ffffff',
-                                    fontSize: 11, fontWeight: 700, padding: '4px 14px', borderRadius: 100,
-                                    letterSpacing: 0.5,
-                                }}>
+                                <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[11px] font-bold px-3.5 py-1 rounded-full tracking-wide">
                                     MOST POPULAR
                                 </span>
                             )}
                             {plan.current && (
-                                <span style={{
-                                    position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
-                                    backgroundColor: '#16a34a', color: '#ffffff',
-                                    fontSize: 11, fontWeight: 700, padding: '4px 14px', borderRadius: 100,
-                                }}>
+                                <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-600 text-white text-[11px] font-bold px-3.5 py-1 rounded-full">
                                     CURRENT PLAN
                                 </span>
                             )}
-                            <h3 style={{ fontSize: 18, fontWeight: 700, color: '#0f172a', margin: '0 0 8px' }}>{plan.name}</h3>
-                            <div style={{ marginBottom: 20 }}>
-                                <span style={{ fontSize: 32, fontWeight: 800, color: '#0f172a' }}>{plan.price}</span>
-                                <span style={{ fontSize: 14, color: '#64748b' }}>{plan.period}</span>
+                            <h3 className="text-lg font-bold text-slate-900 mb-2">{plan.name}</h3>
+                            <div className="mb-5">
+                                <span className="text-3xl font-extrabold text-slate-900">{plan.price}</span>
+                                <span className="text-sm text-slate-500">{plan.period}</span>
                             </div>
-                            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                            <ul className="list-none p-0 mb-6 flex flex-col gap-2.5">
                                 {plan.features.map((feature, idx) => (
-                                    <li key={idx} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, color: '#475569' }}>
+                                    <li key={idx} className="flex items-center gap-2.5 text-sm text-slate-600">
                                         <svg width="16" height="16" fill="none" stroke="#16a34a" viewBox="0 0 24 24">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
                                         </svg>
@@ -93,17 +86,13 @@ export default function Billing() {
                             </ul>
                             <button
                                 disabled={plan.current}
-                                style={{
-                                    width: '100%',
-                                    padding: '12px 0',
-                                    fontSize: 14,
-                                    fontWeight: 600,
-                                    borderRadius: 8,
-                                    border: 'none',
-                                    cursor: plan.current ? 'default' : 'pointer',
-                                    backgroundColor: plan.current ? '#f1f5f9' : plan.popular ? '#0f172a' : '#f1f5f9',
-                                    color: plan.current ? '#94a3b8' : plan.popular ? '#ffffff' : '#0f172a',
-                                }}
+                                className={`w-full py-3 text-sm font-semibold rounded-lg transition-colors ${
+                                    plan.current
+                                        ? 'bg-slate-100 text-slate-400 cursor-default'
+                                        : plan.popular
+                                            ? 'bg-slate-900 text-white hover:bg-slate-800 cursor-pointer'
+                                            : 'bg-slate-100 text-slate-900 hover:bg-slate-200 cursor-pointer'
+                                }`}
                             >
                                 {plan.current ? 'Current Plan' : `Upgrade to ${plan.name}`}
                             </button>
@@ -112,15 +101,15 @@ export default function Billing() {
                 </div>
 
                 {/* Notice */}
-                <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: 12, padding: 24, display: 'flex', gap: 16 }}>
-                    <svg width="22" height="22" fill="none" stroke="#d97706" viewBox="0 0 24 24" style={{ flexShrink: 0, marginTop: 2 }}>
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 flex gap-4">
+                    <svg width="22" height="22" fill="none" stroke="#d97706" viewBox="0 0 24 24" className="shrink-0 mt-0.5">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                     </svg>
                     <div>
-                        <h4 style={{ fontSize: 14, fontWeight: 700, color: '#92400e', margin: '0 0 4px' }}>Payment Integration Pending</h4>
-                        <p style={{ fontSize: 14, color: '#b45309', margin: 0 }}>
+                        <h4 className="text-sm font-bold text-amber-800 mb-1">Payment Integration Pending</h4>
+                        <p className="text-sm text-amber-700">
                             Billing via Razorpay will be enabled soon. To upgrade now, contact us at{' '}
-                            <a href="mailto:support@contrared.ai" style={{ color: '#92400e', fontWeight: 600 }}>support@contrared.ai</a>
+                            <a href="mailto:support@contrared.ai" className="text-amber-800 font-semibold hover:underline">support@contrared.ai</a>
                         </p>
                     </div>
                 </div>

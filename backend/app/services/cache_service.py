@@ -7,11 +7,14 @@ API costs and improve response times for repeated clauses.
 
 import json
 import hashlib
+import logging
 from typing import Optional, Any
 
 import redis.asyncio as redis
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class CacheService:
@@ -56,7 +59,7 @@ class CacheService:
             await self._client.ping()
             return True
         except Exception as e:
-            print(f"Redis connection failed: {e}")
+            logger.warning("Redis connection failed: %s", e)
             self._client = None
             return False
     
@@ -90,7 +93,7 @@ class CacheService:
                 return json.loads(value)
             return None
         except Exception as e:
-            print(f"Cache get error: {e}")
+            logger.warning("Cache get error: %s", e)
             return None
     
     async def set(
@@ -117,7 +120,7 @@ class CacheService:
             await self._client.setex(key, ttl, json.dumps(value))
             return True
         except Exception as e:
-            print(f"Cache set error: {e}")
+            logger.warning("Cache set error: %s", e)
             return False
     
     async def delete(self, key: str) -> bool:
@@ -129,7 +132,7 @@ class CacheService:
             await self._client.delete(key)
             return True
         except Exception as e:
-            print(f"Cache delete error: {e}")
+            logger.warning("Cache delete error: %s", e)
             return False
     
     @staticmethod

@@ -158,14 +158,14 @@ async def create_playbook(
     )
     
     db.add(playbook)
-    await db.commit()
-    await db.refresh(playbook)
+    await db.flush()
 
     await log_audit_event(
         db=db, user=current_user, action="playbook_created",
         resource_type="playbook", resource_name=playbook.name, status="success",
     )
     await db.commit()
+    await db.refresh(playbook)
 
     return PlaybookResponse(
         id=str(playbook.id),
@@ -307,7 +307,6 @@ async def delete_playbook(
 
     playbook_name = playbook.name
     await db.delete(playbook)
-    await db.commit()
 
     await log_audit_event(
         db=db, user=current_user, action="playbook_deleted",

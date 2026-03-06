@@ -4,6 +4,15 @@ import { useState } from 'react';
 import { listPlaybooks, createPlaybook, deletePlaybook, togglePlaybookPublish, isAdmin, type Playbook } from '@/api/client';
 import AppHeader from '@/components/AppHeader';
 
+const categoryStyles: Record<string, string> = {
+    saas: 'bg-blue-50 text-blue-600',
+    nda: 'bg-purple-50 text-purple-600',
+    dpa: 'bg-green-50 text-green-600',
+    employment: 'bg-orange-50 text-orange-600',
+    msa: 'bg-indigo-50 text-indigo-600',
+    custom: 'bg-slate-100 text-slate-600',
+};
+
 export default function Playbooks() {
     const queryClient = useQueryClient();
     const navigate = useNavigate();
@@ -45,45 +54,24 @@ export default function Playbooks() {
         }
     };
 
-    const categoryStyles: Record<string, { bg: string; text: string }> = {
-        saas: { bg: '#eff6ff', text: '#2563eb' },
-        nda: { bg: '#faf5ff', text: '#7c3aed' },
-        dpa: { bg: '#f0fdf4', text: '#16a34a' },
-        employment: { bg: '#fff7ed', text: '#ea580c' },
-        msa: { bg: '#eef2ff', text: '#4f46e5' },
-        custom: { bg: '#f1f5f9', text: '#475569' },
-    };
-
     return (
-        <div style={{ fontFamily: "'Inter', system-ui, sans-serif", minHeight: '100vh', backgroundColor: '#f8fafc' }}>
+        <div className="font-['Inter',system-ui,sans-serif] min-h-screen bg-slate-50">
             <AppHeader />
 
             {/* Main */}
-            <main style={{ maxWidth: 1280, margin: '0 auto', padding: '40px 32px' }}>
+            <main className="max-w-7xl mx-auto px-8 py-10">
                 {/* Title row */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 }}>
+                <div className="flex justify-between items-center mb-8">
                     <div>
-                        <h1 style={{ fontSize: 28, fontWeight: 700, color: '#0f172a', margin: 0 }}>Playbooks</h1>
-                        <p style={{ fontSize: 14, color: '#64748b', margin: '4px 0 0' }}>
+                        <h1 className="text-2xl font-bold text-slate-900">Playbooks</h1>
+                        <p className="text-sm text-slate-500 mt-1">
                             Define custom rule sets for different contract types.
                         </p>
                     </div>
                     {admin && (
                         <button
                             onClick={() => setShowCreate(true)}
-                            style={{
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: 8,
-                                padding: '10px 20px',
-                                backgroundColor: '#0f172a',
-                                color: '#ffffff',
-                                fontSize: 14,
-                                fontWeight: 600,
-                                borderRadius: 8,
-                                border: 'none',
-                                cursor: 'pointer',
-                            }}
+                            className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors"
                         >
                             <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
                             New Playbook
@@ -93,81 +81,42 @@ export default function Playbooks() {
 
                 {/* Create Modal */}
                 {showCreate && (
-                    <div style={{ position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 }}>
-                        <div style={{ backgroundColor: '#ffffff', borderRadius: 16, padding: 32, width: '100%', maxWidth: 480, boxShadow: '0 24px 48px rgba(0,0,0,0.12)' }}>
-                            <h2 style={{ fontSize: 20, fontWeight: 700, color: '#0f172a', margin: '0 0 24px' }}>Create Playbook</h2>
+                    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+                        <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-2xl">
+                            <h2 className="text-xl font-bold text-slate-900 mb-6">Create Playbook</h2>
                             <form onSubmit={handleCreate}>
-                                <div style={{ marginBottom: 20 }}>
-                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 6 }}>Name</label>
+                                <div className="mb-5">
+                                    <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">Name</label>
                                     <input
                                         type="text"
                                         value={newName}
                                         onChange={(e) => setNewName(e.target.value)}
-                                        style={{
-                                            width: '100%',
-                                            padding: '10px 14px',
-                                            borderRadius: 8,
-                                            border: '1px solid #e2e8f0',
-                                            fontSize: 14,
-                                            color: '#0f172a',
-                                            outline: 'none',
-                                            boxSizing: 'border-box',
-                                        }}
+                                        className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent"
                                         placeholder="e.g. SaaS Vendor Agreement"
                                         required
                                     />
                                 </div>
-                                <div style={{ marginBottom: 24 }}>
-                                    <label style={{ display: 'block', fontSize: 13, fontWeight: 600, color: '#334155', marginBottom: 6 }}>Description (optional)</label>
+                                <div className="mb-6">
+                                    <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">Description (optional)</label>
                                     <textarea
                                         value={newDescription}
                                         onChange={(e) => setNewDescription(e.target.value)}
-                                        style={{
-                                            width: '100%',
-                                            padding: '10px 14px',
-                                            borderRadius: 8,
-                                            border: '1px solid #e2e8f0',
-                                            fontSize: 14,
-                                            color: '#0f172a',
-                                            outline: 'none',
-                                            resize: 'vertical',
-                                            minHeight: 80,
-                                            boxSizing: 'border-box',
-                                        }}
+                                        className="w-full px-3.5 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-900 outline-none resize-y min-h-[80px] focus:ring-2 focus:ring-slate-900 focus:border-transparent"
                                         placeholder="Rules for reviewing SaaS vendor contracts..."
                                     />
                                 </div>
-                                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 12 }}>
+                                <div className="flex justify-end gap-3">
                                     <button
                                         type="button"
                                         onClick={() => setShowCreate(false)}
-                                        style={{
-                                            padding: '10px 20px',
-                                            fontSize: 14,
-                                            fontWeight: 500,
-                                            color: '#64748b',
-                                            backgroundColor: 'transparent',
-                                            border: '1px solid #e2e8f0',
-                                            borderRadius: 8,
-                                            cursor: 'pointer',
-                                        }}
+                                        className="px-5 py-2.5 text-sm font-medium text-slate-500 bg-transparent border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
                                     >
                                         Cancel
                                     </button>
                                     <button
                                         type="submit"
                                         disabled={createMutation.isPending}
-                                        style={{
-                                            padding: '10px 20px',
-                                            fontSize: 14,
-                                            fontWeight: 600,
-                                            color: '#ffffff',
-                                            backgroundColor: '#0f172a',
-                                            border: 'none',
-                                            borderRadius: 8,
-                                            cursor: 'pointer',
-                                            opacity: createMutation.isPending ? 0.6 : 1,
-                                        }}
+                                        className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors disabled:opacity-60"
                                     >
                                         {createMutation.isPending ? 'Creating...' : 'Create'}
                                     </button>
@@ -179,75 +128,63 @@ export default function Playbooks() {
 
                 {/* Loading */}
                 {isLoading && (
-                    <div style={{ textAlign: 'center', padding: '64px 0' }}>
-                        <div style={{
-                            width: 32, height: 32, border: '3px solid #e2e8f0', borderTopColor: '#0f172a',
-                            borderRadius: '50%', animation: 'spin 0.8s linear infinite', margin: '0 auto',
-                        }} />
-                        <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
+                    <div className="text-center py-16">
+                        <div className="w-8 h-8 border-3 border-slate-200 border-t-slate-900 rounded-full animate-spin mx-auto" />
                     </div>
                 )}
 
                 {/* Error */}
                 {error && (
-                    <div style={{ backgroundColor: '#fef2f2', color: '#dc2626', padding: '16px 20px', borderRadius: 10, fontSize: 14, border: '1px solid #fecaca' }}>
-                        Error loading playbooks: {(error as Error).message}
+                    <div className="bg-red-50 text-red-600 px-5 py-4 rounded-lg text-sm border border-red-200">
+                        Error loading playbooks: {error instanceof Error ? error.message : 'Unknown error'}
                     </div>
                 )}
 
                 {/* Table */}
                 {playbooks && playbooks.length > 0 && (
-                    <div style={{ backgroundColor: '#ffffff', borderRadius: 12, border: '1px solid #e2e8f0', overflow: 'hidden' }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                        <table className="w-full border-collapse">
                             <thead>
-                                <tr style={{ backgroundColor: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
-                                    <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Name</th>
-                                    <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Category</th>
-                                    <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Rules</th>
-                                    <th style={{ textAlign: 'left', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Status</th>
-                                    <th style={{ textAlign: 'right', padding: '12px 24px', fontSize: 12, fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Actions</th>
+                                <tr className="bg-slate-50 border-b border-slate-200">
+                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Name</th>
+                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Category</th>
+                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Rules</th>
+                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+                                    <th className="text-right px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {playbooks.map((playbook: Playbook) => {
                                     const cat = categoryStyles[playbook.category] || categoryStyles.custom;
                                     return (
-                                        <tr key={playbook.id} style={{ borderBottom: '1px solid #f1f5f9' }}>
-                                            <td style={{ padding: '16px 24px' }}>
-                                                <Link to={`/playbooks/${playbook.id}`} style={{ fontWeight: 600, color: '#0f172a', textDecoration: 'none', fontSize: 14 }}>
+                                        <tr key={playbook.id} className="border-b border-slate-100">
+                                            <td className="px-6 py-4">
+                                                <Link to={`/playbooks/${playbook.id}`} className="font-semibold text-slate-900 no-underline text-sm hover:text-slate-700">
                                                     {playbook.name}
                                                 </Link>
                                                 {playbook.description && (
-                                                    <p style={{ fontSize: 13, color: '#94a3b8', margin: '2px 0 0', maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                    <p className="text-[13px] text-slate-400 mt-0.5 max-w-xs overflow-hidden text-ellipsis whitespace-nowrap">
                                                         {playbook.description}
                                                     </p>
                                                 )}
                                             </td>
-                                            <td style={{ padding: '16px 24px' }}>
-                                                <span style={{ padding: '4px 10px', fontSize: 12, fontWeight: 600, borderRadius: 6, backgroundColor: cat.bg, color: cat.text }}>
+                                            <td className="px-6 py-4">
+                                                <span className={`px-2.5 py-1 text-xs font-semibold rounded-md ${cat}`}>
                                                     {playbook.category}
                                                 </span>
                                             </td>
-                                            <td style={{ padding: '16px 24px', fontSize: 14, color: '#64748b' }}>
+                                            <td className="px-6 py-4 text-sm text-slate-500">
                                                 {playbook.rules_count} rules
                                             </td>
-                                            <td style={{ padding: '16px 24px' }}>
+                                            <td className="px-6 py-4">
                                                 {admin ? (
                                                     <button
                                                         onClick={() => publishMutation.mutate(playbook.id)}
-                                                        style={{
-                                                            display: 'inline-flex',
-                                                            alignItems: 'center',
-                                                            gap: 4,
-                                                            padding: '4px 10px',
-                                                            fontSize: 12,
-                                                            fontWeight: 600,
-                                                            borderRadius: 6,
-                                                            border: 'none',
-                                                            cursor: 'pointer',
-                                                            backgroundColor: playbook.is_public ? '#f0fdf4' : '#f1f5f9',
-                                                            color: playbook.is_public ? '#16a34a' : '#64748b',
-                                                        }}
+                                                        className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md ${
+                                                            playbook.is_public
+                                                                ? 'bg-green-50 text-green-600'
+                                                                : 'bg-slate-100 text-slate-500'
+                                                        }`}
                                                     >
                                                         <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                                             {playbook.is_public
@@ -258,27 +195,21 @@ export default function Playbooks() {
                                                         {playbook.is_public ? 'Public' : 'Private'}
                                                     </button>
                                                 ) : (
-                                                    <span style={{
-                                                        display: 'inline-flex',
-                                                        alignItems: 'center',
-                                                        gap: 4,
-                                                        padding: '4px 10px',
-                                                        fontSize: 12,
-                                                        fontWeight: 600,
-                                                        borderRadius: 6,
-                                                        backgroundColor: playbook.is_public ? '#f0fdf4' : '#f1f5f9',
-                                                        color: playbook.is_public ? '#16a34a' : '#64748b',
-                                                    }}>
+                                                    <span className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md ${
+                                                        playbook.is_public
+                                                            ? 'bg-green-50 text-green-600'
+                                                            : 'bg-slate-100 text-slate-500'
+                                                    }`}>
                                                         {playbook.is_public ? 'Public' : 'Private'}
                                                     </span>
                                                 )}
                                             </td>
-                                            <td style={{ padding: '16px 24px', textAlign: 'right' }}>
+                                            <td className="px-6 py-4 text-right">
                                                 {admin ? (
                                                     <>
                                                         <Link
                                                             to={`/playbooks/${playbook.id}`}
-                                                            style={{ fontSize: 13, fontWeight: 600, color: '#2563eb', textDecoration: 'none', marginRight: 16 }}
+                                                            className="text-[13px] font-semibold text-blue-600 no-underline mr-4 hover:text-blue-700"
                                                         >
                                                             Edit
                                                         </Link>
@@ -288,13 +219,13 @@ export default function Playbooks() {
                                                                     deleteMutation.mutate(playbook.id);
                                                                 }
                                                             }}
-                                                            style={{ fontSize: 13, fontWeight: 600, color: '#dc2626', background: 'none', border: 'none', cursor: 'pointer' }}
+                                                            className="text-[13px] font-semibold text-red-600 bg-transparent border-none cursor-pointer hover:text-red-700"
                                                         >
                                                             Delete
                                                         </button>
                                                     </>
                                                 ) : (
-                                                    <span style={{ fontSize: 13, color: '#94a3b8' }}>View only</span>
+                                                    <span className="text-[13px] text-slate-400">View only</span>
                                                 )}
                                             </td>
                                         </tr>
@@ -307,12 +238,12 @@ export default function Playbooks() {
 
                 {/* Empty State */}
                 {playbooks && playbooks.length === 0 && (
-                    <div style={{ textAlign: 'center', padding: '64px 32px', backgroundColor: '#ffffff', borderRadius: 12, border: '1px solid #e2e8f0' }}>
-                        <svg width="48" height="48" fill="none" stroke="#cbd5e1" viewBox="0 0 24 24" style={{ margin: '0 auto 16px' }}>
+                    <div className="text-center py-16 px-8 bg-white rounded-xl border border-slate-200">
+                        <svg width="48" height="48" fill="none" stroke="#cbd5e1" viewBox="0 0 24 24" className="mx-auto mb-4">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                         </svg>
-                        <h3 style={{ fontSize: 18, fontWeight: 600, color: '#0f172a', margin: '0 0 8px' }}>No playbooks yet</h3>
-                        <p style={{ fontSize: 14, color: '#64748b', margin: '0 0 24px' }}>
+                        <h3 className="text-lg font-semibold text-slate-900 mb-2">No playbooks yet</h3>
+                        <p className="text-sm text-slate-500 mb-6">
                             {admin
                                 ? 'Create your first playbook to start detecting contract risks.'
                                 : 'No playbooks are available yet. Ask your admin to create one.'}
@@ -320,16 +251,7 @@ export default function Playbooks() {
                         {admin && (
                             <button
                                 onClick={() => setShowCreate(true)}
-                                style={{
-                                    padding: '10px 24px',
-                                    fontSize: 14,
-                                    fontWeight: 600,
-                                    color: '#ffffff',
-                                    backgroundColor: '#0f172a',
-                                    border: 'none',
-                                    borderRadius: 8,
-                                    cursor: 'pointer',
-                                }}
+                                className="px-6 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors"
                             >
                                 Create Playbook
                             </button>

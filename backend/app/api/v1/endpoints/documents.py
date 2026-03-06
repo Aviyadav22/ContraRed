@@ -11,12 +11,19 @@ ZERO DATA RETENTION (ZDR) MODE:
 
 import asyncio
 import base64
+import io
+import json
+import logging
+import httpx
+import zipfile
 from typing import List, Optional, Literal, Dict
-from uuid import UUID
+from uuid import UUID, uuid4
+from uuid import UUID as PyUUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File, Form, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
 from app.models.user import User
@@ -28,8 +35,11 @@ from app.api.v1.endpoints.auth import get_current_user
 from app.services.rule_engine import RuleEngine, RuleMatch
 from app.services.ai_service import AIService
 from app.services.cache_service import get_cache
+from app.services.gemini_analyzer import gemini_analyzer
 from app.services.structure_extractor import StructureExtractor, ContractMap
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
@@ -165,18 +175,14 @@ async def analyze_document(
     2. AIService enriches matches (parallel with asyncio.gather)
     3. Audit log created (ZDR: no text stored)
     """
-    from uuid import UUID as PyUUID, uuid4
-    from sqlalchemy.orm import selectinload
-    from app.models.playbook import Playbook
-    
     # Get client info for audit
     client_ip = http_request.client.host if http_request.client else None
     user_agent = http_request.headers.get("user-agent")
-    
+
     # Initialize services
     ai_service = AIService()
     cache = await get_cache()
-    
+
     # Load playbook rules if specified, otherwise use defaults
     if request.playbook_id:
         try:
@@ -272,10 +278,7 @@ async def analyze_document(
             document.risk_summary = risk_summary
             document.status = DocumentStatus.COMPLETED
             # NOTE: In ZDR mode, no clause_text is stored in DocumentRisk
-            
-            await db.commit()
-            await db.refresh(document)
-            
+
             # Create audit log entry (no text, just metadata)
             await log_audit_event(
                 db=db,
@@ -289,6 +292,7 @@ async def analyze_document(
                 risk_count=len(enriched_matches),
             )
             await db.commit()
+            await db.refresh(document)
             
             # Build response from RAM (text never persisted)
             return AnalysisResult(
@@ -358,13 +362,16 @@ async def analyze_document(
                 ]
             )
         
+    except HTTPException:
+        raise
     except Exception as e:
         # Mark document as failed
+        logger.error("Analysis failed", exc_info=True)
         document.status = DocumentStatus.FAILED
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Analysis failed: {str(e)}"
+            detail="Analysis failed. Please try again or contact support."
         )
 
 
@@ -388,10 +395,6 @@ async def analyze_full_ai(
     Unlike /analyze, this does NOT use rule-based regex matching.
     Gemini performs holistic structural analysis + surgical redlining.
     """
-    from uuid import uuid4
-    from sqlalchemy.orm import selectinload
-    from app.services.gemini_analyzer import gemini_analyzer
-    
     # Get client info for audit
     client_ip = http_request.client.host if http_request.client else None
     
@@ -422,7 +425,7 @@ async def analyze_full_ai(
                     for rule in playbook.rules
                 ]
         except Exception as e:
-            print(f"Error loading playbook: {e}")
+            logger.error("Error loading playbook: %s", e)
     
     # Generate document ID for tracking
     doc_id = str(uuid4())
@@ -436,7 +439,6 @@ async def analyze_full_ai(
         )
         
         # Log audit event (ZDR-safe: no contract text stored)
-        import json
         await log_audit_event(
             db=db,
             user=current_user,  # Pass user object, not user_id
@@ -480,11 +482,13 @@ async def analyze_full_ai(
             tokens_used=result.tokens_used,
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"AI analysis error: {type(e).__name__}: {e}")
+        logger.error("AI analysis failed", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"AI analysis failed: {str(e)}"
+            detail="AI analysis failed. Please try again or contact support."
         )
 
 
@@ -511,10 +515,6 @@ async def analyze_file(
     2. Box 2: RuleEngine + AI analyzes the ContractMap
     3. Response includes paragraph_hashes for frontend drift detection
     """
-    from uuid import UUID as PyUUID, uuid4
-    from sqlalchemy.orm import selectinload
-    from app.models.playbook import Playbook
-    
     # Validate file type
     filename = file.filename or "document.docx"
     content_type = file.content_type or ""
@@ -639,10 +639,7 @@ async def analyze_file(
         document.total_risks = len(enriched_matches)
         document.risk_summary = risk_summary
         document.status = DocumentStatus.COMPLETED
-        
-        await db.commit()
-        await db.refresh(document)
-        
+
         # Create audit log (ZDR: no text stored)
         await log_audit_event(
             db=db,
@@ -656,6 +653,7 @@ async def analyze_file(
             risk_count=len(enriched_matches),
         )
         await db.commit()
+        await db.refresh(document)
         
         return AnalysisResult(
             document_id=str(document.id),
@@ -681,12 +679,15 @@ async def analyze_file(
             ]
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
+        logger.error("File analysis failed", exc_info=True)
         document.status = DocumentStatus.FAILED
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Analysis failed: {str(e)}"
+            detail="Analysis failed. Please try again or contact support."
         )
 
 # ============================================================================
@@ -708,8 +709,6 @@ async def summarize_contract(
     - Top 3 key concerns
     - Recommended action
     """
-    from uuid import UUID as PyUUID
-    
     # For ZDR mode, document might not exist - that's OK for summary
     # We just need the contract text which is passed in the request
     document = None
@@ -839,8 +838,7 @@ async def generate_redline(
     Returns Track Changes OOXML with strikethrough (original) + underline (suggested).
     """
     from app.services.redline_implementer import RedlineImplementer
-    from uuid import UUID as PyUUID
-    
+
     # Initialize redline implementer
     implementer = RedlineImplementer()
     
@@ -942,9 +940,6 @@ async def generate_redline(
 # Word Add-in Manifest Download Endpoint
 # ============================================================================
 
-import httpx
-from fastapi.responses import Response
-
 @router.get("/manifest", response_class=Response)
 async def download_manifest():
     """
@@ -966,11 +961,14 @@ async def download_manifest():
             media_type="application/xml",
             headers={"Content-Disposition": 'attachment; filename="contrared-manifest.xml"'}
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error serving manifest: {str(e)}")
-
-import io
-import zipfile
+        logger.error("Error serving manifest", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error serving manifest. Please try again or contact support."
+        )
 
 @router.get("/installer", response_class=Response)
 async def download_installer():
@@ -1005,7 +1003,11 @@ async def download_installer():
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error creating installer: {str(e)}")
+        logger.error("Error creating installer", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error creating installer. Please try again or contact support."
+        )
 
 
 # ============================================================================

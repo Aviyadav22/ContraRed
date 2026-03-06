@@ -10,10 +10,13 @@ Uses strict prompts to limit response length and costs.
 """
 
 import hashlib
+import logging
 from typing import Optional, Tuple
 from dataclasses import dataclass
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -126,7 +129,7 @@ class AIService:
                 genai.configure(api_key=settings.GEMINI_API_KEY)
                 self._gemini_client = genai.GenerativeModel(settings.GEMINI_MODEL)
             except ImportError:
-                print("google-generativeai not installed. Run: pip install google-generativeai")
+                logger.warning("google-generativeai not installed. Run: pip install google-generativeai")
                 self._use_gemini = False
         return self._gemini_client
     
@@ -273,7 +276,7 @@ class AIService:
                     candidate = response.candidates[0]
                     # Log finish reason for debugging
                     if hasattr(candidate, 'finish_reason'):
-                        print(f"Gemini finish_reason: {candidate.finish_reason}")
+                        logger.debug("Gemini finish_reason: %s", candidate.finish_reason)
                     
                     # Try to get text from content.parts
                     if candidate.content and candidate.content.parts:
@@ -289,20 +292,20 @@ class AIService:
                 
                 # Log if we got here with no content
                 if hasattr(response, 'prompt_feedback'):
-                    print(f"Gemini prompt_feedback: {response.prompt_feedback}")
-                    
-                print("Gemini returned empty response (no text in candidates)")
+                    logger.warning("Gemini prompt_feedback: %s", response.prompt_feedback)
+
+                logger.warning("Gemini returned empty response (no text in candidates)")
                 return "", 0
                 
             except ValueError as ve:
                 # This happens when response.text can't be accessed due to safety blocks
-                print(f"Gemini response access error: {ve}")
+                logger.warning("Gemini response access error: %s", ve)
                 if hasattr(response, 'prompt_feedback'):
-                    print(f"Prompt feedback: {response.prompt_feedback}")
+                    logger.warning("Prompt feedback: %s", response.prompt_feedback)
                 return "", 0
                 
         except Exception as e:
-            print(f"Gemini error: {type(e).__name__}: {e}")
+            logger.error("Gemini error: %s: %s", type(e).__name__, e)
             return "", 0
     
     async def _azure_generate(
@@ -330,7 +333,7 @@ class AIService:
             return text, tokens_used
             
         except Exception as e:
-            print(f"Azure OpenAI error: {e}")
+            logger.error("Azure OpenAI error: %s", e)
             return "", 0
     
     async def enrich_match(self, match) -> Tuple[str, str, int]:
