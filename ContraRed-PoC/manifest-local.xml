@@ -4,18 +4,18 @@
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:type="TaskPaneApp">
 
-  <Id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</Id>
+  <Id>a1b2c3d4-e5f6-7890-abcd-ef1234567891</Id>
   <Version>2.0.0.0</Version>
   <ProviderName>ContraRed</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
-  <DisplayName DefaultValue="ContraRed"/>
+  <DisplayName DefaultValue="ContraRed (Dev)"/>
   <Description DefaultValue="AI-powered contract redlining and review for Microsoft Word"/>
 
-  <IconUrl DefaultValue="https://contrared-addin.netlify.app/assets/logo.png"/>
-  <SupportUrl DefaultValue="https://contrared-addin.netlify.app"/>
+  <IconUrl DefaultValue="https://localhost:3007/assets/logo.png"/>
+  <SupportUrl DefaultValue="https://localhost:3007"/>
 
   <AppDomains>
-    <AppDomain>https://contrared-addin.netlify.app</AppDomain>
+    <AppDomain>https://localhost:3007</AppDomain>
   </AppDomains>
 
   <Hosts>
@@ -23,7 +23,7 @@
   </Hosts>
 
   <DefaultSettings>
-    <SourceLocation DefaultValue="https://contrared-addin.netlify.app/taskpane.html"/>
+    <SourceLocation DefaultValue="https://localhost:3007/taskpane.html"/>
   </DefaultSettings>
 
   <Permissions>ReadWriteDocument</Permissions>

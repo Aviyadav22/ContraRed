@@ -465,7 +465,8 @@ async def update_rule(
     if update_data.is_deal_breaker is not None:
         rule.is_deal_breaker = update_data.is_deal_breaker
     if update_data.detection_patterns is not None:
-        rule.detection_patterns = {"patterns": update_data.detection_patterns}
+        existing_match_type = (rule.detection_patterns or {}).get("match_type", "exact")
+        rule.detection_patterns = {"patterns": update_data.detection_patterns, "match_type": update_data.match_type or existing_match_type}
     if update_data.suggested_language is not None:
         rule.suggested_language = {"text": update_data.suggested_language}
     

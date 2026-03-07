@@ -12,6 +12,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
 from app.db.session import Base
+from app.models.enums import RiskLevel
 
 
 class DocumentStatus(str, enum.Enum):
@@ -19,12 +20,6 @@ class DocumentStatus(str, enum.Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
-
-
-class RiskLevel(str, enum.Enum):
-    RED = "red"
-    YELLOW = "yellow"
-    GREEN = "green"
 
 
 class UsageAction(str, enum.Enum):

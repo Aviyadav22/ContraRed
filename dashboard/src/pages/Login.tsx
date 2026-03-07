@@ -24,22 +24,31 @@ export default function Login() {
         }
     };
 
+    const inputStyle = {
+        border: '1px solid #E8E5E0',
+        color: '#1A1A19',
+        background: '#FFFFFF',
+    };
+
+    const inputFocus = 'focus:ring-2 focus:border-transparent transition';
+
     return (
-        <div className="min-h-screen flex items-center justify-center bg-slate-50">
+        <div className="min-h-screen flex items-center justify-center" style={{ background: '#FAFAF9' }}>
             <div className="w-full max-w-md">
-                <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-8">
-                    {/* Logo */}
+                <div
+                    className="rounded-2xl p-8"
+                    style={{ background: '#FFFFFF', border: '1px solid #E8E5E0', boxShadow: '0 2px 12px rgba(0,0,0,0.04)' }}
+                >
                     <div className="text-center mb-8">
                         <Link to="/" className="inline-block mb-4">
-                            <img src="/logo.png" alt="ContraRed" className="h-8 mx-auto" />
+                            <img src="/logo.png" alt="ContraRed" className="h-7 mx-auto" />
                         </Link>
-                        <p className="text-slate-500 text-sm">Sign in to your account</p>
+                        <p className="text-[13px]" style={{ color: '#8A8885' }}>Sign in to your account</p>
                     </div>
 
-                    {/* Form */}
                     <form onSubmit={handleSubmit} className="space-y-5">
                         <div>
-                            <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1.5">
+                            <label htmlFor="email" className="block text-[13px] font-medium mb-1.5" style={{ color: '#6B6966' }}>
                                 Email
                             </label>
                             <input
@@ -47,14 +56,15 @@ export default function Login() {
                                 type="email"
                                 value={email}
                                 onChange={(e) => setEmail(e.target.value)}
-                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-900 text-sm focus:ring-2 focus:ring-slate-900 focus:border-transparent transition placeholder:text-slate-400"
+                                className={`w-full px-4 py-2.5 rounded-lg text-sm ${inputFocus}`}
+                                style={{ ...inputStyle, '--tw-ring-color': '#C0392B40' } as React.CSSProperties}
                                 placeholder="you@company.com"
                                 required
                             />
                         </div>
 
                         <div>
-                            <label htmlFor="password" className="block text-sm font-medium text-slate-700 mb-1.5">
+                            <label htmlFor="password" className="block text-[13px] font-medium mb-1.5" style={{ color: '#6B6966' }}>
                                 Password
                             </label>
                             <input
@@ -62,14 +72,15 @@ export default function Login() {
                                 type="password"
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
-                                className="w-full px-4 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-900 text-sm focus:ring-2 focus:ring-slate-900 focus:border-transparent transition placeholder:text-slate-400"
+                                className={`w-full px-4 py-2.5 rounded-lg text-sm ${inputFocus}`}
+                                style={{ ...inputStyle, '--tw-ring-color': '#C0392B40' } as React.CSSProperties}
                                 placeholder="••••••••"
                                 required
                             />
                         </div>
 
                         {error && (
-                            <div className="p-3 rounded-lg bg-red-50 text-red-600 text-sm">
+                            <div className="p-3 rounded-lg text-sm" style={{ background: '#FDF2F1', color: '#C0392B' }}>
                                 {error}
                             </div>
                         )}
@@ -77,7 +88,10 @@ export default function Login() {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full py-2.5 px-4 bg-slate-900 hover:bg-slate-800 disabled:bg-slate-400 text-white font-medium text-sm rounded-lg transition-colors flex items-center justify-center gap-2"
+                            className="w-full py-2.5 px-4 font-medium text-sm rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+                            style={{ background: '#C0392B', color: '#FFFFFF' }}
+                            onMouseEnter={e => { if (!loading) (e.target as HTMLElement).style.background = '#A93226'; }}
+                            onMouseLeave={e => (e.target as HTMLElement).style.background = '#C0392B'}
                         >
                             {loading ? (
                                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -87,11 +101,10 @@ export default function Login() {
                         </button>
                     </form>
 
-                    {/* Register link */}
                     <div className="mt-6 text-center">
-                        <p className="text-sm text-slate-500">
+                        <p className="text-[13px]" style={{ color: '#8A8885' }}>
                             Don't have an account?{' '}
-                            <Link to="/register" className="text-slate-900 hover:text-slate-700 font-medium">
+                            <Link to="/register" className="font-medium" style={{ color: '#C0392B' }}>
                                 Create one
                             </Link>
                         </p>

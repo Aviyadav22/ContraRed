@@ -4,7 +4,7 @@
  */
 
 // @ts-expect-error process.env injected by webpack DefinePlugin
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8000/api/v1';
+const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8008/api/v1';
 
 // ============================================================================
 // Types - Matched to Phase 2 Backend Schema
@@ -29,6 +29,7 @@ interface RedlineResponse {
     ooxml: string;
     match_confidence?: number;  // 0.0-1.0 confidence of text anchor match
     match_method?: string;  // "hash", "exact", or "fuzzy"
+    redline_type?: string;  // "violation" or "missing"
 }
 
 // AI-First Analysis Types (for /analyze-full endpoint)
@@ -38,7 +39,8 @@ interface AIRedlineItem {
     rule_name: string;
     original_text: string;  // Exact text from contract for search
     explanation: string;
-    suggested_fix: string;
+    recommendation: string;  // Lawyer-readable guidance (not exact replacement text)
+    redline_type: 'violation' | 'missing';
 }
 
 interface AIAnalysisResult {
@@ -89,6 +91,40 @@ interface CreateRuleRequest {
     suggested_language?: string;
 }
 
+// Clause Library types
+interface ClauseLibraryItem {
+    id: string;
+    clause_type: string;
+    name: string;
+    approved_text: string;
+    is_mandatory: boolean;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+// Template Library types
+interface TemplateListItem {
+    id: string;
+    name: string;
+    description: string | null;
+    category: string;
+    is_premium: boolean;
+    download_count: number;
+    paired_playbook_id: string | null;
+    paired_playbook_name: string | null;
+}
+
+// Document list (scan history)
+interface DocumentListItem {
+    id: string;
+    filename: string;
+    status: string;
+    total_risks: number;
+    risk_summary: { red: number; yellow: number } | null;
+    created_at: string;
+}
+
 // ============================================================================
 // API Client Class
 // ============================================================================
@@ -116,7 +152,7 @@ class ContraRedAPI {
                 this.currentUser = JSON.parse(userStored);
             }
         } catch {
-            console.log('[ContraRed] No stored tokens found');
+            // No stored tokens — fresh session
         }
     }
 
@@ -150,7 +186,11 @@ class ContraRedAPI {
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-            throw new Error(error.detail || `HTTP ${response.status}`);
+            const detail = error.detail;
+            const message = typeof detail === 'object' && detail?.message
+                ? detail.message
+                : typeof detail === 'string' ? detail : `HTTP ${response.status}`;
+            throw new Error(message);
         }
 
         return response.json();
@@ -213,6 +253,14 @@ class ContraRedAPI {
     // ========================================================================
 
     /**
+     * List user's scanned documents (scan history).
+     * Returns metadata only (no contract text).
+     */
+    async listDocuments(limit: number = 5): Promise<DocumentListItem[]> {
+        return this.request(`/documents/list?limit=${limit}`);
+    }
+
+    /**
      * Generate redline in ZDR mode (no database lookup).
      * Use when document text was analyzed but not persisted.
      */
@@ -221,7 +269,8 @@ class ContraRedAPI {
         riskId: string,
         originalText: string,
         suggestedText: string,
-        paragraphHash?: string
+        paragraphHash?: string,
+        redlineType: string = 'violation'
     ): Promise<RedlineResponse> {
         return this.request('/documents/redline', {
             method: 'POST',
@@ -231,6 +280,7 @@ class ContraRedAPI {
                 original_text: originalText,
                 suggested_text: suggestedText,
                 paragraph_hash: paragraphHash,
+                redline_type: redlineType,
             }),
         });
     }
@@ -244,6 +294,60 @@ class ContraRedAPI {
         return this.request('/documents/analyze-full', {
             method: 'POST',
             body: JSON.stringify({ text, filename, playbook_id: playbookId }),
+        });
+    }
+
+    /**
+     * Research relevant Indian case law for a clause.
+     */
+    async researchClause(clauseText: string, clauseType?: string): Promise<{
+        cases: Array<{ case_name: string; citation: string; year: number; court: string; holding: string; relevance: string }>;
+        legal_principle: string;
+        disclaimer: string;
+    }> {
+        return this.request('/documents/research-clause', {
+            method: 'POST',
+            body: JSON.stringify({ clause_text: clauseText, clause_type: clauseType }),
+        });
+    }
+
+    /**
+     * Generate a contract clause using AI.
+     * Returns generated clause text + reasoning.
+     */
+    async generateClause(clauseType: string, playbookId?: string, contractContext?: string): Promise<{ clause_text: string; reasoning: string }> {
+        return this.request('/documents/generate-clause', {
+            method: 'POST',
+            body: JSON.stringify({
+                clause_type: clauseType,
+                playbook_id: playbookId,
+                contract_context: contractContext,
+            }),
+        });
+    }
+
+    /**
+     * Generate exact replacement/insertion text for a specific risk.
+     * Takes recommendation (guidance) and produces exact text for Word insertion.
+     */
+    async generateFix(params: {
+        originalText: string;
+        recommendation: string;
+        ruleName: string;
+        redlineType?: string;
+        surroundingContext?: string;
+        playbookId?: string;
+    }): Promise<{ fix_text: string; reasoning: string }> {
+        return this.request('/documents/generate-fix', {
+            method: 'POST',
+            body: JSON.stringify({
+                original_text: params.originalText,
+                recommendation: params.recommendation,
+                rule_name: params.ruleName,
+                redline_type: params.redlineType || 'violation',
+                surrounding_context: params.surroundingContext,
+                playbook_id: params.playbookId,
+            }),
         });
     }
 
@@ -300,6 +404,76 @@ class ContraRedAPI {
     }
 
     // ========================================================================
+    // Export
+    // ========================================================================
+
+    /**
+     * Export risk analysis as a DOCX report.
+     * Returns a Blob for download.
+     */
+    async exportReport(analysisResult: AIAnalysisResult): Promise<Blob> {
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+        };
+        if (this.accessToken) {
+            headers['Authorization'] = `Bearer ${this.accessToken}`;
+        }
+
+        const response = await fetch(`${API_BASE_URL}/documents/export-report`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                filename: analysisResult.filename,
+                executive_summary: analysisResult.executive_summary,
+                redlines: analysisResult.redlines.map(r => ({
+                    risk_level: r.risk_level,
+                    rule_name: r.rule_name,
+                    original_text: r.original_text,
+                    explanation: r.explanation,
+                    recommendation: r.recommendation,
+                })),
+                risk_summary: analysisResult.risk_summary,
+            }),
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Export failed' }));
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+
+        return response.blob();
+    }
+
+    // ========================================================================
+    // Clause Library
+    // ========================================================================
+
+    async listClauses(clauseType?: string, search?: string): Promise<ClauseLibraryItem[]> {
+        const params = new URLSearchParams();
+        if (clauseType) params.set('clause_type', clauseType);
+        if (search) params.set('search', search);
+        const qs = params.toString() ? `?${params.toString()}` : '';
+        return this.request(`/clauses/${qs}`);
+    }
+
+    async createClause(data: { clause_type: string; name: string; approved_text: string; is_mandatory?: boolean }): Promise<ClauseLibraryItem> {
+        return this.request('/clauses/', { method: 'POST', body: JSON.stringify(data) });
+    }
+
+    // ========================================================================
+    // Templates
+    // ========================================================================
+
+    async listTemplates(category?: string): Promise<TemplateListItem[]> {
+        const qs = category ? `?category=${encodeURIComponent(category)}` : '';
+        return this.request(`/templates/${qs}`);
+    }
+
+    async downloadTemplate(templateId: string): Promise<{ id: string; name: string; template_content: string; paired_playbook_id: string | null }> {
+        return this.request(`/templates/${templateId}/download`);
+    }
+
+    // ========================================================================
     // Health check
     // ========================================================================
 
@@ -312,4 +486,4 @@ class ContraRedAPI {
 
 // Export singleton instance
 export const api = new ContraRedAPI();
-export type { User, RedlineResponse, Playbook, PlaybookRule, PlaybookDetail, AIRedlineItem, AIAnalysisResult };
+export type { User, RedlineResponse, Playbook, PlaybookRule, PlaybookDetail, AIRedlineItem, AIAnalysisResult, ClauseLibraryItem, DocumentListItem, TemplateListItem };

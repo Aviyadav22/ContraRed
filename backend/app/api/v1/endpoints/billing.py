@@ -214,22 +214,28 @@ async def verify_payment(
     if not settings.RAZORPAY_KEY_SECRET:
         raise HTTPException(status_code=503, detail="Razorpay not configured")
     
-    # Verify signature
+    # Verify signature (timing-safe comparison)
     message = f"{request.razorpay_payment_id}|{request.razorpay_subscription_id}"
     expected_signature = hmac.new(
         settings.RAZORPAY_KEY_SECRET.encode(),
         message.encode(),
         hashlib.sha256
     ).hexdigest()
-    
-    if request.razorpay_signature != expected_signature:
+
+    if not hmac.compare_digest(request.razorpay_signature, expected_signature):
         raise HTTPException(status_code=400, detail="Invalid signature")
-    
-    # Update user tier
-    current_user.subscription_tier = SubscriptionTier.PRO
+
+    # Determine tier from subscription plan (look up via Razorpay or org subscription)
+    subscription = await get_user_subscription(current_user, db)
+    if subscription and subscription.plan == PlanType.ENTERPRISE:
+        current_user.subscription_tier = SubscriptionTier.ENTERPRISE
+        plan_name = "enterprise"
+    else:
+        current_user.subscription_tier = SubscriptionTier.PRO
+        plan_name = "pro"
     await db.commit()
-    
-    return {"status": "success", "plan": "pro"}
+
+    return {"status": "success", "plan": plan_name}
 
 
 @router.get("/invoices", response_model=List[InvoiceResponse])
@@ -260,7 +266,7 @@ async def razorpay_webhook(
         hashlib.sha256
     ).hexdigest()
     
-    if signature != expected_signature:
+    if not hmac.compare_digest(signature, expected_signature):
         raise HTTPException(status_code=400, detail="Invalid signature")
     
     import json

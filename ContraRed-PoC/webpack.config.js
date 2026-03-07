@@ -15,10 +15,10 @@ module.exports = async (env, options) => {
     const dev = options.mode === "development";
 
     // Determine API URL: use env var or fall back to localhost
-    const apiBaseUrl = process.env.API_BASE_URL || "http://localhost:8000/api/v1";
+    const apiBaseUrl = process.env.API_BASE_URL || "http://localhost:8008/api/v1";
 
     const config = {
-        devtool: "source-map",
+        devtool: dev ? "source-map" : false,
         entry: {
             taskpane: ["./src/taskpane/taskpane.ts", "./src/taskpane/taskpane.html"],
         },
@@ -87,7 +87,7 @@ module.exports = async (env, options) => {
                 type: "https",
                 options: env.WEBPACK_BUILD || !dev ? {} : await getHttpsOptions(),
             },
-            port: 3000,
+            port: 3007,
             static: {
                 directory: path.join(__dirname, "dist"),
             },

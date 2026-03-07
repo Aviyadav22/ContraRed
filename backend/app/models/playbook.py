@@ -11,6 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
 from app.db.session import Base
+from app.models.enums import RiskLevel
 
 
 class PlaybookCategory(str, enum.Enum):
@@ -20,12 +21,6 @@ class PlaybookCategory(str, enum.Enum):
     EMPLOYMENT = "employment"
     MSA = "msa"
     CUSTOM = "custom"
-
-
-class RiskLevel(str, enum.Enum):
-    RED = "red"
-    YELLOW = "yellow"
-    GREEN = "green"
 
 
 class Playbook(Base):
@@ -71,9 +66,10 @@ class PlaybookRule(Base):
 
 class ClauseLibrary(Base):
     __tablename__ = "clause_library"
-    
+
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id"))
+    organization_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=True)
+    created_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     clause_type: Mapped[str] = mapped_column(String(100), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     approved_text: Mapped[str] = mapped_column(Text, nullable=False)

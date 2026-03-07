@@ -86,9 +86,10 @@ class Settings(BaseSettings):
     
     # Google Gemini API (primary AI provider)
     GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-2.0-flash"
-    GEMINI_SCOUT_MODEL: str = "gemini-2.0-flash"
-    GEMINI_SURGEON_MODEL: str = "gemini-2.0-flash"
+    GEMINI_MODEL: str = "gemini-3.1-flash-lite-preview"              # Fast+cheap for subtasks
+    GEMINI_ANALYSIS_MODEL: str = "gemini-3.1-pro-preview"            # Pro model for full contract analysis
+    GEMINI_SCOUT_MODEL: str = "gemini-3.1-flash-lite-preview"
+    GEMINI_SURGEON_MODEL: str = "gemini-3.1-flash-lite-preview"
     
     # AI Provider selection: "gemini" or "azure"
     AI_PROVIDER: str = "gemini"

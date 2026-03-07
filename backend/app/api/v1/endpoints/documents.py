@@ -14,13 +14,14 @@ import base64
 import io
 import json
 import logging
+from datetime import datetime
 import httpx
 import zipfile
 from typing import List, Optional, Literal, Dict
 from uuid import UUID, uuid4
 from uuid import UUID as PyUUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File, Form, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -35,7 +36,7 @@ from app.api.v1.endpoints.auth import get_current_user
 from app.services.rule_engine import RuleEngine, RuleMatch
 from app.services.ai_service import AIService
 from app.services.cache_service import get_cache
-from app.services.gemini_analyzer import gemini_analyzer
+from app.services.gemini_analyzer import gemini_analyzer, AIServiceError, AIServiceUnavailable, AIRateLimited, AIServiceTimeout
 from app.services.structure_extractor import StructureExtractor, ContractMap
 from app.core.config import settings
 
@@ -92,6 +93,7 @@ class RedlineRequest(BaseModel):
     original_text: Optional[str] = None  # For ZDR mode when risk not in DB
     suggested_text: Optional[str] = None  # For ZDR mode
     paragraph_hash: Optional[str] = None  # For anchor search
+    redline_type: Literal["violation", "missing"] = "violation"
 
 
 class RedlineResponse(BaseModel):
@@ -101,6 +103,7 @@ class RedlineResponse(BaseModel):
     ooxml: str
     match_confidence: float = 1.0  # Confidence of text anchor match (0.0-1.0)
     match_method: str = "exact"  # "hash", "exact", or "fuzzy"
+    redline_type: str = "violation"  # "violation" or "missing"
 
 
 class SummaryRequest(BaseModel):
@@ -138,7 +141,8 @@ class AIRedlineItem(BaseModel):
     rule_name: str
     original_text: str  # Exact text from contract for search
     explanation: str
-    suggested_fix: str
+    recommendation: str  # Lawyer-readable guidance (not exact replacement text)
+    redline_type: Literal["violation", "missing"] = "violation"
 
 
 class AIAnalysisResponse(BaseModel):
@@ -150,6 +154,61 @@ class AIAnalysisResponse(BaseModel):
     total_risks: int
     risk_summary: dict  # {red: int, yellow: int}
     tokens_used: int = 0
+
+
+class ExportReportRequest(BaseModel):
+    """Request to generate a DOCX risk report."""
+    filename: str
+    executive_summary: List[str]
+    redlines: List[Dict]
+    risk_summary: Dict[str, int]
+
+
+# ============================================================================
+# Document List Endpoint - Scan History
+# ============================================================================
+
+class DocumentListItem(BaseModel):
+    id: str
+    filename: str
+    status: str
+    total_risks: int
+    risk_summary: Optional[Dict] = None
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/list", response_model=List[DocumentListItem])
+async def list_documents(
+    limit: int = 20,
+    offset: int = 0,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """List user's scanned documents (metadata only, ZDR-safe)."""
+    query = (
+        select(Document)
+        .where(Document.user_id == current_user.id)
+        .order_by(Document.created_at.desc())
+        .offset(offset)
+        .limit(min(limit, 100))
+    )
+    result = await db.execute(query)
+    docs = result.scalars().all()
+
+    return [
+        DocumentListItem(
+            id=str(d.id),
+            filename=d.filename,
+            status=d.status.value if hasattr(d.status, 'value') else str(d.status),
+            total_risks=d.total_risks or 0,
+            risk_summary=d.risk_summary,
+            created_at=d.created_at.isoformat() if d.created_at else "",
+        )
+        for d in docs
+    ]
 
 
 # ============================================================================
@@ -407,28 +466,26 @@ async def analyze_full_ai(
             playbook_uuid = UUID(request.playbook_id)
             result = await db.execute(
                 select(Playbook)
-                .options(selectinload(Playbook.rules))
+                .options(selectinload(Playbook.rules_list))
                 .where(Playbook.id == playbook_uuid)
             )
             playbook = result.scalar_one_or_none()
-            
+
             if playbook:
                 playbook_name = playbook.name
                 playbook_rules = [
                     {
-                        "name": rule.name,
+                        "name": rule.clause_type,
                         "risk_level": rule.risk_level.value.upper() if hasattr(rule.risk_level, 'value') else str(rule.risk_level).upper(),
                         "primary_position": rule.primary_position or "",
                         "fallback_position": rule.fallback_position or "",
-                        "description": rule.description or "",
+                        "is_deal_breaker": rule.is_deal_breaker,
+                        "verification_prompt": rule.verification_prompt or "",
                     }
-                    for rule in playbook.rules
+                    for rule in playbook.rules_list
                 ]
         except Exception as e:
             logger.error("Error loading playbook: %s", e)
-    
-    # Generate document ID for tracking
-    doc_id = str(uuid4())
     
     try:
         # Call Gemini analyzer with full contract + playbook
@@ -437,14 +494,41 @@ async def analyze_full_ai(
             playbook_rules=playbook_rules,
             playbook_name=playbook_name
         )
-        
-        # Log audit event (ZDR-safe: no contract text stored)
+
+        risk_summary = {
+            "red": sum(1 for r in result.redlines if r.risk_level == "RED"),
+            "yellow": sum(1 for r in result.redlines if r.risk_level == "YELLOW"),
+        }
+
+        # Persist document metadata (ZDR-safe: no contract text stored)
+        playbook_uuid = None
+        if request.playbook_id:
+            try:
+                playbook_uuid = UUID(request.playbook_id)
+            except ValueError:
+                pass
+
+        doc = Document(
+            user_id=current_user.id,
+            playbook_id=playbook_uuid,
+            filename=request.filename or "untitled.docx",
+            status=DocumentStatus.COMPLETED,
+            total_risks=len(result.redlines),
+            risk_summary=risk_summary,
+            processed_at=datetime.utcnow(),
+        )
+        db.add(doc)
+        await db.commit()
+        await db.refresh(doc)
+        doc_id = str(doc.id)
+
+        # Log audit event
         await log_audit_event(
             db=db,
-            user=current_user,  # Pass user object, not user_id
+            user=current_user,
             action="ai_full_analysis",
             resource_type="contract",
-            resource_name=request.filename or "untitled.docx",  # resource_name, not resource_id
+            resource_name=request.filename or "untitled.docx",
             ip_address=client_ip,
             risk_count=len(result.redlines),
             details=json.dumps({
@@ -453,7 +537,7 @@ async def analyze_full_ai(
                 "tokens_used": result.tokens_used,
             }),
         )
-        
+
         # Build response
         redline_items = [
             AIRedlineItem(
@@ -462,16 +546,12 @@ async def analyze_full_ai(
                 rule_name=r.rule_name,
                 original_text=r.original_text,
                 explanation=r.explanation,
-                suggested_fix=r.suggested_fix,
+                recommendation=r.recommendation,
+                redline_type=getattr(r, 'redline_type', 'violation'),
             )
             for r in result.redlines
         ]
-        
-        risk_summary = {
-            "red": sum(1 for r in result.redlines if r.risk_level == "RED"),
-            "yellow": sum(1 for r in result.redlines if r.risk_level == "YELLOW"),
-        }
-        
+
         return AIAnalysisResponse(
             document_id=doc_id,
             filename=request.filename or "untitled.docx",
@@ -484,12 +564,415 @@ async def analyze_full_ai(
         
     except HTTPException:
         raise
+    except AIServiceUnavailable as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"message": e.message, "error_code": e.error_code}
+        )
+    except AIRateLimited as e:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"message": e.message, "error_code": e.error_code}
+        )
+    except AIServiceTimeout as e:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail={"message": e.message, "error_code": e.error_code}
+        )
+    except AIServiceError as e:
+        logger.error("AI analysis failed: %s", e.message)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"message": e.message, "error_code": e.error_code}
+        )
     except Exception as e:
         logger.error("AI analysis failed", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="AI analysis failed. Please try again or contact support."
+            detail={"message": "AI analysis failed. Please try again.", "error_code": "unknown_error"}
         )
+
+
+# ============================================================================
+# Generate Clause Endpoint
+# ============================================================================
+
+class GenerateClauseRequest(BaseModel):
+    """Request to generate a contract clause."""
+    clause_type: str = Field(..., min_length=1, max_length=200)
+    playbook_id: Optional[PyUUID] = None
+    contract_context: Optional[str] = Field(default=None, max_length=50000)
+
+
+class GenerateClauseResponse(BaseModel):
+    """Response with generated clause."""
+    clause_text: str
+    reasoning: str
+
+
+@router.post("/generate-clause", response_model=GenerateClauseResponse)
+async def generate_clause(
+    request: GenerateClauseRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate a contract clause using AI.
+
+    Uses Gemini to draft a clause based on:
+    - clause_type: The type of clause to generate (e.g., "Indemnification")
+    - playbook_id: Optional playbook to align with firm's position
+    - contract_context: Optional surrounding text for tone/style matching
+    """
+    try:
+        # Load playbook rules if provided (with authorization check)
+        playbook_rules = None
+        if request.playbook_id:
+            result = await db.execute(
+                select(Playbook)
+                .options(selectinload(Playbook.rules_list))
+                .where(Playbook.id == request.playbook_id)
+                .where(
+                    (Playbook.is_public == True) |
+                    (Playbook.organization_id == current_user.organization_id) |
+                    (Playbook.created_by == current_user.id)
+                )
+            )
+            playbook = result.scalar_one_or_none()
+            if playbook:
+                playbook_rules = [
+                    {
+                        "name": rule.clause_type,
+                        "risk_level": rule.risk_level.value.upper() if hasattr(rule.risk_level, 'value') else str(rule.risk_level).upper(),
+                        "primary_position": rule.primary_position or "",
+                        "fallback_position": rule.fallback_position or "",
+                        "is_deal_breaker": rule.is_deal_breaker,
+                    }
+                    for rule in playbook.rules_list
+                ]
+
+        generated = await gemini_analyzer.generate_clause(
+            clause_type=request.clause_type,
+            contract_context=request.contract_context or "",
+            playbook_rules=playbook_rules,
+        )
+
+        # Audit log
+        await log_audit_event(
+            db=db,
+            user=current_user,
+            action="clause_generation",
+            resource_type="clause",
+            details=json.dumps({"clause_type": request.clause_type, "playbook_id": str(request.playbook_id) if request.playbook_id else None}),
+        )
+
+        return GenerateClauseResponse(
+            clause_text=generated["clause_text"],
+            reasoning=generated["reasoning"],
+        )
+
+    except AIServiceUnavailable as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"message": e.message, "error_code": e.error_code})
+    except AIRateLimited as e:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail={"message": e.message, "error_code": e.error_code})
+    except AIServiceTimeout as e:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail={"message": e.message, "error_code": e.error_code})
+    except AIServiceError as e:
+        logger.error("Clause generation failed: %s", e.message)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail={"message": e.message, "error_code": e.error_code})
+    except Exception as e:
+        logger.error("Clause generation failed", exc_info=True)
+        raise HTTPException(status_code=500, detail={"message": "Clause generation failed. Please try again.", "error_code": "unknown_error"})
+
+
+# ============================================================================
+# Generate Fix Endpoint
+# ============================================================================
+
+class GenerateFixRequest(BaseModel):
+    """Request to generate exact replacement/insertion text for a specific risk."""
+    original_text: str = Field(..., min_length=1, max_length=10000)
+    recommendation: str = Field(..., min_length=1, max_length=5000)
+    rule_name: str = Field(..., min_length=1, max_length=200)
+    redline_type: Literal["violation", "missing"] = "violation"
+    surrounding_context: Optional[str] = Field(default=None, max_length=10000)
+    playbook_id: Optional[PyUUID] = None
+
+
+class GenerateFixResponse(BaseModel):
+    """Response with generated fix text."""
+    fix_text: str
+    reasoning: str
+
+
+@router.post("/generate-fix", response_model=GenerateFixResponse)
+async def generate_fix(
+    request: GenerateFixRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Generate exact replacement/insertion text for a specific risk.
+
+    Takes a risk's original text + recommendation (guidance) and produces
+    exact text that can be inserted into the Word document.
+    Uses Flash-Lite model for fast, cheap per-issue generation.
+    """
+    try:
+        # Load playbook rules if provided (with authorization check)
+        playbook_rules = None
+        if request.playbook_id:
+            result = await db.execute(
+                select(Playbook)
+                .options(selectinload(Playbook.rules_list))
+                .where(Playbook.id == request.playbook_id)
+                .where(
+                    (Playbook.is_public == True) |
+                    (Playbook.organization_id == current_user.organization_id) |
+                    (Playbook.created_by == current_user.id)
+                )
+            )
+            playbook = result.scalar_one_or_none()
+            if playbook:
+                playbook_rules = [
+                    {
+                        "name": rule.clause_type,
+                        "risk_level": rule.risk_level.value.upper() if hasattr(rule.risk_level, 'value') else str(rule.risk_level).upper(),
+                        "primary_position": rule.primary_position or "",
+                        "fallback_position": rule.fallback_position or "",
+                        "is_deal_breaker": rule.is_deal_breaker,
+                    }
+                    for rule in playbook.rules_list
+                ]
+
+        generated = await gemini_analyzer.generate_fix(
+            original_text=request.original_text,
+            recommendation=request.recommendation,
+            rule_name=request.rule_name,
+            redline_type=request.redline_type,
+            surrounding_context=request.surrounding_context or "",
+            playbook_rules=playbook_rules,
+        )
+
+        # Audit log
+        await log_audit_event(
+            db=db,
+            user=current_user,
+            action="fix_generation",
+            resource_type="clause",
+            details=json.dumps({"rule_name": request.rule_name, "redline_type": request.redline_type}),
+        )
+
+        return GenerateFixResponse(
+            fix_text=generated["fix_text"],
+            reasoning=generated["reasoning"],
+        )
+
+    except AIServiceUnavailable as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"message": e.message, "error_code": e.error_code})
+    except AIRateLimited as e:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail={"message": e.message, "error_code": e.error_code})
+    except AIServiceTimeout as e:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail={"message": e.message, "error_code": e.error_code})
+    except AIServiceError as e:
+        logger.error("Fix generation failed: %s", e.message)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail={"message": e.message, "error_code": e.error_code})
+    except Exception as e:
+        logger.error("Fix generation failed", exc_info=True)
+        raise HTTPException(status_code=500, detail={"message": "Fix generation failed. Please try again.", "error_code": "unknown_error"})
+
+
+# ============================================================================
+# Research Clause Endpoint
+# ============================================================================
+
+class ResearchClauseRequest(BaseModel):
+    """Request to research case law for a clause."""
+    clause_text: str = Field(..., min_length=1, max_length=10000)
+    clause_type: Optional[str] = Field(default=None, max_length=200)
+
+
+class CaseLawItem(BaseModel):
+    """A single case law reference."""
+    case_name: str
+    citation: str
+    year: int = 0
+    court: str = ""
+    holding: str = ""
+    relevance: str = ""
+
+
+class ResearchClauseResponse(BaseModel):
+    """Response with case law research results."""
+    cases: List[CaseLawItem]
+    legal_principle: str
+    disclaimer: str
+
+
+@router.post("/research-clause", response_model=ResearchClauseResponse)
+async def research_clause(
+    request: ResearchClauseRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Research relevant Indian case law for a flagged clause.
+
+    Uses Gemini's knowledge to find SC/HC decisions related to the clause.
+    Always includes a disclaimer about verifying citations.
+    """
+    try:
+        result = await gemini_analyzer.research_clause(
+            clause_text=request.clause_text,
+            clause_type=request.clause_type or "",
+        )
+
+        # Audit log
+        await log_audit_event(
+            db=db,
+            user=current_user,
+            action="clause_research",
+            resource_type="clause",
+            details=json.dumps({"clause_type": request.clause_type, "cases_found": len(result.get("cases", []))}),
+        )
+
+        cases = []
+        for c in result.get("cases", []):
+            cases.append(CaseLawItem(
+                case_name=c.get("case_name", ""),
+                citation=c.get("citation", ""),
+                year=c.get("year", 0),
+                court=c.get("court", ""),
+                holding=c.get("holding", ""),
+                relevance=c.get("relevance", ""),
+            ))
+
+        return ResearchClauseResponse(
+            cases=cases,
+            legal_principle=result.get("legal_principle", ""),
+            disclaimer=result.get("disclaimer", "AI-suggested references — verify independently."),
+        )
+
+    except AIServiceUnavailable as e:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"message": e.message, "error_code": e.error_code})
+    except AIRateLimited as e:
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail={"message": e.message, "error_code": e.error_code})
+    except AIServiceTimeout as e:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail={"message": e.message, "error_code": e.error_code})
+    except AIServiceError as e:
+        logger.error("Research clause failed: %s", e.message)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail={"message": e.message, "error_code": e.error_code})
+    except Exception as e:
+        logger.error("Research clause failed", exc_info=True)
+        raise HTTPException(status_code=500, detail={"message": "Research failed. Please try again.", "error_code": "unknown_error"})
+
+
+# ============================================================================
+# Contract Comparison Endpoint
+# ============================================================================
+
+class CompareRequest(BaseModel):
+    """Request to compare two contract versions."""
+    text_a: str = Field(..., min_length=1, max_length=200000)
+    text_b: str = Field(..., min_length=1, max_length=200000)
+    playbook_id: Optional[PyUUID] = None
+
+
+class DiffChangeResponse(BaseModel):
+    """A single change in the diff."""
+    change_type: str  # "added", "removed", "modified"
+    text_a: str
+    text_b: str
+    position: int
+    similarity: float = 0.0
+    ai_assessment: Optional[str] = None
+
+
+class CompareResponse(BaseModel):
+    """Response with diff results."""
+    changes: List[DiffChangeResponse]
+    total_changes: int
+    paragraphs_a: int
+    paragraphs_b: int
+    summary: str
+
+
+@router.post("/compare", response_model=CompareResponse)
+async def compare_contracts(
+    request: CompareRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Compare two contract versions.
+
+    Returns paragraph-level diff with optional AI commentary
+    on whether changes favor the user or counterparty.
+    """
+    from app.services.contract_differ import compute_diff_with_ai
+
+    try:
+        # Load playbook rules if provided (with authorization check)
+        playbook_rules = None
+        if request.playbook_id:
+            result = await db.execute(
+                select(Playbook)
+                .options(selectinload(Playbook.rules_list))
+                .where(Playbook.id == request.playbook_id)
+                .where(
+                    (Playbook.is_public == True) |
+                    (Playbook.organization_id == current_user.organization_id) |
+                    (Playbook.created_by == current_user.id)
+                )
+            )
+            playbook = result.scalar_one_or_none()
+            if playbook:
+                playbook_rules = [
+                    {
+                        "name": rule.clause_type,
+                        "risk_level": rule.risk_level.value.upper() if hasattr(rule.risk_level, 'value') else str(rule.risk_level).upper(),
+                        "primary_position": rule.primary_position or "",
+                        "fallback_position": rule.fallback_position or "",
+                    }
+                    for rule in playbook.rules_list
+                ]
+
+        diff = await compute_diff_with_ai(
+            text_a=request.text_a,
+            text_b=request.text_b,
+            playbook_rules=playbook_rules,
+        )
+
+        # Audit log
+        await log_audit_event(
+            db=db,
+            user=current_user,
+            action="contract_comparison",
+            resource_type="document",
+            details=json.dumps({"total_changes": diff.total_changes, "playbook_id": str(request.playbook_id) if request.playbook_id else None}),
+        )
+
+        return CompareResponse(
+            changes=[
+                DiffChangeResponse(
+                    change_type=c.change_type,
+                    text_a=c.text_a,
+                    text_b=c.text_b,
+                    position=c.position,
+                    similarity=c.similarity,
+                    ai_assessment=c.ai_assessment,
+                )
+                for c in diff.changes
+            ],
+            total_changes=diff.total_changes,
+            paragraphs_a=diff.paragraphs_a,
+            paragraphs_b=diff.paragraphs_b,
+            summary=diff.summary,
+        )
+
+    except Exception as e:
+        logger.error("Contract comparison failed", exc_info=True)
+        raise HTTPException(status_code=500, detail={"message": "Comparison failed. Please try again.", "error_code": "comparison_error"})
 
 
 # ============================================================================
@@ -857,13 +1340,28 @@ async def generate_redline(
 
     # Mode 1: ZDR Mode - text provided directly in request
     if request.original_text and request.suggested_text:
+        await _log_redline_usage()
+
+        # Missing clause: generate insert-only OOXML (no deletion)
+        if request.redline_type == "missing":
+            ooxml = implementer.generate_insert_only_ooxml(
+                new_text=request.suggested_text
+            )
+            return RedlineResponse(
+                original_text=request.original_text,
+                suggested_text=request.suggested_text,
+                ooxml=ooxml,
+                match_confidence=1.0,
+                match_method="anchor",
+                redline_type="missing"
+            )
+
+        # Violation: find anchor and generate replace OOXML
         result = implementer.apply_redline(
             original_text=request.original_text,
             suggested_text=request.suggested_text,
             paragraph_hash=request.paragraph_hash
         )
-
-        await _log_redline_usage()
 
         if not result.success:
             ooxml = implementer.generate_track_changes_ooxml(
@@ -875,7 +1373,8 @@ async def generate_redline(
                 suggested_text=request.suggested_text,
                 ooxml=ooxml,
                 match_confidence=0.0,
-                match_method="direct"
+                match_method="direct",
+                redline_type="violation"
             )
 
         return RedlineResponse(
@@ -883,7 +1382,8 @@ async def generate_redline(
             suggested_text=result.replacement,
             ooxml=result.track_changes_ooxml,
             match_confidence=result.anchor.match_confidence if result.anchor else 1.0,
-            match_method=result.anchor.match_method if result.anchor else "direct"
+            match_method=result.anchor.match_method if result.anchor else "direct",
+            redline_type="violation"
         )
     
     # Mode 2: DB Mode - look up risk by ID
@@ -1008,6 +1508,50 @@ async def download_installer():
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error creating installer. Please try again or contact support."
         )
+
+
+# ============================================================================
+# Export Risk Report Endpoint
+# ============================================================================
+
+@router.post("/export-report")
+async def export_risk_report(
+    request: ExportReportRequest,
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Generate and download a DOCX risk assessment report.
+
+    ZDR-safe: Only receives analysis metadata, NOT the full contract text.
+    """
+    from app.services.report_generator import generate_risk_report
+
+    buffer = generate_risk_report(
+        filename=request.filename,
+        executive_summary=request.executive_summary,
+        redlines=request.redlines,
+        risk_summary=request.risk_summary,
+        generated_by=f"ContraRed AI for {current_user.email}",
+    )
+
+    # Audit log
+    client_ip = http_request.client.host if http_request.client else None
+    await log_audit_event(
+        db=db, user=current_user, action="report_exported",
+        resource_type="document", resource_name=request.filename,
+        ip_address=client_ip, status="success",
+    )
+    await db.commit()
+
+    safe_filename = request.filename.replace('.docx', '').replace('.pdf', '') + '-risk-report.docx'
+
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'}
+    )
 
 
 # ============================================================================

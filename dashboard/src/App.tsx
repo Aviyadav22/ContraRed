@@ -11,6 +11,10 @@ import Billing from '@/pages/Billing';
 import AuditLogs from '@/pages/AuditLogs';
 import Team from '@/pages/Team';
 import NotFound from '@/pages/NotFound';
+import ClauseLibrary from '@/pages/ClauseLibrary';
+import Templates from '@/pages/Templates';
+import Analytics from '@/pages/Analytics';
+import Compare from '@/pages/Compare';
 
 
 const queryClient = new QueryClient({
@@ -54,10 +58,14 @@ export default function App() {
           {/* Protected routes - all authenticated users */}
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/playbooks" element={<ProtectedRoute><Playbooks /></ProtectedRoute>} />
+          <Route path="/clause-library" element={<ProtectedRoute><ClauseLibrary /></ProtectedRoute>} />
+          <Route path="/templates" element={<ProtectedRoute><Templates /></ProtectedRoute>} />
+          <Route path="/compare" element={<ProtectedRoute><Compare /></ProtectedRoute>} />
           <Route path="/audit-logs" element={<ProtectedRoute><AuditLogs /></ProtectedRoute>} />
 
           {/* Admin-only routes */}
           <Route path="/playbooks/:id" element={<AdminRoute><PlaybookEditor /></AdminRoute>} />
+          <Route path="/analytics" element={<AdminRoute><Analytics /></AdminRoute>} />
           <Route path="/billing" element={<AdminRoute><Billing /></AdminRoute>} />
           <Route path="/team" element={<AdminRoute><Team /></AdminRoute>} />
 

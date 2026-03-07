@@ -21,7 +21,7 @@ echo [1/4] Creating C:\ContraRed-Addin folder...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$folderPath = 'C:\ContraRed-Addin'; if (-not (Test-Path $folderPath)) { New-Item -ItemType Directory -Force -Path $folderPath | Out-Null }"
 
 echo [2/4] Downloading latest manifest from secure server...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$folderPath = 'C:\ContraRed-Addin'; Invoke-WebRequest -Uri 'https://contrared.onrender.com/api/v1/documents/manifest' -OutFile \"$folderPath\manifest.xml\""
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$folderPath = 'C:\ContraRed-Addin'; Invoke-WebRequest -Uri 'https://contrared-api.onrender.com/api/v1/documents/manifest' -OutFile \"$folderPath\manifest.xml\""
 
 :: Check if the download succeeded
 if not exist "C:\ContraRed-Addin\manifest.xml" (

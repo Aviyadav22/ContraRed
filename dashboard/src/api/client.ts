@@ -68,6 +68,24 @@ export interface CreateRuleData {
     suggested_language?: string;
 }
 
+export interface ClauseLibraryItem {
+    id: string;
+    clause_type: string;
+    name: string;
+    approved_text: string;
+    is_mandatory: boolean;
+    is_active: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface CreateClauseData {
+    clause_type: string;
+    name: string;
+    approved_text: string;
+    is_mandatory?: boolean;
+}
+
 // ============================================================================
 // Auth Storage
 // ============================================================================
@@ -135,7 +153,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
             window.location.href = '/login';
         }
         const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-        throw new Error(error.detail || `HTTP ${response.status}`);
+        const detail = error.detail;
+        const message = typeof detail === 'object' && detail?.message
+            ? detail.message
+            : typeof detail === 'string' ? detail : `HTTP ${response.status}`;
+        throw new Error(message);
     }
 
     // Handle 204 No Content
@@ -349,4 +371,166 @@ export async function reorderRules(playbookId: string, ruleIds: string[]): Promi
         method: 'POST',
         body: JSON.stringify({ rule_ids: ruleIds }),
     });
+}
+
+// ============================================================================
+// Clause Library
+// ============================================================================
+
+export async function listClauses(clauseType?: string): Promise<ClauseLibraryItem[]> {
+    const qs = clauseType ? `?clause_type=${encodeURIComponent(clauseType)}` : '';
+    return request(`/clauses/${qs}`);
+}
+
+export async function createClause(data: CreateClauseData): Promise<ClauseLibraryItem> {
+    return request('/clauses/', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function updateClause(id: string, data: Partial<CreateClauseData>): Promise<ClauseLibraryItem> {
+    return request(`/clauses/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+}
+
+export async function deleteClause(id: string): Promise<void> {
+    await request(`/clauses/${id}`, { method: 'DELETE' });
+}
+
+// ============================================================================
+// Templates API
+// ============================================================================
+
+export interface TemplateListItem {
+    id: string;
+    name: string;
+    description: string | null;
+    category: string;
+    is_premium: boolean;
+    download_count: number;
+    paired_playbook_id: string | null;
+    paired_playbook_name: string | null;
+}
+
+export interface TemplateDetail extends TemplateListItem {
+    template_content: string | null;
+    created_at: string;
+}
+
+export async function listTemplates(category?: string): Promise<TemplateListItem[]> {
+    const qs = category ? `?category=${encodeURIComponent(category)}` : '';
+    return request(`/templates/${qs}`);
+}
+
+export async function getTemplate(id: string): Promise<TemplateDetail> {
+    return request(`/templates/${id}`);
+}
+
+export async function downloadTemplate(id: string): Promise<{ id: string; name: string; template_content: string; paired_playbook_id: string | null }> {
+    return request(`/templates/${id}/download`);
+}
+
+// ============================================================================
+// Contract Comparison API
+// ============================================================================
+
+export interface DiffChange {
+    change_type: 'added' | 'removed' | 'modified';
+    text_a: string;
+    text_b: string;
+    position: number;
+    similarity: number;
+    ai_assessment: string | null;
+}
+
+export interface CompareResponse {
+    changes: DiffChange[];
+    total_changes: number;
+    paragraphs_a: number;
+    paragraphs_b: number;
+    summary: string;
+}
+
+export async function compareContracts(textA: string, textB: string, playbookId?: string): Promise<CompareResponse> {
+    return request('/documents/compare', {
+        method: 'POST',
+        body: JSON.stringify({ text_a: textA, text_b: textB, playbook_id: playbookId }),
+    });
+}
+
+// ============================================================================
+// Clause Generation API
+// ============================================================================
+
+export interface GenerateClauseResponse {
+    clause_text: string;
+    reasoning: string;
+}
+
+export async function generateClause(clauseType: string, playbookId?: string, contractContext?: string): Promise<GenerateClauseResponse> {
+    return request('/documents/generate-clause', {
+        method: 'POST',
+        body: JSON.stringify({ clause_type: clauseType, playbook_id: playbookId, contract_context: contractContext }),
+    });
+}
+
+// ============================================================================
+// Analytics API
+// ============================================================================
+
+export interface AnalyticsOverview {
+    documents_analyzed: number;
+    total_risks: number;
+    red_risks: number;
+    yellow_risks: number;
+    active_users: number;
+    period_days: number;
+}
+
+export interface RiskBreakdownItem {
+    risk_level: string;
+    red: number;
+    yellow: number;
+    green: number;
+    total: number;
+}
+
+export interface UserActivityItem {
+    user_id: string;
+    email: string;
+    name: string;
+    scan_count: number;
+    risks_found: number;
+    last_scan: string | null;
+}
+
+export interface TrendDataPoint {
+    period: string;
+    scans: number;
+    risks: number;
+}
+
+export async function getAnalyticsOverview(days?: number): Promise<AnalyticsOverview> {
+    const qs = days ? `?days=${days}` : '';
+    return request(`/analytics/overview${qs}`);
+}
+
+export async function getAnalyticsRisks(days?: number): Promise<RiskBreakdownItem[]> {
+    const qs = days ? `?days=${days}` : '';
+    return request(`/analytics/risks${qs}`);
+}
+
+export async function getAnalyticsUsers(days?: number): Promise<UserActivityItem[]> {
+    const qs = days ? `?days=${days}` : '';
+    return request(`/analytics/users${qs}`);
+}
+
+export async function getAnalyticsTrends(period?: string, weeks?: number): Promise<TrendDataPoint[]> {
+    const params = new URLSearchParams();
+    if (period) params.set('period', period);
+    if (weeks) params.set('weeks', String(weeks));
+    const qs = params.toString() ? `?${params.toString()}` : '';
+    return request(`/analytics/trends${qs}`);
+}
+
+export function getAnalyticsExportUrl(days?: number): string {
+    const qs = days ? `?days=${days}` : '';
+    return `${API_BASE_URL}/analytics/export${qs}`;
 }

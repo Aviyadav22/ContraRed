@@ -321,7 +321,63 @@ class RedlineImplementer:
 </pkg:package>'''
         
         return ooxml
-    
+
+    def generate_insert_only_ooxml(
+        self,
+        new_text: str,
+        author: str = "ContraRed AI"
+    ) -> str:
+        """
+        Generate Word-compatible Insert-Only OOXML for missing clauses.
+
+        Creates OOXML that shows inserted text with Track Changes
+        (underline, green) without any deletion.
+        """
+        from datetime import datetime
+
+        def escape_xml(text: str) -> str:
+            return (text
+                .replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace('"', "&quot;")
+                .replace("'", "&apos;"))
+
+        new_escaped = escape_xml(new_text)
+        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        ooxml = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<pkg:package xmlns:pkg="http://schemas.microsoft.com/office/2006/xmlPackage">
+  <pkg:part pkg:name="/_rels/.rels" pkg:contentType="application/vnd.openxmlformats-package.relationships+xml">
+    <pkg:xmlData>
+      <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+        <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+      </Relationships>
+    </pkg:xmlData>
+  </pkg:part>
+  <pkg:part pkg:name="/word/document.xml" pkg:contentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml">
+    <pkg:xmlData>
+      <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+        <w:body>
+          <w:p>
+            <w:ins w:id="1" w:author="{author}" w:date="{timestamp}">
+              <w:r>
+                <w:rPr>
+                  <w:u w:val="single"/>
+                  <w:color w:val="16A34A"/>
+                </w:rPr>
+                <w:t xml:space="preserve"> {new_escaped}</w:t>
+              </w:r>
+            </w:ins>
+          </w:p>
+        </w:body>
+      </w:document>
+    </pkg:xmlData>
+  </pkg:part>
+</pkg:package>'''
+
+        return ooxml
+
     def apply_redline(
         self,
         original_text: str,
