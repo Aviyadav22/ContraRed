@@ -72,6 +72,11 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
+    # Security: refuse to start with default SECRET_KEY in production
+    if not settings.DEBUG and settings.SECRET_KEY == "your-secret-key-change-in-production":
+        logger.critical("FATAL: SECRET_KEY is set to the default value in a non-DEBUG environment. "
+                        "Set a strong SECRET_KEY environment variable before starting.")
+        raise RuntimeError("Insecure SECRET_KEY — set SECRET_KEY env var before starting in production")
     # Startup - non-fatal DB init (app stays healthy even if DB is temporarily unreachable)
     try:
         await init_db()
@@ -86,9 +91,9 @@ app = FastAPI(
     title="ContraRed API",
     description="AI-powered contract redlining and review platform",
     version="1.1.0",
-    docs_url="/api/docs",
-    redoc_url="/api/redoc",
-    openapi_url="/api/openapi.json",
+    docs_url="/api/docs" if settings.DEBUG else None,
+    redoc_url="/api/redoc" if settings.DEBUG else None,
+    openapi_url="/api/openapi.json" if settings.DEBUG else None,
     lifespan=lifespan,
 )
 
@@ -133,4 +138,5 @@ async def db_health_check():
             await conn.execute(text("SELECT 1"))
         return {"status": "connected"}
     except Exception as e:
-        return {"status": "error", "detail": str(e), "type": type(e).__name__}
+        logger.error(f"DB health check failed: {e}")
+        return {"status": "error"}

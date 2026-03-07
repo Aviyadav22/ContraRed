@@ -61,10 +61,14 @@ def create_refresh_token(data: dict) -> str:
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def decode_token(token: str) -> Optional[TokenData]:
-    """Decode and validate a JWT token."""
+def decode_token(token: str, expected_type: str = "access") -> Optional[TokenData]:
+    """Decode and validate a JWT token. Validates token type to prevent misuse."""
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        # Validate token type to prevent access tokens being used as refresh tokens
+        token_type = payload.get("type")
+        if token_type != expected_type:
+            return None
         return TokenData(
             user_id=payload.get("sub"),
             email=payload.get("email"),
