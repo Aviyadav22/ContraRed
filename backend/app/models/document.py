@@ -3,7 +3,7 @@ Document and Usage models.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional, List
 from sqlalchemy import String, DateTime, Enum as SQLEnum, Text, Integer, ForeignKey, Numeric, Boolean
@@ -33,8 +33,8 @@ class Document(Base):
     __tablename__ = "documents"
     
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
-    playbook_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("playbooks.id"), nullable=True)
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    playbook_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("playbooks.id"), nullable=True, index=True)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
     blob_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
     status: Mapped[DocumentStatus] = mapped_column(SQLEnum(DocumentStatus), default=DocumentStatus.PENDING)
@@ -42,9 +42,10 @@ class Document(Base):
     risk_summary: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     total_risks: Mapped[int] = mapped_column(Integer, default=0)
     processed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    
-    user: Mapped["User"] = relationship("User", back_populates="documents")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc), nullable=True)
+
+    user: Mapped[Optional["User"]] = relationship("User", back_populates="documents")
     risks: Mapped[List["DocumentRisk"]] = relationship("DocumentRisk", back_populates="document", cascade="all, delete-orphan")
 
 
@@ -52,7 +53,7 @@ class DocumentRisk(Base):
     __tablename__ = "document_risks"
     
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id"))
+    document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"))
     rule_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("playbook_rules.id"), nullable=True)
     clause_text: Mapped[str] = mapped_column(Text, nullable=False)
     start_offset: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
@@ -61,7 +62,7 @@ class DocumentRisk(Base):
     ai_explanation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     suggested_fix: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     is_resolved: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     document: Mapped["Document"] = relationship("Document", back_populates="risks")
 
@@ -76,6 +77,6 @@ class UsageLog(Base):
     tokens_used: Mapped[int] = mapped_column(Integer, default=0)
     cost_usd: Mapped[Decimal] = mapped_column(Numeric(10, 6), default=0)
     extra_data: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     user: Mapped["User"] = relationship("User", back_populates="usage_logs")

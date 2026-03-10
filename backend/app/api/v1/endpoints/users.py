@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.db.session import get_db
 from app.models.user import User, UserRole
@@ -45,12 +45,8 @@ async def get_usage_stats(
     db: AsyncSession = Depends(get_db)
 ):
     """Get current user's usage statistics."""
-    from app.models.document import UsageLog, UsageAction
-    from sqlalchemy import func
-    from datetime import datetime
-    
     # Get usage for current month
-    first_of_month = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0)
+    first_of_month = datetime.now(timezone.utc).replace(day=1, hour=0, minute=0, second=0)
     
     result = await db.execute(
         select(func.count(UsageLog.id))
@@ -69,7 +65,6 @@ async def get_usage_stats(
     redlines_used = result.scalar() or 0
     
     # Determine limit based on tier
-    from app.core.config import settings
     if current_user.subscription_tier.value == "free":
         scans_limit = settings.FREE_TIER_SCANS
     elif current_user.subscription_tier.value == "pro":
@@ -171,22 +166,15 @@ async def get_org_stats(
             red_risks=0, yellow_risks=0, green_risks=0,
         )
 
-    # Get all user IDs in the org
-    org_users = await db.execute(
-        select(User.id).where(User.organization_id == current_user.organization_id)
-    )
-    user_ids = [uid for uid in org_users.scalars().all()]
-
-    if not user_ids:
-        return DashboardStats(
-            documents_analyzed=0, total_risks_detected=0, redlines_applied=0,
-            red_risks=0, yellow_risks=0, green_risks=0,
-        )
+    # Use subquery to avoid N+1 (no separate fetch of user_ids list)
+    user_ids_subq = select(User.id).where(
+        User.organization_id == current_user.organization_id
+    ).scalar_subquery()
 
     # Documents analyzed
     doc_count = await db.execute(
         select(func.count(Document.id))
-        .where(Document.user_id.in_(user_ids))
+        .where(Document.user_id.in_(user_ids_subq))
         .where(Document.status == DocumentStatus.COMPLETED)
     )
     documents_analyzed = doc_count.scalar() or 0
@@ -194,7 +182,7 @@ async def get_org_stats(
     # Total risks
     risk_sum = await db.execute(
         select(func.coalesce(func.sum(Document.total_risks), 0))
-        .where(Document.user_id.in_(user_ids))
+        .where(Document.user_id.in_(user_ids_subq))
         .where(Document.status == DocumentStatus.COMPLETED)
     )
     total_risks = risk_sum.scalar() or 0
@@ -202,7 +190,7 @@ async def get_org_stats(
     # Risk breakdown
     docs_result = await db.execute(
         select(Document.risk_summary)
-        .where(Document.user_id.in_(user_ids))
+        .where(Document.user_id.in_(user_ids_subq))
         .where(Document.status == DocumentStatus.COMPLETED)
         .where(Document.risk_summary.isnot(None))
     )
@@ -214,7 +202,7 @@ async def get_org_stats(
     # Redlines applied
     redline_count = await db.execute(
         select(func.count(UsageLog.id))
-        .where(UsageLog.user_id.in_(user_ids))
+        .where(UsageLog.user_id.in_(user_ids_subq))
         .where(UsageLog.action == UsageAction.REDLINE)
     )
     redlines_applied = redline_count.scalar() or 0

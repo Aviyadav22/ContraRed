@@ -7,9 +7,12 @@ Main application entry point.
 import logging
 import time
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 from contextlib import asynccontextmanager
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -84,7 +87,8 @@ async def lifespan(app: FastAPI):
         logger.error(f"DB init failed on startup: {e}. App will still start.")
     yield
     # Shutdown
-    pass
+    from app.services.cache_service import shutdown_cache
+    await shutdown_cache()
 
 
 app = FastAPI(
@@ -113,6 +117,9 @@ app.add_middleware(
     allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
+# 4. Proxy headers (trust reverse proxy for real client IP)
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["*"])
+
 # Rate limiting exception handler
 from app.api.v1.endpoints.auth import limiter
 app.state.limiter = limiter
@@ -129,7 +136,7 @@ async def health_check():
 
 
 @app.get("/health/db")
-async def db_health_check():
+async def db_health_check(response: Response):
     """Database connectivity check — returns actual error if DB is unreachable."""
     from sqlalchemy import text
     from app.db.session import engine
@@ -139,4 +146,5 @@ async def db_health_check():
         return {"status": "connected"}
     except Exception as e:
         logger.error(f"DB health check failed: {e}")
-        return {"status": "error"}
+        response.status_code = 503
+        return {"status": "error", "detail": "Database unreachable"}

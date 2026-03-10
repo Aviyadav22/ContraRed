@@ -166,23 +166,67 @@ class ContraRedAPI {
         }
     }
 
+    private getStoredTokens(): AuthTokens | null {
+        try {
+            const stored = localStorage.getItem('contrared_tokens');
+            if (stored) return JSON.parse(stored);
+        } catch { /* ignore */ }
+        return null;
+    }
+
     private async request<T>(
         endpoint: string,
         options: RequestInit = {}
     ): Promise<T> {
-        const headers: HeadersInit = {
+        const url = `${API_BASE_URL}${endpoint}`;
+        const headers: Record<string, string> = {
             'Content-Type': 'application/json',
-            ...options.headers,
+            ...(options.headers as Record<string, string>),
         };
 
         if (this.accessToken) {
-            (headers as Record<string, string>)['Authorization'] = `Bearer ${this.accessToken}`;
+            headers['Authorization'] = `Bearer ${this.accessToken}`;
         }
 
-        const response = await fetch(`${API_BASE_URL}${endpoint}`, {
+        const method = options.method || 'GET';
+        const body = options.body;
+
+        const response = await fetch(url, {
             ...options,
             headers,
         });
+
+        if (response.status === 204) {
+            return undefined as T;
+        }
+
+        if (response.status === 401) {
+            // Try refresh
+            const tokens = this.getStoredTokens();
+            if (tokens?.refresh_token) {
+                try {
+                    const refreshResp = await fetch(`${API_BASE_URL}/auth/refresh`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ refresh_token: tokens.refresh_token }),
+                    });
+                    if (refreshResp.ok) {
+                        const newTokens = await refreshResp.json();
+                        this.accessToken = newTokens.access_token;
+                        this.refreshToken = newTokens.refresh_token;
+                        localStorage.setItem('contrared_tokens', JSON.stringify(newTokens));
+                        // Retry with new token
+                        headers['Authorization'] = `Bearer ${newTokens.access_token}`;
+                        const retryResp = await fetch(url, { method, headers, body: body as BodyInit | undefined });
+                        if (retryResp.ok) {
+                            if (retryResp.status === 204) return undefined as T;
+                            return retryResp.json();
+                        }
+                    }
+                } catch { /* refresh failed, fall through */ }
+            }
+            throw new Error(`Authentication failed: ${response.status}`);
+        }
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
@@ -480,6 +524,7 @@ class ContraRedAPI {
     async healthCheck(): Promise<{ status: string; version: string }> {
         const baseUrl = API_BASE_URL.replace('/api/v1', '');
         const response = await fetch(`${baseUrl}/health`);
+        if (!response.ok) throw new Error(`Health check failed: ${response.status}`);
         return response.json();
     }
 }

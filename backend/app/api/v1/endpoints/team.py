@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.models.user import User, UserRole
 from app.api.dependencies import require_admin
 from app.models.audit_log import log_audit_event
+from app.api.v1.endpoints.auth import limiter
 
 
 router = APIRouter()
@@ -60,6 +61,7 @@ async def list_members(
 
 
 @router.put("/members/{user_id}/role", response_model=TeamMemberResponse)
+@limiter.limit("10/minute")
 async def change_role(
     user_id: UUID,
     body: ChangeRoleRequest,
@@ -117,6 +119,7 @@ async def change_role(
 
 
 @router.delete("/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("10/minute")
 async def remove_member(
     user_id: UUID,
     request: Request,

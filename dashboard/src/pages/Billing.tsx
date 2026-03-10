@@ -35,7 +35,7 @@ export default function Billing() {
     ];
 
     return (
-        <div className="font-['Inter',system-ui,sans-serif] min-h-screen bg-slate-50">
+        <div className="min-h-screen bg-slate-50">
             <AppHeader />
 
             <main className="max-w-7xl mx-auto px-8 py-10">

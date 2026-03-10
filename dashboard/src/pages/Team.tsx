@@ -6,7 +6,7 @@ export default function Team() {
     const user = getStoredUser();
     const queryClient = useQueryClient();
 
-    const { data: members, isLoading } = useQuery<TeamMember[]>({
+    const { data: members, isLoading, error } = useQuery<TeamMember[]>({
         queryKey: ['team-members'],
         queryFn: getTeamMembers,
     });
@@ -40,6 +40,8 @@ export default function Team() {
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 <h1 className="text-2xl font-bold text-slate-900 mb-6">Team Management</h1>
 
+                {error && <div className="text-red-600 p-4">Failed to load data. Please try again.</div>}
+
                 {(roleMutation.isError || removeMutation.isError) && (
                     <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
                         {(roleMutation.error as Error)?.message || (removeMutation.error as Error)?.message}
@@ -50,11 +52,11 @@ export default function Team() {
                     <table className="w-full text-sm">
                         <thead className="bg-slate-50 border-b border-slate-200">
                             <tr>
-                                <th className="text-left px-4 py-3 font-medium text-slate-600">Name</th>
-                                <th className="text-left px-4 py-3 font-medium text-slate-600">Email</th>
-                                <th className="text-left px-4 py-3 font-medium text-slate-600">Role</th>
-                                <th className="text-left px-4 py-3 font-medium text-slate-600">Last Login</th>
-                                <th className="text-left px-4 py-3 font-medium text-slate-600">Actions</th>
+                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">Name</th>
+                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">Email</th>
+                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">Role</th>
+                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">Last Login</th>
+                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">Actions</th>
                             </tr>
                         </thead>
                         <tbody>

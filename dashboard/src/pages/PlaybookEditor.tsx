@@ -75,7 +75,7 @@ export default function PlaybookEditor() {
     if (isLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-slate-50">
-                <div className="w-8 h-8 border-3 border-slate-200 border-t-slate-900 rounded-full animate-spin" />
+                <div className="w-8 h-8 border-2 border-slate-200 border-t-slate-900 rounded-full animate-spin" />
             </div>
         );
     }
@@ -94,7 +94,7 @@ export default function PlaybookEditor() {
     }
 
     return (
-        <div className="font-['Inter',system-ui,sans-serif] min-h-screen bg-slate-50">
+        <div className="min-h-screen bg-slate-50">
             {/* Header */}
             <header className="bg-white border-b border-slate-200">
                 <div className="max-w-7xl mx-auto px-8 h-16 flex items-center gap-4">
@@ -256,11 +256,11 @@ export default function PlaybookEditor() {
                         <table className="w-full border-collapse">
                             <thead>
                                 <tr className="bg-slate-50 border-b border-slate-200">
-                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Clause Type</th>
-                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Risk</th>
-                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Match</th>
-                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Patterns</th>
-                                    <th className="text-right px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>
+                                    <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Clause Type</th>
+                                    <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Risk</th>
+                                    <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Match</th>
+                                    <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Patterns</th>
+                                    <th scope="col" className="text-right px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>
                                 </tr>
                             </thead>
                             <tbody>

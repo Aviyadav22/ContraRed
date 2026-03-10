@@ -20,7 +20,7 @@ module.exports = async (env, options) => {
     const config = {
         devtool: dev ? "source-map" : false,
         entry: {
-            taskpane: ["./src/taskpane/taskpane.ts", "./src/taskpane/taskpane.html"],
+            taskpane: ["./src/taskpane/taskpane.ts"],
         },
         output: {
             path: path.resolve(__dirname, "dist"),
@@ -59,6 +59,7 @@ module.exports = async (env, options) => {
             // Inject API URL at build time for Netlify env var support
             new webpack.DefinePlugin({
                 "process.env.API_BASE_URL": JSON.stringify(apiBaseUrl),
+                "process.env.NODE_ENV": JSON.stringify(dev ? "development" : "production"),
             }),
             new HtmlWebpackPlugin({
                 filename: "taskpane.html",

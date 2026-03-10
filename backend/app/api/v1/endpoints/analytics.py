@@ -7,13 +7,13 @@ Admin-only endpoints providing aggregated usage and risk data.
 import csv
 import io
 import logging
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.models.user import User, UserRole
-from app.api.v1.endpoints.auth import get_current_user
+from app.models.user import User
+from app.api.dependencies import require_admin
 from app.services import analytics_service
 
 logger = logging.getLogger(__name__)
@@ -29,21 +29,13 @@ def _sanitize_csv_value(value) -> str:
     return s
 
 
-def _require_admin(user: User):
-    """Raise 403 if user is not admin."""
-    if user.role not in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-
-
 @router.get("/overview")
 async def analytics_overview(
     days: int = Query(default=30, ge=1, le=365),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Org-level summary stats: scans, risks, active users."""
-    _require_admin(current_user)
-
     if not current_user.organization_id:
         raise HTTPException(status_code=400, detail="User has no organization")
 
@@ -53,12 +45,10 @@ async def analytics_overview(
 @router.get("/risks")
 async def analytics_risks(
     days: int = Query(default=30, ge=1, le=365),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Risk breakdown by clause type and level."""
-    _require_admin(current_user)
-
     if not current_user.organization_id:
         raise HTTPException(status_code=400, detail="User has no organization")
 
@@ -68,12 +58,10 @@ async def analytics_risks(
 @router.get("/users")
 async def analytics_users(
     days: int = Query(default=30, ge=1, le=365),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Per-user activity stats."""
-    _require_admin(current_user)
-
     if not current_user.organization_id:
         raise HTTPException(status_code=400, detail="User has no organization")
 
@@ -84,12 +72,10 @@ async def analytics_users(
 async def analytics_trends(
     period: str = "weekly",
     weeks: int = Query(default=12, ge=1, le=52),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Time-series usage data (weekly or daily)."""
-    _require_admin(current_user)
-
     if not current_user.organization_id:
         raise HTTPException(status_code=400, detail="User has no organization")
 
@@ -102,12 +88,10 @@ async def analytics_trends(
 @router.get("/export")
 async def analytics_export(
     days: int = Query(default=30, ge=1, le=365),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
     """Export analytics as CSV."""
-    _require_admin(current_user)
-
     if not current_user.organization_id:
         raise HTTPException(status_code=400, detail="User has no organization")
 

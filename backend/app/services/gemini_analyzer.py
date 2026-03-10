@@ -6,6 +6,7 @@ against a client playbook, returning structured JSON with executive
 summary and redline suggestions.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -55,6 +56,42 @@ def _sanitize_for_prompt(text: str, max_length: int = 50000) -> str:
     # Strip ASCII control chars except newline/tab
     cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
     return cleaned[:max_length]
+
+
+def _strip_markdown_fences(text: str) -> str:
+    """Remove ```json and ``` markdown fences from AI responses.
+
+    Gemini sometimes wraps JSON output in markdown code fences even when
+    instructed not to.  This helper normalises that before JSON parsing.
+    """
+    cleaned = text.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    elif cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    return cleaned.strip()
+
+
+def _classify_gemini_error(e: Exception) -> AIServiceError:
+    """Classify a generic exception into the appropriate AI error type.
+
+    Inspects the stringified exception for keywords that indicate rate
+    limiting, timeouts, or authentication issues and returns the matching
+    concrete ``AIServiceError`` subclass instance.
+    """
+    error_msg = str(e).lower()
+    if "429" in str(e) or "rate" in error_msg or "quota" in error_msg:
+        return AIRateLimited()
+    if "timeout" in error_msg or "deadline" in error_msg:
+        return AIServiceTimeout()
+    if "api key" in error_msg or ("invalid" in error_msg and "key" in error_msg):
+        return AIServiceUnavailable("AI API key is invalid. Please check your configuration.")
+    return AIServiceError(f"AI operation failed: {type(e).__name__}: {e}", "ai_error")
+
+
+_VALID_RISK_LEVELS = {"RED", "YELLOW", "GREEN"}
 
 # The comprehensive ContraRed AI system prompt
 CONTRARED_SYSTEM_PROMPT = """
@@ -177,11 +214,11 @@ class AIAnalysisResult:
 class GeminiAnalyzer:
     """
     AI-First contract analyzer using Google Gemini.
-    
+
     Sends full contract + playbook to Gemini and receives
     structured JSON with executive summary and redlines.
     """
-    
+
     def __init__(self):
         """Initialize Gemini client."""
         self._client = None
@@ -213,21 +250,21 @@ class GeminiAnalyzer:
                 logger.warning("google-generativeai not installed")
                 self._enabled = False
         return self._analysis_client
-    
+
     @property
     def is_enabled(self) -> bool:
         return self._enabled
-    
+
     def format_playbook_rules(self, playbook_rules: List[Dict]) -> str:
         """
         Format playbook rules into structured text for Gemini.
-        
+
         Converts DB rules into:
         - Rule: Name | Risk: LEVEL | Position: Description
         """
         if not playbook_rules:
             return "No specific playbook rules provided. Apply standard commercial contract best practices."
-        
+
         lines = [f"Total rules to check: {len(playbook_rules)}. Evaluate EACH rule against the contract.\n"]
         for i, rule in enumerate(playbook_rules, 1):
             name = rule.get('name', rule.get('rule_name', 'Unknown'))
@@ -246,9 +283,9 @@ class GeminiAnalyzer:
             if verification:
                 line += f"\n  Check: {verification}"
             lines.append(line)
-        
+
         return "\n".join(lines)
-    
+
     async def analyze_full_contract(
         self,
         contract_text: str,
@@ -257,12 +294,12 @@ class GeminiAnalyzer:
     ) -> AIAnalysisResult:
         """
         Perform full AI analysis of a contract.
-        
+
         Args:
             contract_text: The complete contract text
             playbook_rules: List of playbook rule dictionaries
             playbook_name: Name of the playbook for context
-            
+
         Returns:
             AIAnalysisResult with executive summary and redlines
         """
@@ -272,13 +309,17 @@ class GeminiAnalyzer:
         # Format the playbook rules
         rules_text = self.format_playbook_rules(playbook_rules or [])
 
+        # Sanitize user-supplied inputs before prompt interpolation
+        safe_contract_text = _sanitize_for_prompt(contract_text, max_length=200000)
+        safe_playbook_name = _sanitize_for_prompt(playbook_name, max_length=200)
+
         # Build the structured prompt
         user_prompt = f"""
-CONTEXT 1: THE RULES (PLAYBOOK: {playbook_name})
+CONTEXT 1: THE RULES (PLAYBOOK: {safe_playbook_name})
 {rules_text}
 
 CONTEXT 2: THE EVIDENCE (CONTRACT)
-{contract_text}
+{safe_contract_text}
 
 TASK:
 Compare EVIDENCE against RULES.
@@ -287,22 +328,23 @@ Return your analysis as a single valid JSON object.
 """
 
         try:
-            import asyncio
-
             # Combine system prompt and user prompt
             full_prompt = f"{CONTRARED_SYSTEM_PROMPT}\n\n{user_prompt}"
 
-            # Run in thread pool since Gemini SDK is sync
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.analysis_client.generate_content(
-                    full_prompt,
-                    generation_config={
-                        "max_output_tokens": 32768,  # Large output for exhaustive rule-by-rule analysis
-                        "temperature": 0.1,  # Very low temperature for precise, consistent output
-                    }
-                )
+            # Run in thread pool since Gemini SDK is sync, with timeout
+            loop = asyncio.get_running_loop()
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: self.analysis_client.generate_content(
+                        full_prompt,
+                        generation_config={
+                            "max_output_tokens": 32768,  # Large output for exhaustive rule-by-rule analysis
+                            "temperature": 0.1,  # Very low temperature for precise, consistent output
+                        }
+                    )
+                ),
+                timeout=90.0,
             )
 
             # Extract text from response
@@ -321,68 +363,62 @@ Return your analysis as a single valid JSON object.
 
         except (AIServiceError, AIServiceUnavailable, AIRateLimited, AIServiceTimeout):
             raise
+        except asyncio.TimeoutError:
+            raise AIServiceTimeout()
         except Exception as e:
-            error_msg = str(e).lower()
             logger.error("Gemini analysis error: %s: %s", type(e).__name__, e)
-            if "429" in str(e) or "rate" in error_msg or "quota" in error_msg:
-                raise AIRateLimited()
-            if "timeout" in error_msg or "deadline" in error_msg:
-                raise AIServiceTimeout()
-            if "api key" in error_msg or "invalid" in error_msg and "key" in error_msg:
-                raise AIServiceUnavailable("AI API key is invalid. Please check your configuration.")
-            raise AIServiceError(f"AI analysis failed: {type(e).__name__}. Please try again.", "ai_error")
-    
+            raise _classify_gemini_error(e)
+
     def _parse_response(self, response_text: str) -> AIAnalysisResult:
         """Parse Gemini's JSON response into structured result."""
         try:
             # Clean up response - remove any markdown formatting
-            cleaned = response_text.strip()
-            if cleaned.startswith("```json"):
-                cleaned = cleaned[7:]
-            if cleaned.startswith("```"):
-                cleaned = cleaned[3:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
-            
+            cleaned = _strip_markdown_fences(response_text)
+
             # Parse JSON
             data = json.loads(cleaned)
-            
+
             # Extract executive summary
             executive_summary = data.get("executive_summary", [])
             if isinstance(executive_summary, str):
                 executive_summary = [executive_summary]
-            
+
             # Extract redlines
             redlines = []
             for item in data.get("redlines", []):
                 rtype = item.get("redline_type", "violation")
                 if rtype not in ("violation", "missing"):
                     rtype = "violation"
+
+                # Validate risk_level — default to YELLOW if invalid
+                risk_level = item.get("risk_level", "YELLOW")
+                if risk_level not in _VALID_RISK_LEVELS:
+                    risk_level = "YELLOW"
+
                 redlines.append(AIRedline(
-                    risk_level=item.get("risk_level", "YELLOW"),
+                    risk_level=risk_level,
                     rule_name=item.get("rule_name", "Unknown Rule"),
                     original_text=item.get("original_text", ""),
                     explanation=item.get("explanation", ""),
                     recommendation=item.get("recommendation", "") or item.get("suggested_fix", ""),
                     redline_type=rtype,
                 ))
-            
+
             # Estimate tokens used
             tokens_estimate = len(response_text.split())
-            
+
             return AIAnalysisResult(
                 executive_summary=executive_summary,
                 redlines=redlines,
                 tokens_used=tokens_estimate,
                 raw_response=response_text
             )
-            
+
         except json.JSONDecodeError as e:
             logger.error("Failed to parse Gemini JSON: %s", e)
             logger.debug("Raw response: %s...", response_text[:500])
             return self._fallback_result(response_text)
-    
+
     def _fallback_result(self, raw_response: str = "") -> AIAnalysisResult:
         """Return a fallback result when AI analysis fails."""
         return AIAnalysisResult(
@@ -449,18 +485,19 @@ Return ONLY a valid JSON object with exactly these fields:
 }}
 """
         try:
-            import asyncio
-
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.generate_content(
-                    prompt,
-                    generation_config={
-                        "max_output_tokens": 4096,
-                        "temperature": 0.3,
-                    }
-                )
+            loop = asyncio.get_running_loop()
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: self.client.generate_content(
+                        prompt,
+                        generation_config={
+                            "max_output_tokens": 4096,
+                            "temperature": 0.3,
+                        }
+                    )
+                ),
+                timeout=90.0,
             )
 
             response_text = ""
@@ -473,12 +510,7 @@ Return ONLY a valid JSON object with exactly these fields:
                 raise AIServiceError("AI returned an empty response.", "ai_empty_response")
 
             # Parse JSON
-            cleaned = response_text.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
+            cleaned = _strip_markdown_fences(response_text)
 
             data = json.loads(cleaned)
             return {
@@ -488,6 +520,8 @@ Return ONLY a valid JSON object with exactly these fields:
 
         except (AIServiceError, AIServiceUnavailable, AIRateLimited, AIServiceTimeout):
             raise
+        except asyncio.TimeoutError:
+            raise AIServiceTimeout()
         except json.JSONDecodeError:
             # If JSON parsing fails, try to extract the clause from raw text
             logger.warning("Failed to parse clause generation JSON, using raw text")
@@ -496,13 +530,8 @@ Return ONLY a valid JSON object with exactly these fields:
                 "reasoning": "Generated clause (raw format — JSON parsing failed).",
             }
         except Exception as e:
-            error_msg = str(e).lower()
             logger.error("Clause generation error: %s: %s", type(e).__name__, e)
-            if "429" in str(e) or "rate" in error_msg or "quota" in error_msg:
-                raise AIRateLimited()
-            if "timeout" in error_msg or "deadline" in error_msg:
-                raise AIServiceTimeout()
-            raise AIServiceError(f"Clause generation failed: {type(e).__name__}: {e}", "ai_generation_error")
+            raise _classify_gemini_error(e)
 
     async def generate_fix(
         self,
@@ -598,18 +627,19 @@ Return ONLY a valid JSON object:
 """
 
         try:
-            import asyncio
-
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.generate_content(
-                    prompt,
-                    generation_config={
-                        "max_output_tokens": 4096,
-                        "temperature": 0.2,
-                    }
-                )
+            loop = asyncio.get_running_loop()
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: self.client.generate_content(
+                        prompt,
+                        generation_config={
+                            "max_output_tokens": 4096,
+                            "temperature": 0.2,
+                        }
+                    )
+                ),
+                timeout=90.0,
             )
 
             response_text = ""
@@ -622,12 +652,7 @@ Return ONLY a valid JSON object:
                 raise AIServiceError("AI returned an empty response.", "ai_empty_response")
 
             # Parse JSON
-            cleaned = response_text.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
+            cleaned = _strip_markdown_fences(response_text)
 
             data = json.loads(cleaned)
             fix_text = data.get("fix_text", "").strip()
@@ -641,6 +666,8 @@ Return ONLY a valid JSON object:
 
         except (AIServiceError, AIServiceUnavailable, AIRateLimited, AIServiceTimeout):
             raise
+        except asyncio.TimeoutError:
+            raise AIServiceTimeout()
         except json.JSONDecodeError:
             # If JSON parsing fails, try to use raw text as fix
             logger.warning("Failed to parse fix generation JSON, using raw text")
@@ -652,13 +679,8 @@ Return ONLY a valid JSON object:
                 }
             raise AIServiceError("Failed to parse AI response.", "ai_parse_error")
         except Exception as e:
-            error_msg = str(e).lower()
             logger.error("Fix generation error: %s: %s", type(e).__name__, e)
-            if "429" in str(e) or "rate" in error_msg or "quota" in error_msg:
-                raise AIRateLimited()
-            if "timeout" in error_msg or "deadline" in error_msg:
-                raise AIServiceTimeout()
-            raise AIServiceError(f"Fix generation failed: {type(e).__name__}: {e}", "ai_generation_error")
+            raise _classify_gemini_error(e)
 
     async def research_clause(
         self,
@@ -714,18 +736,19 @@ Return ONLY a valid JSON object:
 }}
 """
         try:
-            import asyncio
-
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.client.generate_content(
-                    prompt,
-                    generation_config={
-                        "max_output_tokens": 4096,
-                        "temperature": 0.2,
-                    }
-                )
+            loop = asyncio.get_running_loop()
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: self.client.generate_content(
+                        prompt,
+                        generation_config={
+                            "max_output_tokens": 4096,
+                            "temperature": 0.2,
+                        }
+                    )
+                ),
+                timeout=90.0,
             )
 
             response_text = ""
@@ -737,12 +760,7 @@ Return ONLY a valid JSON object:
             if not response_text:
                 raise AIServiceError("AI returned an empty response.", "ai_empty_response")
 
-            cleaned = response_text.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
+            cleaned = _strip_markdown_fences(response_text)
 
             data = json.loads(cleaned)
             return {
@@ -753,6 +771,8 @@ Return ONLY a valid JSON object:
 
         except (AIServiceError, AIServiceUnavailable, AIRateLimited, AIServiceTimeout):
             raise
+        except asyncio.TimeoutError:
+            raise AIServiceTimeout()
         except json.JSONDecodeError:
             logger.warning("Failed to parse research JSON, returning raw")
             return {
@@ -761,13 +781,8 @@ Return ONLY a valid JSON object:
                 "disclaimer": "AI-suggested references \u2014 verify all citations independently before relying on them in legal proceedings.",
             }
         except Exception as e:
-            error_msg = str(e).lower()
             logger.error("Research clause error: %s: %s", type(e).__name__, e)
-            if "429" in str(e) or "rate" in error_msg or "quota" in error_msg:
-                raise AIRateLimited()
-            if "timeout" in error_msg or "deadline" in error_msg:
-                raise AIServiceTimeout()
-            raise AIServiceError(f"Research failed: {type(e).__name__}: {e}", "ai_research_error")
+            raise _classify_gemini_error(e)
 
 
 # Singleton instance

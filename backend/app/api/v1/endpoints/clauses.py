@@ -6,10 +6,10 @@ CRUD for organization-scoped saved clauses.
 import logging
 from typing import List, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import func, select, or_
 
 from app.db.session import get_db
 from app.models.user import User
@@ -26,16 +26,16 @@ router = APIRouter()
 # ============================================================================
 
 class ClauseCreate(BaseModel):
-    clause_type: str
-    name: str
-    approved_text: str
+    clause_type: str = Field(..., min_length=1, max_length=200)
+    name: str = Field(..., min_length=1, max_length=300)
+    approved_text: str = Field(..., min_length=1, max_length=10000)
     is_mandatory: bool = False
 
 
 class ClauseUpdate(BaseModel):
-    name: Optional[str] = None
-    approved_text: Optional[str] = None
-    clause_type: Optional[str] = None
+    name: Optional[str] = Field(default=None, max_length=300)
+    approved_text: Optional[str] = Field(default=None, max_length=10000)
+    clause_type: Optional[str] = Field(default=None, max_length=200)
     is_mandatory: Optional[bool] = None
 
 
@@ -53,56 +53,81 @@ class ClauseResponse(BaseModel):
         from_attributes = True
 
 
+class ClauseListResponse(BaseModel):
+    items: List[ClauseResponse]
+    total: int
+    skip: int
+    limit: int
+
+
 # ============================================================================
 # Endpoints
 # ============================================================================
 
-@router.get("/", response_model=List[ClauseResponse])
+@router.get("/", response_model=ClauseListResponse)
 async def list_clauses(
     clause_type: Optional[str] = None,
     search: Optional[str] = None,
+    skip: int = 0,
+    limit: int = Query(50, le=200),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """List active clauses. Filter by exact clause_type or fuzzy search on clause_type + name."""
-    query = select(ClauseLibrary).where(ClauseLibrary.is_active == True)
+    base_filter = [ClauseLibrary.is_active == True]
 
     # Scope to user's org or clauses they created
     if current_user.organization_id:
-        query = query.where(
+        base_filter.append(
             (ClauseLibrary.organization_id == current_user.organization_id) |
             (ClauseLibrary.created_by == current_user.id)
         )
     else:
-        query = query.where(ClauseLibrary.created_by == current_user.id)
+        base_filter.append(ClauseLibrary.created_by == current_user.id)
 
     if clause_type:
-        query = query.where(ClauseLibrary.clause_type == clause_type)
+        base_filter.append(ClauseLibrary.clause_type == clause_type)
 
     if search:
         search_term = f"%{search}%"
-        query = query.where(or_(
+        base_filter.append(or_(
             ClauseLibrary.clause_type.ilike(search_term),
             ClauseLibrary.name.ilike(search_term)
         ))
 
-    query = query.order_by(ClauseLibrary.clause_type, ClauseLibrary.name)
+    # Total count
+    count_query = select(func.count(ClauseLibrary.id)).where(*base_filter)
+    total = (await db.execute(count_query)).scalar() or 0
+
+    # Paginated data
+    query = (
+        select(ClauseLibrary)
+        .where(*base_filter)
+        .order_by(ClauseLibrary.clause_type, ClauseLibrary.name)
+        .offset(skip)
+        .limit(limit)
+    )
     result = await db.execute(query)
     clauses = result.scalars().all()
 
-    return [
-        ClauseResponse(
-            id=str(c.id),
-            clause_type=c.clause_type,
-            name=c.name,
-            approved_text=c.approved_text,
-            is_mandatory=c.is_mandatory,
-            is_active=c.is_active,
-            created_at=c.created_at.isoformat(),
-            updated_at=c.updated_at.isoformat(),
-        )
-        for c in clauses
-    ]
+    return ClauseListResponse(
+        items=[
+            ClauseResponse(
+                id=str(c.id),
+                clause_type=c.clause_type,
+                name=c.name,
+                approved_text=c.approved_text,
+                is_mandatory=c.is_mandatory,
+                is_active=c.is_active,
+                created_at=c.created_at.isoformat(),
+                updated_at=c.updated_at.isoformat(),
+            )
+            for c in clauses
+        ],
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
 
 
 @router.post("/", response_model=ClauseResponse, status_code=status.HTTP_201_CREATED)

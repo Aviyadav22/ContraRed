@@ -21,13 +21,6 @@ ROLE_HIERARCHY = {
 }
 
 
-def effective_role(user: User) -> UserRole:
-    """Map legacy USER role to ANALYST level."""
-    if user.role == UserRole.USER:
-        return UserRole.ANALYST
-    return user.role
-
-
 def require_role(minimum_role: UserRole):
     """Dependency factory: require minimum role level."""
     async def _check(current_user: User = Depends(get_current_user)) -> User:

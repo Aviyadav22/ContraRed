@@ -343,7 +343,7 @@ async function toggleTemplatePicker(): Promise<void> {
         <div class="template-item-name">${escapeHtml(t.name)}</div>
         <div class="template-item-desc">${escapeHtml(t.description || '')}</div>
         <div class="template-item-meta">
-          <span class="template-badge ${escapeHtml(t.category)}">${escapeHtml(t.category)}</span>
+          <span class="template-badge ${(t.category || '').replace(/[^a-zA-Z0-9_-]/g, '')}">${escapeHtml(t.category)}</span>
           ${t.is_premium ? '<span class="template-badge premium">premium</span>' : ''}
           ${t.paired_playbook_name ? `<span style="font-size:10px;color:var(--text-muted);">+ ${escapeHtml(t.paired_playbook_name)}</span>` : ''}
         </div>
@@ -366,6 +366,9 @@ async function toggleTemplatePicker(): Promise<void> {
 async function applyTemplate(templateId: string, pairedPlaybookId?: string): Promise<void> {
   const picker = document.getElementById('templatePicker');
   if (picker) picker.style.display = 'none';
+
+  const confirmed = confirm('This will replace your entire document with the template. Continue?');
+  if (!confirmed) return;
 
   try {
     const data = await api.downloadTemplate(templateId);
@@ -432,6 +435,11 @@ async function handleCreatePlaybook(): Promise<void> {
     return;
   }
 
+  if (name.length > 100) {
+    if (errorDiv) { errorDiv.textContent = 'Playbook name must be 100 characters or fewer'; errorDiv.classList.add('show'); }
+    return;
+  }
+
   if (errorDiv) errorDiv.classList.remove('show');
   if (submitBtn) submitBtn.disabled = true;
 
@@ -444,7 +452,7 @@ async function handleCreatePlaybook(): Promise<void> {
     await loadPlaybooks();
   } catch (error) {
     if (errorDiv) {
-      errorDiv.textContent = (error as Error).message || 'Failed to create playbook';
+      errorDiv.textContent = (error instanceof Error ? error.message : String(error)) || 'Failed to create playbook';
       errorDiv.classList.add('show');
     }
   } finally {
@@ -505,6 +513,11 @@ async function handleLogin(): Promise<void> {
     return;
   }
 
+  if (!email.includes('@')) {
+    showLoginError('Please enter a valid email address');
+    return;
+  }
+
   setLoginLoading(true);
   hideLoginError();
 
@@ -512,7 +525,7 @@ async function handleLogin(): Promise<void> {
     await api.login(email, password);
     showMainPanel();
   } catch (error) {
-    showLoginError((error as Error).message || 'Login failed');
+    showLoginError((error instanceof Error ? error.message : String(error)) || 'Login failed');
   } finally {
     setLoginLoading(false);
   }
@@ -619,6 +632,9 @@ async function findTextInDocument(
 
     // Get the range of the matched paragraph
     const matchedParagraph = paragraphData[bestMatch.refIndex];
+    if (!matchedParagraph) {
+      return { range: null, method: 'none' as const, confidence: 0 };
+    }
     const range = matchedParagraph.paragraph.getRange();
     range.load();
     await context.sync();
@@ -647,6 +663,11 @@ async function scanDocument(): Promise<void> {
       return;
     }
 
+    if (documentText.length > 500000) {
+      displayScanError(new Error('Document too large — the document exceeds the maximum size of ~500KB of text. Try scanning a section at a time.'));
+      return;
+    }
+
     // Step 2: Call AI-First analysis API (with selected playbook)
     const selectedPlaybookId = playbookSelect()?.value || undefined;
     log.info('Starting analysis...');
@@ -665,7 +686,7 @@ async function scanDocument(): Promise<void> {
 
   } catch (error) {
     log.error('Scan failed:', error);
-    displayScanError(error as Error);
+    displayScanError(error instanceof Error ? error : new Error(String(error)));
   } finally {
     isScanning = false;
     setScanLoading(false);
@@ -856,13 +877,13 @@ function renderRedlineList(): void {
   if (filtered.length === 0) {
     const empty = emptyState();
     if (empty) empty.style.display = 'block';
-    if (riskCount()) riskCount()!.textContent = '0 items';
+    if (riskCount()) riskCount()!.textContent = '0';
     return;
   }
 
   const empty = emptyState();
   if (empty) empty.style.display = 'none';
-  if (riskCount()) riskCount()!.textContent = `${filtered.length} items`;
+  if (riskCount()) riskCount()!.textContent = String(filtered.length);
 
   const docId = currentAIAnalysis?.document_id || '';
   filtered.forEach((redline) => {
@@ -1067,7 +1088,7 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
           await applyAIRedline(redline, card, result.fix_text);
           generatePanel.style.display = 'none';
         } catch (err) {
-          showToastOnCard(card, 'Apply failed: ' + ((err as Error).message || 'Unknown error'));
+          showToastOnCard(card, 'Apply failed: ' + (err instanceof Error ? err.message : String(err) || 'Unknown error'));
         } finally {
           applyBtn.disabled = false;
           applyBtn.textContent = 'Apply to Document';
@@ -1266,21 +1287,33 @@ async function undoRedlineFix(redline: AIRedlineItem, appliedFix?: string): Prom
 
 /**
  * Highlight all AI redlines in the document.
+ * Batched approach: queues all searches in one sync, then applies all highlights in a second sync.
+ * Reduces N+1 round-trips to just 2.
  */
 async function highlightAIRedlines(redlines: AIRedlineItem[]): Promise<void> {
+  if (!redlines.length) return;
   try {
     await Word.run(async (context) => {
-      for (const redline of redlines) {
-        const result = await findTextInDocument(redline.original_text, context);
+      const body = context.document.body;
+      // Batch all searches in one sync
+      const searchSets = redlines.map(r => {
+        const searchText = r.original_text.slice(0, 255);
+        const results = body.search(searchText, { matchCase: false, matchWholeWord: false });
+        results.load('items');
+        return { redline: r, results };
+      });
+      await context.sync();
 
-        if (result.range) {
-          let color: string;
+      // Apply all highlights
+      for (const { redline, results } of searchSets) {
+        if (results.items.length > 0) {
+          let highlightColor: string;
           if (redline.redline_type === 'missing') {
-            color = '#93C5FD'; // Blue for insertion points
+            highlightColor = '#93C5FD'; // Blue for insertion points
           } else {
-            color = redline.risk_level === 'RED' ? '#F87171' : '#FEF08A';
+            highlightColor = redline.risk_level === 'RED' ? '#F87171' : '#FEF08A';
           }
-          result.range.font.highlightColor = color;
+          results.items[0].font.highlightColor = highlightColor;
         }
       }
       await context.sync();
@@ -1333,7 +1366,7 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, 
       cardElement.dataset.appliedFix = textToApply;
     });
   } catch (error) {
-    showToastOnCard(cardElement, 'Fix failed: ' + ((error as Error).message || 'Unknown error'));
+    showToastOnCard(cardElement, 'Fix failed: ' + (error instanceof Error ? error.message : String(error) || 'Unknown error'));
   }
 }
 
@@ -1465,7 +1498,7 @@ async function exportReport(): Promise<void> {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   } catch (error) {
-    log.error('Export failed:', (error as Error).message);
+    log.error('Export failed:', error instanceof Error ? error.message : String(error));
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Export Report'; }
   }

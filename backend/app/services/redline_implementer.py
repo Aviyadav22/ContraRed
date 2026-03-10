@@ -262,7 +262,7 @@ class RedlineImplementer:
         Returns:
             OOXML package string
         """
-        from datetime import datetime
+        from datetime import datetime, timezone
         
         # Escape XML special characters
         def escape_xml(text: str) -> str:
@@ -275,7 +275,7 @@ class RedlineImplementer:
         
         original_escaped = escape_xml(original)
         replacement_escaped = escape_xml(replacement)
-        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         
         # Generate proper Track Changes OOXML
         ooxml = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -333,7 +333,7 @@ class RedlineImplementer:
         Creates OOXML that shows inserted text with Track Changes
         (underline, green) without any deletion.
         """
-        from datetime import datetime
+        from datetime import datetime, timezone
 
         def escape_xml(text: str) -> str:
             return (text
@@ -344,7 +344,7 @@ class RedlineImplementer:
                 .replace("'", "&apos;"))
 
         new_escaped = escape_xml(new_text)
-        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         ooxml = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <pkg:package xmlns:pkg="http://schemas.microsoft.com/office/2006/xmlPackage">

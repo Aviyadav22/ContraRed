@@ -7,14 +7,18 @@ UsageLog = For billing ("User consumed 500 tokens")
 AuditLog = For compliance ("User accessed Merger_Agreement.docx at 10:00 from IP X")
 """
 
+import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 from sqlalchemy import String, DateTime, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.session import Base
+
+logger = logging.getLogger(__name__)
 
 
 class AuditLog(Base):
@@ -39,7 +43,7 @@ class AuditLog(Base):
     resource_name: Mapped[str] = mapped_column(String(255))  # Filename only, NOT content
     
     # WHEN
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, index=True)
+    timestamp: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
     
     # WHERE
     ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)  # IPv6 compatible
@@ -55,8 +59,8 @@ class AuditLog(Base):
 
 # Helper function to create audit log entries
 async def log_audit_event(
-    db,
-    user=None,
+    db: AsyncSession,
+    user: Optional["User"] = None,
     action: str = "",
     resource_type: str = "",
     resource_name: str = "",
@@ -66,8 +70,8 @@ async def log_audit_event(
     risk_count: Optional[int] = None,
     details: Optional[str] = None,
     user_email: Optional[str] = None,
-    organization_id=None,
-):
+    organization_id: Optional[uuid.UUID] = None,
+) -> Optional[AuditLog]:
     """
     Create an audit log entry.
 
@@ -104,6 +108,5 @@ async def log_audit_event(
         return entry
     except Exception as e:
         # Never let audit logging crash the main operation
-        import logging
-        logging.getLogger(__name__).error(f"Audit log failed: {e}")
+        logger.error(f"Audit log failed: {e}", exc_info=True)
         return None

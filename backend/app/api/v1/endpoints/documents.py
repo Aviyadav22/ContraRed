@@ -14,12 +14,12 @@ import base64
 import io
 import json
 import logging
-from datetime import datetime
+import re
+from datetime import datetime, timezone
 import httpx
 import zipfile
 from typing import List, Optional, Literal, Dict
 from uuid import UUID, uuid4
-from uuid import UUID as PyUUID
 from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File, Form, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,13 +30,14 @@ from app.db.session import get_db
 from app.models.user import User
 from app.models.document import Document, DocumentRisk, DocumentStatus
 from app.models.document import RiskLevel as DBRiskLevel
-from app.models.audit_log import AuditLog, log_audit_event
+from app.models.audit_log import log_audit_event
 from app.models.playbook import Playbook
-from app.api.v1.endpoints.auth import get_current_user
+from app.api.v1.endpoints.auth import get_current_user, limiter
+from app.api.v1.endpoints.billing import check_and_increment_quota
 from app.services.rule_engine import RuleEngine, RuleMatch
 from app.services.ai_service import AIService
 from app.services.cache_service import get_cache
-from app.services.gemini_analyzer import gemini_analyzer, AIServiceError, AIServiceUnavailable, AIRateLimited, AIServiceTimeout
+from app.services.gemini_analyzer import gemini_analyzer, AIServiceError, AIServiceUnavailable, AIRateLimited, AIServiceTimeout, _sanitize_for_prompt
 from app.services.structure_extractor import StructureExtractor, ContractMap
 from app.core.config import settings
 
@@ -56,9 +57,9 @@ ZDR_MODE = getattr(settings, 'ZERO_DATA_RETENTION', True)  # Default: ON for saf
 
 class AnalyzeRequest(BaseModel):
     """Request to analyze document text."""
-    text: str
+    text: str = Field(..., min_length=1, max_length=500000)
     playbook_id: Optional[str] = None
-    filename: Optional[str] = "untitled.docx"
+    filename: Optional[str] = Field(default="untitled.docx", max_length=255)
 
 
 class RiskItem(BaseModel):
@@ -109,7 +110,7 @@ class RedlineResponse(BaseModel):
 class SummaryRequest(BaseModel):
     """Request for contract summary."""
     document_id: str
-    contract_text: str  # Full contract text for summary
+    contract_text: str = Field(..., min_length=1, max_length=500000)
     playbook_id: Optional[str] = None
 
 
@@ -129,9 +130,9 @@ class SummaryResponse(BaseModel):
 
 class AIAnalyzeRequest(BaseModel):
     """Request for AI-first full contract analysis."""
-    text: str  # Full contract text
+    text: str = Field(..., min_length=1, max_length=500000)
     playbook_id: Optional[str] = None
-    filename: Optional[str] = "untitled.docx"
+    filename: Optional[str] = Field(default="untitled.docx", max_length=255)
 
 
 class AIRedlineItem(BaseModel):
@@ -158,7 +159,7 @@ class AIAnalysisResponse(BaseModel):
 
 class ExportReportRequest(BaseModel):
     """Request to generate a DOCX risk report."""
-    filename: str
+    filename: str = Field(..., max_length=255)
     executive_summary: List[str]
     redlines: List[Dict]
     risk_summary: Dict[str, int]
@@ -216,11 +217,13 @@ async def list_documents(
 # ============================================================================
 
 @router.post("/analyze", response_model=AnalysisResult)
+@limiter.limit("20/minute")
 async def analyze_document(
     request: AnalyzeRequest,
     http_request: Request,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _quota=Depends(check_and_increment_quota),
 ):
     """
     Analyze document text for risks using Rule Engine + AI.
@@ -245,7 +248,7 @@ async def analyze_document(
     # Load playbook rules if specified, otherwise use defaults
     if request.playbook_id:
         try:
-            playbook_uuid = PyUUID(request.playbook_id)
+            playbook_uuid = UUID(request.playbook_id)
             result = await db.execute(
                 select(Playbook)
                 .options(selectinload(Playbook.rules_list))
@@ -285,14 +288,12 @@ async def analyze_document(
         matches = rule_engine.evaluate(request.text)
         
         # Step 2: AI enrichment in PARALLEL (critical for performance)
-        total_tokens = 0
-        
+        token_counts = []
+
         if matches:
             # Create async tasks for all matches
             async def enrich_with_cache(match: RuleMatch) -> RuleMatch:
                 """Enrich a match, checking cache first."""
-                nonlocal total_tokens
-                
                 # Check cache
                 cache_key = match.cache_key()
                 if cache.is_connected:
@@ -301,29 +302,31 @@ async def analyze_document(
                         match.ai_explanation = cached.get("explanation")
                         match.suggested_fix = cached.get("suggested_fix")
                         return match
-                
+
                 # Call AI service
                 explanation, suggested_fix, tokens = await ai_service.enrich_match(match)
-                total_tokens += tokens
-                
+                token_counts.append(tokens)
+
                 match.ai_explanation = explanation
                 match.suggested_fix = suggested_fix
-                
+
                 # Store in cache
                 if cache.is_connected and (explanation or suggested_fix):
                     await cache.set(cache_key, {
                         "explanation": explanation,
                         "suggested_fix": suggested_fix,
                     }, ttl=3600)
-                
+
                 return match
-            
+
             # Run all AI calls in parallel using asyncio.gather
             enriched_matches = await asyncio.gather(
                 *[enrich_with_cache(match) for match in matches]
             )
         else:
             enriched_matches = []
+
+        total_tokens = sum(token_counts)
         
         # Step 3: Storage (respects ZDR_MODE)
         risk_summary = rule_engine.get_risk_summary(enriched_matches)
@@ -439,11 +442,13 @@ async def analyze_document(
 # ============================================================================
 
 @router.post("/analyze-full", response_model=AIAnalysisResponse)
+@limiter.limit("20/minute")
 async def analyze_full_ai(
     request: AIAnalyzeRequest,
     http_request: Request,
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _quota=Depends(check_and_increment_quota),
 ):
     """
     AI-First contract analysis using Gemini.
@@ -488,12 +493,24 @@ async def analyze_full_ai(
             logger.error("Error loading playbook: %s", e)
     
     try:
-        # Call Gemini analyzer with full contract + playbook
-        result = await gemini_analyzer.analyze_full_contract(
-            contract_text=request.text,
-            playbook_rules=playbook_rules,
-            playbook_name=playbook_name
-        )
+        # Sanitize playbook name before passing to AI
+        playbook_name = _sanitize_for_prompt(playbook_name, max_length=200)
+
+        # Call Gemini analyzer with full contract + playbook (with timeout)
+        try:
+            result = await asyncio.wait_for(
+                gemini_analyzer.analyze_full_contract(
+                    contract_text=request.text,
+                    playbook_rules=playbook_rules,
+                    playbook_name=playbook_name
+                ),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail={"message": "AI analysis timed out. Please try with a shorter document.", "error_code": "ai_timeout"},
+            )
 
         risk_summary = {
             "red": sum(1 for r in result.redlines if r.risk_level == "RED"),
@@ -515,14 +532,11 @@ async def analyze_full_ai(
             status=DocumentStatus.COMPLETED,
             total_risks=len(result.redlines),
             risk_summary=risk_summary,
-            processed_at=datetime.utcnow(),
+            processed_at=datetime.now(timezone.utc),
         )
         db.add(doc)
-        await db.commit()
-        await db.refresh(doc)
-        doc_id = str(doc.id)
 
-        # Log audit event
+        # Log audit event (same transaction — single commit for both)
         await log_audit_event(
             db=db,
             user=current_user,
@@ -537,6 +551,9 @@ async def analyze_full_ai(
                 "tokens_used": result.tokens_used,
             }),
         )
+        await db.commit()
+        await db.refresh(doc)
+        doc_id = str(doc.id)
 
         # Build response
         redline_items = [
@@ -600,7 +617,7 @@ async def analyze_full_ai(
 class GenerateClauseRequest(BaseModel):
     """Request to generate a contract clause."""
     clause_type: str = Field(..., min_length=1, max_length=200)
-    playbook_id: Optional[PyUUID] = None
+    playbook_id: Optional[UUID] = None
     contract_context: Optional[str] = Field(default=None, max_length=50000)
 
 
@@ -611,7 +628,9 @@ class GenerateClauseResponse(BaseModel):
 
 
 @router.post("/generate-clause", response_model=GenerateClauseResponse)
+@limiter.limit("30/minute")
 async def generate_clause(
+    http_request: Request,
     request: GenerateClauseRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -651,11 +670,20 @@ async def generate_clause(
                     for rule in playbook.rules_list
                 ]
 
-        generated = await gemini_analyzer.generate_clause(
-            clause_type=request.clause_type,
-            contract_context=request.contract_context or "",
-            playbook_rules=playbook_rules,
-        )
+        try:
+            generated = await asyncio.wait_for(
+                gemini_analyzer.generate_clause(
+                    clause_type=request.clause_type,
+                    contract_context=request.contract_context or "",
+                    playbook_rules=playbook_rules,
+                ),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail={"message": "AI analysis timed out. Please try with a shorter document.", "error_code": "ai_timeout"},
+            )
 
         # Audit log
         await log_audit_event(
@@ -665,6 +693,7 @@ async def generate_clause(
             resource_type="clause",
             details=json.dumps({"clause_type": request.clause_type, "playbook_id": str(request.playbook_id) if request.playbook_id else None}),
         )
+        await db.commit()
 
         return GenerateClauseResponse(
             clause_text=generated["clause_text"],
@@ -696,7 +725,7 @@ class GenerateFixRequest(BaseModel):
     rule_name: str = Field(..., min_length=1, max_length=200)
     redline_type: Literal["violation", "missing"] = "violation"
     surrounding_context: Optional[str] = Field(default=None, max_length=10000)
-    playbook_id: Optional[PyUUID] = None
+    playbook_id: Optional[UUID] = None
 
 
 class GenerateFixResponse(BaseModel):
@@ -706,7 +735,9 @@ class GenerateFixResponse(BaseModel):
 
 
 @router.post("/generate-fix", response_model=GenerateFixResponse)
+@limiter.limit("30/minute")
 async def generate_fix(
+    http_request: Request,
     request: GenerateFixRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -745,14 +776,23 @@ async def generate_fix(
                     for rule in playbook.rules_list
                 ]
 
-        generated = await gemini_analyzer.generate_fix(
-            original_text=request.original_text,
-            recommendation=request.recommendation,
-            rule_name=request.rule_name,
-            redline_type=request.redline_type,
-            surrounding_context=request.surrounding_context or "",
-            playbook_rules=playbook_rules,
-        )
+        try:
+            generated = await asyncio.wait_for(
+                gemini_analyzer.generate_fix(
+                    original_text=request.original_text,
+                    recommendation=request.recommendation,
+                    rule_name=request.rule_name,
+                    redline_type=request.redline_type,
+                    surrounding_context=request.surrounding_context or "",
+                    playbook_rules=playbook_rules,
+                ),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail={"message": "AI analysis timed out. Please try with a shorter document.", "error_code": "ai_timeout"},
+            )
 
         # Audit log
         await log_audit_event(
@@ -762,6 +802,7 @@ async def generate_fix(
             resource_type="clause",
             details=json.dumps({"rule_name": request.rule_name, "redline_type": request.redline_type}),
         )
+        await db.commit()
 
         return GenerateFixResponse(
             fix_text=generated["fix_text"],
@@ -810,7 +851,9 @@ class ResearchClauseResponse(BaseModel):
 
 
 @router.post("/research-clause", response_model=ResearchClauseResponse)
+@limiter.limit("30/minute")
 async def research_clause(
+    http_request: Request,
     request: ResearchClauseRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -822,10 +865,19 @@ async def research_clause(
     Always includes a disclaimer about verifying citations.
     """
     try:
-        result = await gemini_analyzer.research_clause(
-            clause_text=request.clause_text,
-            clause_type=request.clause_type or "",
-        )
+        try:
+            result = await asyncio.wait_for(
+                gemini_analyzer.research_clause(
+                    clause_text=request.clause_text,
+                    clause_type=request.clause_type or "",
+                ),
+                timeout=120.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail={"message": "AI analysis timed out. Please try with a shorter document.", "error_code": "ai_timeout"},
+            )
 
         # Audit log
         await log_audit_event(
@@ -835,6 +887,7 @@ async def research_clause(
             resource_type="clause",
             details=json.dumps({"clause_type": request.clause_type, "cases_found": len(result.get("cases", []))}),
         )
+        await db.commit()
 
         cases = []
         for c in result.get("cases", []):
@@ -875,7 +928,7 @@ class CompareRequest(BaseModel):
     """Request to compare two contract versions."""
     text_a: str = Field(..., min_length=1, max_length=200000)
     text_b: str = Field(..., min_length=1, max_length=200000)
-    playbook_id: Optional[PyUUID] = None
+    playbook_id: Optional[UUID] = None
 
 
 class DiffChangeResponse(BaseModel):
@@ -898,7 +951,9 @@ class CompareResponse(BaseModel):
 
 
 @router.post("/compare", response_model=CompareResponse)
+@limiter.limit("30/minute")
 async def compare_contracts(
+    http_request: Request,
     request: CompareRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -951,6 +1006,7 @@ async def compare_contracts(
             resource_type="document",
             details=json.dumps({"total_changes": diff.total_changes, "playbook_id": str(request.playbook_id) if request.playbook_id else None}),
         )
+        await db.commit()
 
         return CompareResponse(
             changes=[
@@ -980,12 +1036,14 @@ async def compare_contracts(
 # ============================================================================
 
 @router.post("/analyze-file", response_model=AnalysisResult)
+@limiter.limit("20/minute")
 async def analyze_file(
     http_request: Request,
     file: UploadFile = File(...),
     playbook_id: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _quota=Depends(check_and_increment_quota),
 ):
     """
     Analyze uploaded DOCX file using Structure Extractor (Box 1).
@@ -1014,7 +1072,16 @@ async def analyze_file(
     
     # Read file content
     file_bytes = await file.read()
-    
+
+    # Validate file size (10 MB max)
+    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail={"message": "File too large. Maximum size is 10 MB.", "error_code": "file_too_large"})
+
+    # Validate DOCX magic bytes (ZIP/PK header)
+    if not file_bytes[:4] == b'PK\x03\x04':
+        raise HTTPException(status_code=400, detail={"message": "Invalid file format. Only .docx files are supported.", "error_code": "invalid_file_format"})
+
     # Box 1: Extract structure from DOCX
     extractor = StructureExtractor()
     try:
@@ -1032,7 +1099,7 @@ async def analyze_file(
     # Load playbook rules if specified
     if playbook_id:
         try:
-            playbook_uuid = PyUUID(playbook_id)
+            playbook_uuid = UUID(playbook_id)
             result = await db.execute(
                 select(Playbook)
                 .options(selectinload(Playbook.rules_list))
@@ -1081,12 +1148,10 @@ async def analyze_file(
                     break
         
         # AI enrichment in parallel
-        total_tokens = 0
-        
+        token_counts_file = []
+
         if matches:
             async def enrich_with_cache(match: RuleMatch) -> RuleMatch:
-                nonlocal total_tokens
-                
                 cache_key = match.cache_key()
                 if cache.is_connected:
                     cached = await cache.get(cache_key)
@@ -1094,26 +1159,28 @@ async def analyze_file(
                         match.ai_explanation = cached.get("explanation")
                         match.suggested_fix = cached.get("suggested_fix")
                         return match
-                
+
                 explanation, suggested_fix, tokens = await ai_service.enrich_match(match)
-                total_tokens += tokens
-                
+                token_counts_file.append(tokens)
+
                 match.ai_explanation = explanation
                 match.suggested_fix = suggested_fix
-                
+
                 if cache.is_connected and (explanation or suggested_fix):
                     await cache.set(cache_key, {
                         "explanation": explanation,
                         "suggested_fix": suggested_fix,
                     }, ttl=3600)
-                
+
                 return match
-            
+
             enriched_matches = await asyncio.gather(
                 *[enrich_with_cache(match) for match in matches]
             )
         else:
             enriched_matches = []
+
+        total_tokens = sum(token_counts_file)
         
         # Build response with ContractMap metadata
         risk_summary = rule_engine.get_risk_summary(enriched_matches)
@@ -1178,6 +1245,7 @@ async def analyze_file(
 # ============================================================================
 
 @router.post("/summarize", response_model=SummaryResponse)
+@limiter.limit("30/minute")
 async def summarize_contract(
     request: SummaryRequest,
     http_request: Request,
@@ -1196,7 +1264,7 @@ async def summarize_contract(
     # We just need the contract text which is passed in the request
     document = None
     try:
-        doc_uuid = PyUUID(request.document_id)
+        doc_uuid = UUID(request.document_id)
         doc_result = await db.execute(
             select(Document)
             .where(Document.id == doc_uuid)
@@ -1213,7 +1281,7 @@ async def summarize_contract(
     playbook_name = "Default Rules"
     if request.playbook_id:
         try:
-            pb_uuid = PyUUID(request.playbook_id)
+            pb_uuid = UUID(request.playbook_id)
             pb_result = await db.execute(select(Playbook).where(Playbook.id == pb_uuid))
             playbook = pb_result.scalar_one_or_none()
             if playbook:
@@ -1225,7 +1293,7 @@ async def summarize_contract(
     db_risks = []
     if document:
         try:
-            doc_uuid = PyUUID(request.document_id)
+            doc_uuid = UUID(request.document_id)
             risks_result = await db.execute(
                 select(DocumentRisk).where(DocumentRisk.document_id == doc_uuid)
             )
@@ -1388,7 +1456,7 @@ async def generate_redline(
     
     # Mode 2: DB Mode - look up risk by ID
     try:
-        risk_uuid = PyUUID(request.risk_id)
+        risk_uuid = UUID(request.risk_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid risk_id format")
     
@@ -1450,9 +1518,9 @@ async def download_manifest():
     github_url = "https://raw.githubusercontent.com/Aviyadav22/ContraRed/main/ContraRed-PoC/manifest.xml"
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(github_url)
-            
+
         if response.status_code != 200:
             raise HTTPException(status_code=response.status_code, detail="Failed to fetch manifest from repository")
             
@@ -1481,8 +1549,11 @@ async def download_installer():
     bat_url = f"{github_base}/dashboard/public/Install-ContraRed.bat"
     
     try:
-        async with httpx.AsyncClient() as client:
-            manifest_resp, bat_resp = await client.get(manifest_url), await client.get(bat_url)
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            manifest_resp, bat_resp = await asyncio.gather(
+                client.get(manifest_url),
+                client.get(bat_url),
+            )
         
         if manifest_resp.status_code != 200 or bat_resp.status_code != 200:
             raise HTTPException(status_code=502, detail="Failed to fetch installer files from repository")
@@ -1545,7 +1616,7 @@ async def export_risk_report(
     )
     await db.commit()
 
-    safe_filename = request.filename.replace('.docx', '').replace('.pdf', '') + '-risk-report.docx'
+    safe_filename = re.sub(r'[^\w\-.]', '_', request.filename or 'report') + '-risk-report.docx'
 
     return Response(
         content=buffer.getvalue(),

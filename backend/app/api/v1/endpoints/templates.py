@@ -10,7 +10,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -49,11 +49,11 @@ class TemplateDetail(TemplateListItem):
 
 
 class CreateTemplateRequest(BaseModel):
-    name: str
-    description: Optional[str] = None
-    category: str = "custom"
-    template_content: Optional[str] = None
-    paired_playbook_id: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=300)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    category: str = Field(default="custom", max_length=100)
+    template_content: Optional[str] = Field(default=None, max_length=100000)
+    paired_playbook_id: Optional[str] = Field(default=None, max_length=100)
     is_premium: bool = False
 
 

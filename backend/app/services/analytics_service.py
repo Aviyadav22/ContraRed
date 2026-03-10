@@ -6,7 +6,7 @@ and audit_logs tables.
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Optional, Dict, List, Any
 from uuid import UUID
 
@@ -14,7 +14,6 @@ from sqlalchemy import select, func, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import Document, DocumentRisk, DocumentStatus
-from app.models.audit_log import AuditLog
 from app.models.user import User
 
 logger = logging.getLogger(__name__)
@@ -26,15 +25,21 @@ async def get_org_overview(
     days: int = 30,
 ) -> Dict[str, Any]:
     """Get org-level overview stats for the last N days."""
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
 
-    # Get all user IDs in this org
-    user_result = await db.execute(
-        select(User.id).where(User.organization_id == org_id)
+    # Subquery for user IDs in this org
+    user_ids_subq = select(User.id).where(User.organization_id == org_id).scalar_subquery()
+
+    # Documents analyzed
+    doc_result = await db.execute(
+        select(func.count(Document.id))
+        .where(Document.user_id.in_(select(User.id).where(User.organization_id == org_id)))
+        .where(Document.created_at >= since)
+        .where(Document.status == DocumentStatus.COMPLETED)
     )
-    user_ids = [row[0] for row in user_result.all()]
+    documents_analyzed = doc_result.scalar() or 0
 
-    if not user_ids:
+    if documents_analyzed == 0:
         return {
             "documents_analyzed": 0,
             "total_risks": 0,
@@ -44,19 +49,10 @@ async def get_org_overview(
             "period_days": days,
         }
 
-    # Documents analyzed
-    doc_result = await db.execute(
-        select(func.count(Document.id))
-        .where(Document.user_id.in_(user_ids))
-        .where(Document.created_at >= since)
-        .where(Document.status == DocumentStatus.COMPLETED)
-    )
-    documents_analyzed = doc_result.scalar() or 0
-
     # Total risks
     total_result = await db.execute(
         select(func.sum(func.coalesce(Document.total_risks, 0)))
-        .where(Document.user_id.in_(user_ids))
+        .where(Document.user_id.in_(select(User.id).where(User.organization_id == org_id)))
         .where(Document.created_at >= since)
         .where(Document.status == DocumentStatus.COMPLETED)
     )
@@ -65,7 +61,7 @@ async def get_org_overview(
     # Calculate red/yellow from risk_summary JSONB
     risk_breakdown = await db.execute(
         select(Document.risk_summary)
-        .where(Document.user_id.in_(user_ids))
+        .where(Document.user_id.in_(select(User.id).where(User.organization_id == org_id)))
         .where(Document.created_at >= since)
         .where(Document.status == DocumentStatus.COMPLETED)
         .where(Document.risk_summary.isnot(None))
@@ -80,7 +76,7 @@ async def get_org_overview(
     # Active users (users who scanned at least one doc)
     active_result = await db.execute(
         select(func.count(func.distinct(Document.user_id)))
-        .where(Document.user_id.in_(user_ids))
+        .where(Document.user_id.in_(select(User.id).where(User.organization_id == org_id)))
         .where(Document.created_at >= since)
     )
     active_users = active_result.scalar() or 0
@@ -101,34 +97,27 @@ async def get_risk_breakdown(
     days: int = 30,
 ) -> List[Dict[str, Any]]:
     """Get risk counts by risk level from document_risks table."""
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
 
-    user_result = await db.execute(
-        select(User.id).where(User.organization_id == org_id)
-    )
-    user_ids = [row[0] for row in user_result.all()]
-
-    if not user_ids:
-        return []
-
-    # Get document IDs for this org
-    doc_result = await db.execute(
+    # Subquery: document IDs belonging to org users within time range
+    doc_ids_subq = (
         select(Document.id)
-        .where(Document.user_id.in_(user_ids))
+        .where(Document.user_id.in_(select(User.id).where(User.organization_id == org_id)))
         .where(Document.created_at >= since)
+        .scalar_subquery()
     )
-    doc_ids = [row[0] for row in doc_result.all()]
 
-    if not doc_ids:
-        return []
-
-    # Get risk breakdown by risk_level (DocumentRisk doesn't have clause_type)
+    # Get risk breakdown by risk_level
     breakdown_result = await db.execute(
         select(
             DocumentRisk.risk_level,
             func.count(DocumentRisk.id),
         )
-        .where(DocumentRisk.document_id.in_(doc_ids))
+        .where(DocumentRisk.document_id.in_(
+            select(Document.id)
+            .where(Document.user_id.in_(select(User.id).where(User.organization_id == org_id)))
+            .where(Document.created_at >= since)
+        ))
         .group_by(DocumentRisk.risk_level)
     )
 
@@ -152,7 +141,7 @@ async def get_user_activity(
     days: int = 30,
 ) -> List[Dict[str, Any]]:
     """Get per-user activity stats."""
-    since = datetime.utcnow() - timedelta(days=days)
+    since = datetime.now(timezone.utc) - timedelta(days=days)
 
     result = await db.execute(
         select(
@@ -190,20 +179,14 @@ async def get_trend_data(
     weeks: int = 12,
 ) -> List[Dict[str, Any]]:
     """Get time-series usage data (weekly or daily)."""
-    user_result = await db.execute(
-        select(User.id).where(User.organization_id == org_id)
-    )
-    user_ids = [row[0] for row in user_result.all()]
-
-    if not user_ids:
-        return []
+    user_ids_subq = select(User.id).where(User.organization_id == org_id).scalar_subquery()
 
     trunc_unit = 'day' if period == "daily" else 'week'
     if period == "daily":
         days_back = min(weeks * 7, 90)
-        since = datetime.utcnow() - timedelta(days=days_back)
+        since = datetime.now(timezone.utc) - timedelta(days=days_back)
     else:
-        since = datetime.utcnow() - timedelta(weeks=weeks)
+        since = datetime.now(timezone.utc) - timedelta(weeks=weeks)
 
     period_col = func.date_trunc(trunc_unit, Document.created_at).label("period")
     result = await db.execute(
@@ -212,7 +195,7 @@ async def get_trend_data(
             func.count(Document.id).label("scans"),
             func.sum(func.coalesce(Document.total_risks, 0)).label("risks"),
         )
-        .where(Document.user_id.in_(user_ids))
+        .where(Document.user_id.in_(select(User.id).where(User.organization_id == org_id)))
         .where(Document.created_at >= since)
         .group_by(literal_column("1"))
         .order_by(literal_column("1"))

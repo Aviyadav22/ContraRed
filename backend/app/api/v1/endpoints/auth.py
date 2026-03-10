@@ -4,11 +4,11 @@ Authentication endpoints.
 
 import logging
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from slowapi import Limiter
@@ -20,6 +20,7 @@ from app.models.audit_log import log_audit_event
 from app.core.security import (
     verify_password,
     get_password_hash,
+    get_dummy_hash,
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -37,11 +38,19 @@ router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
+def _get_client_ip(request: Request) -> Optional[str]:
+    """Get real client IP, respecting X-Forwarded-For from reverse proxy."""
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else None
+
+
 # Request/Response schemas
 class UserCreate(BaseModel):
     email: EmailStr
-    name: str
-    password: str
+    name: str = Field(..., min_length=1, max_length=255)
+    password: str = Field(..., min_length=8, max_length=128)
 
     @field_validator('password')
     @classmethod
@@ -66,7 +75,7 @@ class UserResponse(BaseModel):
     role: str
     subscription_tier: str
     organization_id: Optional[str] = None
-    
+
     class Config:
         from_attributes = True
 
@@ -93,17 +102,20 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+
     token_data = decode_token(token)
     if token_data is None:
         raise credentials_exception
-    
+
     result = await db.execute(select(User).where(User.id == token_data.user_id))
     user = result.scalar_one_or_none()
-    
+
     if user is None:
         raise credentials_exception
-    
+
+    if not user.is_active:
+        raise credentials_exception
+
     return user
 
 
@@ -123,7 +135,7 @@ async def register(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Email already registered"
             )
-        
+
         # Create new user
         user = User(
             email=user_data.email,
@@ -132,7 +144,7 @@ async def register(
             role=UserRole.ANALYST,
             subscription_tier=SubscriptionTier.FREE,
         )
-        
+
         db.add(user)
         await db.flush()
 
@@ -140,7 +152,7 @@ async def register(
         await log_audit_event(
             db, user=user, action="user_registered", resource_type="auth",
             resource_name=user.email,
-            ip_address=request.client.host if request.client else None,
+            ip_address=_get_client_ip(request),
             user_agent=request.headers.get("user-agent"),
         )
         await db.commit()
@@ -176,23 +188,40 @@ async def login(
     user = result.scalar_one_or_none()
 
     # Check account lockout
-    if user and user.locked_until and user.locked_until > datetime.utcnow():
+    if user and user.locked_until and user.locked_until > datetime.now(timezone.utc):
         raise HTTPException(
             status_code=status.HTTP_423_LOCKED,
             detail="Account temporarily locked due to too many failed attempts. Try again later.",
         )
 
-    if not user or not verify_password(form_data.password, user.password_hash):
+    if not user:
+        # Constant-time: run password verification even when user not found
+        verify_password(form_data.password, get_dummy_hash())
+        # Audit log failed login
+        await log_audit_event(
+            db, user=None, action="login_failed", resource_type="auth",
+            resource_name=form_data.username, status="failure",
+            ip_address=_get_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+            user_email=form_data.username,
+        )
+        await db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Incorrect email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not verify_password(form_data.password, user.password_hash):
         # Track failed login attempts
-        if user:
-            user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
-            if user.failed_login_attempts >= MAX_LOGIN_ATTEMPTS:
-                user.locked_until = datetime.utcnow() + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
+        user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+        if user.failed_login_attempts >= MAX_LOGIN_ATTEMPTS:
+            user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
         # Audit log failed login
         await log_audit_event(
             db, user=user, action="login_failed", resource_type="auth",
             resource_name=form_data.username, status="failure",
-            ip_address=request.client.host if request.client else None,
+            ip_address=_get_client_ip(request),
             user_agent=request.headers.get("user-agent"),
             user_email=form_data.username,
         )
@@ -212,13 +241,13 @@ async def login(
     # Reset lockout on successful login
     user.failed_login_attempts = 0
     user.locked_until = None
-    user.last_login = datetime.utcnow()
+    user.last_login = datetime.now(timezone.utc)
 
     # Audit log successful login
     await log_audit_event(
         db, user=user, action="login_success", resource_type="auth",
         resource_name=user.email,
-        ip_address=request.client.host if request.client else None,
+        ip_address=_get_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
     await db.commit()
@@ -230,7 +259,7 @@ async def login(
         "role": user.role.value,
         "org_id": str(user.organization_id) if user.organization_id else None,
     }
-    
+
     return LoginResponse(
         access_token=create_access_token(token_data),
         refresh_token=create_refresh_token(token_data),
@@ -258,17 +287,17 @@ async def refresh_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token"
         )
-    
+
     # Verify user still exists and is active
     result = await db.execute(select(User).where(User.id == token_data.user_id))
     user = result.scalar_one_or_none()
-    
+
     if not user or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found or inactive"
         )
-    
+
     # Create new tokens
     new_token_data = {
         "sub": str(user.id),
@@ -276,7 +305,7 @@ async def refresh_token(
         "role": user.role.value,
         "org_id": str(user.organization_id) if user.organization_id else None,
     }
-    
+
     return Token(
         access_token=create_access_token(new_token_data),
         refresh_token=create_refresh_token(new_token_data),
@@ -317,6 +346,7 @@ class ChangePasswordRequest(BaseModel):
 
 
 @router.post("/change-password")
+@limiter.limit("5/minute")
 async def change_password(
     request: Request,
     data: ChangePasswordRequest,
@@ -335,8 +365,24 @@ async def change_password(
     await log_audit_event(
         db=db, user=current_user, action="password_changed",
         resource_type="auth", resource_name=current_user.email,
-        ip_address=request.client.host if request.client else None,
+        ip_address=_get_client_ip(request),
     )
     await db.commit()
 
     return {"message": "Password changed successfully"}
+
+
+@router.post("/logout")
+async def logout(
+    request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Logout -- invalidate current token (best-effort)."""
+    await log_audit_event(
+        db, user=current_user, action="logout",
+        resource_type="auth", status="success",
+        ip_address=_get_client_ip(request),
+    )
+    await db.commit()
+    return {"message": "Logged out successfully"}

@@ -7,10 +7,7 @@ import {
     getAnalyticsTrends,
     getAnalyticsExportUrl,
     getStoredTokens,
-    type AnalyticsOverview,
     type RiskBreakdownItem,
-    type UserActivityItem,
-    type TrendDataPoint,
 } from '@/api/client';
 import AppHeader from '@/components/AppHeader';
 
@@ -68,7 +65,7 @@ function RiskBar({ item }: { item: RiskBreakdownItem }) {
 export default function Analytics() {
     const [days, setDays] = useState(30);
 
-    const { data: overview, isLoading: loadingOverview } = useQuery({
+    const { data: overview, isLoading: loadingOverview, error } = useQuery({
         queryKey: ['analytics-overview', days],
         queryFn: () => getAnalyticsOverview(days),
     });
@@ -141,6 +138,8 @@ export default function Analytics() {
                     </div>
                 </div>
 
+                {error && <div className="text-red-600 p-4">Failed to load data. Please try again.</div>}
+
                 {/* Loading */}
                 {loadingOverview && (
                     <div className="text-center py-12 text-slate-400">Loading analytics...</div>
@@ -182,9 +181,10 @@ export default function Analytics() {
                                 <h2 className="text-lg font-semibold text-slate-900 mb-4">Usage Trends (Weekly)</h2>
                                 {trends && trends.length > 0 ? (
                                     <div className="space-y-2">
-                                        {trends.map((t) => {
-                                            const weekLabel = new Date(t.period).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+                                        {(() => {
                                             const maxScans = Math.max(...trends.map(x => x.scans), 1);
+                                            return trends.map((t) => {
+                                            const weekLabel = new Date(t.period).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
                                             return (
                                                 <div key={t.period} className="flex items-center gap-3">
                                                     <div className="w-16 text-xs text-slate-500">{weekLabel}</div>
@@ -199,7 +199,8 @@ export default function Analytics() {
                                                     </div>
                                                 </div>
                                             );
-                                        })}
+                                        });
+                                        })()}
                                     </div>
                                 ) : (
                                     <p className="text-sm text-slate-400">No trend data available for this period.</p>
@@ -215,11 +216,11 @@ export default function Analytics() {
                                     <table className="w-full text-sm">
                                         <thead>
                                             <tr className="border-b border-slate-200">
-                                                <th className="text-left py-2 px-3 font-medium text-slate-500">Name</th>
-                                                <th className="text-left py-2 px-3 font-medium text-slate-500">Email</th>
-                                                <th className="text-right py-2 px-3 font-medium text-slate-500">Scans</th>
-                                                <th className="text-right py-2 px-3 font-medium text-slate-500">Risks Found</th>
-                                                <th className="text-right py-2 px-3 font-medium text-slate-500">Last Scan</th>
+                                                <th scope="col" className="text-left py-2 px-3 font-medium text-slate-500">Name</th>
+                                                <th scope="col" className="text-left py-2 px-3 font-medium text-slate-500">Email</th>
+                                                <th scope="col" className="text-right py-2 px-3 font-medium text-slate-500">Scans</th>
+                                                <th scope="col" className="text-right py-2 px-3 font-medium text-slate-500">Risks Found</th>
+                                                <th scope="col" className="text-right py-2 px-3 font-medium text-slate-500">Last Scan</th>
                                             </tr>
                                         </thead>
                                         <tbody>

@@ -7,7 +7,7 @@ NOT the full contract text.
 
 import io
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict
 
 from docx import Document
@@ -45,7 +45,7 @@ def generate_risk_report(
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
     doc.add_paragraph(f"Contract: {filename}")
-    doc.add_paragraph(f"Generated: {datetime.utcnow().strftime('%B %d, %Y at %H:%M UTC')}")
+    doc.add_paragraph(f"Generated: {datetime.now(timezone.utc).strftime('%B %d, %Y at %H:%M UTC')}")
     doc.add_paragraph(f"Analyzed by: {generated_by}")
     doc.add_paragraph("")
 

@@ -4,7 +4,7 @@
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:type="TaskPaneApp">
 
-  <Id>a1b2c3d4-e5f6-7890-abcd-ef1234567890</Id>
+  <Id>c7d8e9f0-a1b2-4c3d-8e5f-6a7b8c9d0e1f</Id>
   <Version>2.0.0.0</Version>
   <ProviderName>ContraRed</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
@@ -21,6 +21,12 @@
   <Hosts>
     <Host Name="Document"/>
   </Hosts>
+
+  <Requirements>
+    <Sets>
+      <Set Name="WordApi" MinVersion="1.3"/>
+    </Sets>
+  </Requirements>
 
   <DefaultSettings>
     <SourceLocation DefaultValue="https://contrared-addin.netlify.app/taskpane.html"/>

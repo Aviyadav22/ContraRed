@@ -6,7 +6,8 @@ Uses existing Subscription model from organization.py.
 
 import hmac
 import hashlib
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -20,6 +21,7 @@ from app.api.v1.endpoints.auth import get_current_user
 from app.api.dependencies import require_admin
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -110,10 +112,10 @@ async def get_subscription(
     
     # Lazy reset: check if 30 days passed
     if subscription and subscription.current_period_end:
-        if datetime.utcnow() > subscription.current_period_end:
+        if datetime.now(timezone.utc) > subscription.current_period_end:
             subscription.used_scans = 0
-            subscription.current_period_start = datetime.utcnow()
-            subscription.current_period_end = datetime.utcnow() + timedelta(days=30)
+            subscription.current_period_start = datetime.now(timezone.utc)
+            subscription.current_period_end = datetime.now(timezone.utc) + timedelta(days=30)
             await db.commit()
             used = 0
     
@@ -140,7 +142,7 @@ async def list_plans():
             features=["Basic clause detection", "5 documents/month", "Community support"],
         ),
         PlanInfo(
-            id="plan_pro",  # Replace with actual Razorpay plan ID
+            id=settings.RAZORPAY_PLAN_PRO_ID or "plan_pro",
             name="Pro",
             price=410000,  # ₹4,100 in paise
             currency="INR",
@@ -148,7 +150,7 @@ async def list_plans():
             features=["All clause detection", "Unlimited documents", "Custom playbooks", "Priority support"],
         ),
         PlanInfo(
-            id="plan_enterprise",  # Replace with actual Razorpay plan ID
+            id=settings.RAZORPAY_PLAN_ENTERPRISE_ID or "plan_enterprise",
             name="Enterprise",
             price=1650000,  # ₹16,500 in paise
             currency="INR",
@@ -199,7 +201,8 @@ async def create_subscription(
         }
         
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.error("Razorpay subscription creation failed", exc_info=True)
+        raise HTTPException(status_code=400, detail={"message": "Subscription creation failed. Please try again.", "error_code": "payment_error"})
 
 
 @router.post("/verify")
@@ -216,7 +219,7 @@ async def verify_payment(
     
     # Verify signature (timing-safe comparison)
     message = f"{request.razorpay_payment_id}|{request.razorpay_subscription_id}"
-    expected_signature = hmac.new(
+    expected_signature = hmac.HMAC(
         settings.RAZORPAY_KEY_SECRET.encode(),
         message.encode(),
         hashlib.sha256
@@ -253,50 +256,56 @@ async def razorpay_webhook(
     db: AsyncSession = Depends(get_db)
 ):
     """Handle Razorpay webhook events."""
-    body = await request.body()
-    signature = request.headers.get("X-Razorpay-Signature")
-    
-    if not signature or not settings.RAZORPAY_KEY_SECRET:
-        raise HTTPException(status_code=400, detail="Missing signature")
-    
-    # Verify webhook signature
-    expected_signature = hmac.new(
-        settings.RAZORPAY_KEY_SECRET.encode(),
-        body,
-        hashlib.sha256
-    ).hexdigest()
-    
-    if not hmac.compare_digest(signature, expected_signature):
-        raise HTTPException(status_code=400, detail="Invalid signature")
-    
-    import json
-    event = json.loads(body)
-    event_type = event.get("event")
-    
-    if event_type == "subscription.charged":
-        subscription_id = event["payload"]["subscription"]["entity"]["id"]
-        result = await db.execute(
-            select(Subscription).where(Subscription.razorpay_subscription_id == subscription_id)
-        )
-        subscription = result.scalar_one_or_none()
-        
-        if subscription:
-            subscription.used_scans = 0
-            subscription.current_period_end = datetime.utcnow() + timedelta(days=30)
-            await db.commit()
-    
-    elif event_type == "subscription.cancelled":
-        subscription_id = event["payload"]["subscription"]["entity"]["id"]
-        result = await db.execute(
-            select(Subscription).where(Subscription.razorpay_subscription_id == subscription_id)
-        )
-        subscription = result.scalar_one_or_none()
-        
-        if subscription:
-            subscription.status = SubscriptionStatus.CANCELLED
-            await db.commit()
-    
-    return {"status": "ok"}
+    try:
+        body = await request.body()
+        signature = request.headers.get("X-Razorpay-Signature")
+
+        if not signature or not settings.RAZORPAY_KEY_SECRET:
+            logger.warning("Webhook received without signature or Razorpay not configured")
+            return {"status": "error"}
+
+        # Verify webhook signature
+        expected_signature = hmac.HMAC(
+            settings.RAZORPAY_KEY_SECRET.encode(),
+            body,
+            hashlib.sha256
+        ).hexdigest()
+
+        if not hmac.compare_digest(signature, expected_signature):
+            logger.warning("Webhook signature verification failed")
+            return {"status": "error"}
+
+        import json
+        event = json.loads(body)
+        event_type = event.get("event")
+
+        if event_type == "subscription.charged":
+            subscription_id = event["payload"]["subscription"]["entity"]["id"]
+            result = await db.execute(
+                select(Subscription).where(Subscription.razorpay_subscription_id == subscription_id)
+            )
+            subscription = result.scalar_one_or_none()
+
+            if subscription:
+                subscription.used_scans = 0
+                subscription.current_period_end = datetime.now(timezone.utc) + timedelta(days=30)
+                await db.commit()
+
+        elif event_type == "subscription.cancelled":
+            subscription_id = event["payload"]["subscription"]["entity"]["id"]
+            result = await db.execute(
+                select(Subscription).where(Subscription.razorpay_subscription_id == subscription_id)
+            )
+            subscription = result.scalar_one_or_none()
+
+            if subscription:
+                subscription.status = SubscriptionStatus.CANCELLED
+                await db.commit()
+
+        return {"status": "ok"}
+    except Exception as e:
+        logger.error("Webhook processing error", exc_info=True)
+        return {"status": "error"}  # Always return 200 to prevent Razorpay retries
 
 
 # ============================================================================

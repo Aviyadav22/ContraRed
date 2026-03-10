@@ -63,23 +63,17 @@ export default function AppHeader({ activePage }: AppHeaderProps) {
                         <img src="/logo.png" alt="ContraRed" className="h-6" />
                     </Link>
 
-                    <nav className="flex items-center gap-1">
+                    <nav aria-label="Main navigation" className="flex items-center gap-1">
                         {allItems.map((item) => {
                             const isActive = activeKey === item.key;
                             return (
                                 <Link
                                     key={item.key}
                                     to={item.path}
-                                    className="relative px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors"
+                                    className={`relative px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors ${isActive ? '' : 'hover:text-[#1A1A19]'}`}
                                     style={{
                                         color: isActive ? '#1A1A19' : '#8A8885',
                                         background: isActive ? 'hsl(36, 10%, 91%)' : 'transparent',
-                                    }}
-                                    onMouseEnter={e => {
-                                        if (!isActive) (e.target as HTMLElement).style.color = '#1A1A19';
-                                    }}
-                                    onMouseLeave={e => {
-                                        if (!isActive) (e.target as HTMLElement).style.color = '#8A8885';
                                     }}
                                 >
                                     {item.label}
@@ -102,11 +96,9 @@ export default function AppHeader({ activePage }: AppHeaderProps) {
                         </div>
                         <div className="w-px h-4" style={{ background: '#E8E5E0' }} />
                         <button
+                            type="button"
                             onClick={logout}
-                            className="text-[13px] font-medium transition-colors cursor-pointer"
-                            style={{ color: '#A09D98' }}
-                            onMouseEnter={e => (e.target as HTMLElement).style.color = '#C0392B'}
-                            onMouseLeave={e => (e.target as HTMLElement).style.color = '#A09D98'}
+                            className="text-[13px] font-medium transition-colors cursor-pointer text-[#A09D98] hover:text-[#C0392B]"
                         >
                             Logout
                         </button>

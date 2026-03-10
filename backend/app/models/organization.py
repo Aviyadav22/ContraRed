@@ -3,7 +3,7 @@ Organization and Subscription models.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from sqlalchemy import String, Boolean, DateTime, Enum as SQLEnum, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
@@ -36,9 +36,9 @@ class Organization(Base):
     sso_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     entra_tenant_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     org_settings: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
+
     # Relationships - using string references to avoid circular imports
     users: Mapped[List["User"]] = relationship("User", back_populates="organization")
     playbooks: Mapped[List["Playbook"]] = relationship("Playbook", back_populates="organization")
@@ -59,6 +59,6 @@ class Subscription(Base):
     used_scans: Mapped[int] = mapped_column(Integer, default=0)
     current_period_start: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     current_period_end: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
     
     organization: Mapped["Organization"] = relationship("Organization", back_populates="subscriptions")

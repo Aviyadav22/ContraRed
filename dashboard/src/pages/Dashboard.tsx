@@ -131,16 +131,7 @@ export default function Dashboard() {
                         <Link
                             key={action.to}
                             to={action.to}
-                            className="rounded-xl p-5 transition-all group"
-                            style={{ background: '#FFFFFF', border: '1px solid #E8E5E0' }}
-                            onMouseEnter={e => {
-                                (e.currentTarget as HTMLElement).style.borderColor = '#C0392B40';
-                                (e.currentTarget as HTMLElement).style.boxShadow = '0 2px 8px rgba(192,57,43,0.06)';
-                            }}
-                            onMouseLeave={e => {
-                                (e.currentTarget as HTMLElement).style.borderColor = '#E8E5E0';
-                                (e.currentTarget as HTMLElement).style.boxShadow = 'none';
-                            }}
+                            className="rounded-xl p-5 transition-all group bg-white border border-[#E8E5E0] hover:border-[#C0392B40] hover:shadow-[0_2px_8px_rgba(192,57,43,0.06)]"
                         >
                             <h3 className="font-medium mb-1" style={{ color: '#1A1A19' }}>{action.title}</h3>
                             <p className="text-[13px]" style={{ color: '#8A8885' }}>{action.desc}</p>

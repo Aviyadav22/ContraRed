@@ -147,7 +147,7 @@ class CacheService:
         Returns:
             Cache key string
         """
-        text_hash = hashlib.md5(clause_text.encode()).hexdigest()[:16]
+        text_hash = hashlib.sha256(clause_text.encode()).hexdigest()[:16]
         return f"ai:clause:{rule_id}:{text_hash}"
 
 
@@ -162,3 +162,11 @@ async def get_cache() -> CacheService:
         _cache = CacheService()
         await _cache.connect()
     return _cache
+
+
+async def shutdown_cache() -> None:
+    """Disconnect the global cache instance during application shutdown."""
+    global _cache
+    if _cache is not None:
+        await _cache.disconnect()
+        _cache = None

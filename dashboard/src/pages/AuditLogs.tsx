@@ -8,7 +8,7 @@ export default function AuditLogs() {
     const [actionFilter, setActionFilter] = useState('');
     const [emailFilter, setEmailFilter] = useState('');
 
-    const { data, isLoading } = useQuery<AuditLogPage>({
+    const { data, isLoading, error } = useQuery<AuditLogPage>({
         queryKey: ['audit-logs', page, actionFilter, emailFilter],
         queryFn: () => getAuditLogs({
             page,
@@ -57,17 +57,19 @@ export default function AuditLogs() {
                     />
                 </div>
 
+                {error && <div className="text-red-600 p-4">Failed to load data. Please try again.</div>}
+
                 {/* Table */}
                 <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
                     <table className="w-full text-sm">
                         <thead className="bg-slate-50 border-b border-slate-200">
                             <tr>
-                                <th className="text-left px-4 py-3 font-medium text-slate-600">Timestamp</th>
-                                <th className="text-left px-4 py-3 font-medium text-slate-600">User</th>
-                                <th className="text-left px-4 py-3 font-medium text-slate-600">Action</th>
-                                <th className="text-left px-4 py-3 font-medium text-slate-600">Resource</th>
-                                <th className="text-left px-4 py-3 font-medium text-slate-600">Status</th>
-                                <th className="text-left px-4 py-3 font-medium text-slate-600">IP</th>
+                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">Timestamp</th>
+                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">User</th>
+                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">Action</th>
+                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">Resource</th>
+                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">Status</th>
+                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">IP</th>
                             </tr>
                         </thead>
                         <tbody>

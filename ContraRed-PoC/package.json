@@ -45,7 +45,8 @@
     "webpack-dev-server": "^5.0.2"
   },
   "browserslist": [
-    "last 2 versions",
-    "ie 11"
+    "last 2 Chrome versions",
+    "last 2 Edge versions",
+    "last 2 Safari versions"
   ]
 }

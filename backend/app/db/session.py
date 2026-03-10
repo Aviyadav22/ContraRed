@@ -28,6 +28,7 @@ engine = create_async_engine(
     pool_size=3,          # Reduced for Supabase free tier (max 15 connections)
     max_overflow=5,
     pool_recycle=300,     # Recycle connections every 5 minutes
+    pool_timeout=10,      # Wait up to 10s for a connection from the pool
     connect_args=connect_args,
 )
 

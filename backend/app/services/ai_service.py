@@ -9,7 +9,7 @@ Provides AI-powered explanations and suggested fixes for risky clauses.
 Uses strict prompts to limit response length and costs.
 """
 
-import hashlib
+import asyncio
 import logging
 from typing import Optional, Tuple
 from dataclasses import dataclass
@@ -251,13 +251,11 @@ class AIService:
     ) -> Tuple[str, int]:
         """Generate response using Google Gemini."""
         try:
-            import asyncio
-            
             # Gemini uses a different format - combine system and user
             prompt = f"{system}\n\n{user}"
-            
+
             # Run in thread pool since Gemini SDK is sync
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             response = await loop.run_in_executor(
                 None,
                 lambda: self.gemini_client.generate_content(
@@ -348,8 +346,6 @@ class AIService:
         Returns:
             Tuple of (explanation, suggested_fix, total_tokens)
         """
-        import asyncio
-        
         explain_task = self.explain_risk(
             match.match_text,
             match.rule_name,
@@ -520,8 +516,4 @@ KEY CONCERNS:
 RECOMMENDATION: Consult legal team before signing this contract."""
 
 
-def make_cache_key(clause_text: str, rule_id: str) -> str:
-    """Generate cache key for AI responses."""
-    text_hash = hashlib.md5(clause_text.encode()).hexdigest()[:12]
-    return f"ai:clause:{rule_id}:{text_hash}"
 

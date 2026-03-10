@@ -88,10 +88,7 @@ export default function Login() {
                         <button
                             type="submit"
                             disabled={loading}
-                            className="w-full py-2.5 px-4 font-medium text-sm rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
-                            style={{ background: '#C0392B', color: '#FFFFFF' }}
-                            onMouseEnter={e => { if (!loading) (e.target as HTMLElement).style.background = '#A93226'; }}
-                            onMouseLeave={e => (e.target as HTMLElement).style.background = '#C0392B'}
+                            className="w-full py-2.5 px-4 font-medium text-sm rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 bg-[#C0392B] text-white hover:bg-[#A93226]"
                         >
                             {loading ? (
                                 <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />

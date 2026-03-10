@@ -2,10 +2,11 @@
 JWT Authentication utilities.
 """
 
-from datetime import datetime, timedelta
+import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 import bcrypt
-from jose import JWTError, jwt
+import jwt
 from pydantic import BaseModel
 
 from app.core.config import settings
@@ -17,6 +18,7 @@ class TokenData(BaseModel):
     email: str
     role: str
     organization_id: Optional[str] = None
+    jti: Optional[str] = None
 
 
 class Token(BaseModel):
@@ -43,21 +45,38 @@ def get_password_hash(password: str) -> str:
     return bcrypt.hashpw(password_bytes, salt).decode('utf-8')
 
 
+# Initialize dummy hash after get_password_hash is defined
+_DUMMY_HASH = get_password_hash("dummy-timing-oracle-prevention-value")
+
+
+def get_dummy_hash() -> str:
+    """Return a pre-computed hash for constant-time comparison when user not found."""
+    return _DUMMY_HASH
+
+
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Create a JWT access token."""
     to_encode = data.copy()
-    expire = datetime.utcnow() + (
+    expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
-    to_encode.update({"exp": expire, "type": "access"})
+    to_encode.update({
+        "exp": expire,
+        "type": "access",
+        "jti": str(uuid.uuid4()),
+    })
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
 def create_refresh_token(data: dict) -> str:
     """Create a JWT refresh token."""
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": expire, "type": "refresh"})
+    expire = datetime.now(timezone.utc) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+    to_encode.update({
+        "exp": expire,
+        "type": "refresh",
+        "jti": str(uuid.uuid4()),
+    })
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
@@ -69,11 +88,17 @@ def decode_token(token: str, expected_type: str = "access") -> Optional[TokenDat
         token_type = payload.get("type")
         if token_type != expected_type:
             return None
+        # Validate required claims are present
+        sub = payload.get("sub")
+        email = payload.get("email")
+        if not sub or not email:
+            return None
         return TokenData(
-            user_id=payload.get("sub"),
-            email=payload.get("email"),
-            role=payload.get("role"),
+            user_id=sub,
+            email=email,
+            role=payload.get("role", ""),
             organization_id=payload.get("org_id"),
+            jti=payload.get("jti"),
         )
-    except JWTError:
+    except jwt.InvalidTokenError:
         return None

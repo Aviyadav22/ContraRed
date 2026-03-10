@@ -5,10 +5,10 @@ Full CRUD for playbooks and rules.
 
 from typing import List, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import func, select, or_
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
@@ -54,14 +54,14 @@ class PlaybookResponse(BaseModel):
 
 
 class RuleCreate(BaseModel):
-    clause_type: str
-    primary_position: str
-    fallback_position: Optional[str] = None
+    clause_type: str = Field(..., min_length=1, max_length=200)
+    primary_position: str = Field(..., min_length=1, max_length=5000)
+    fallback_position: Optional[str] = Field(default=None, max_length=5000)
     risk_level: str = "yellow"
     is_deal_breaker: bool = False
     detection_patterns: List[str] = Field(default_factory=list)
     match_type: str = "exact"  # exact|fuzzy|regex - 'exact' auto-escapes for non-regex users
-    suggested_language: Optional[str] = None
+    suggested_language: Optional[str] = Field(default=None, max_length=5000)
 
 
 class RuleUpdate(BaseModel):
@@ -95,6 +95,13 @@ class PlaybookDetail(PlaybookResponse):
     rules: List[RuleResponse]
 
 
+class PlaybookListResponse(BaseModel):
+    items: List[PlaybookResponse]
+    total: int
+    skip: int
+    limit: int
+
+
 class ReorderRequest(BaseModel):
     rule_ids: List[str]  # Ordered list of rule IDs
 
@@ -103,36 +110,53 @@ class ReorderRequest(BaseModel):
 # Playbook CRUD Endpoints
 # ============================================================================
 
-@router.get("/", response_model=List[PlaybookResponse])
+@router.get("/", response_model=PlaybookListResponse)
 async def list_playbooks(
+    skip: int = 0,
+    limit: int = Query(50, le=200),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """List available playbooks for the current user."""
-    query = select(Playbook).options(selectinload(Playbook.rules_list)).where(
-        or_(
-            Playbook.is_public == True,
-            Playbook.created_by == current_user.id,
-            Playbook.organization_id == current_user.organization_id,
-        )
+    access_filter = or_(
+        Playbook.is_public == True,
+        Playbook.created_by == current_user.id,
+        Playbook.organization_id == current_user.organization_id,
     )
-    
+
+    # Total count
+    count_query = select(func.count(Playbook.id)).where(access_filter)
+    total = (await db.execute(count_query)).scalar() or 0
+
+    # Paginated data
+    query = (
+        select(Playbook)
+        .options(selectinload(Playbook.rules_list))
+        .where(access_filter)
+        .offset(skip)
+        .limit(limit)
+    )
     result = await db.execute(query)
     playbooks = result.scalars().all()
-    
-    return [
-        PlaybookResponse(
-            id=str(p.id),
-            name=p.name,
-            description=p.description,
-            category=p.category.value,
-            is_public=p.is_public,
-            is_default=p.is_default,
-            version=p.version,
-            rules_count=len(p.rules_list) if p.rules_list else 0,
-        )
-        for p in playbooks
-    ]
+
+    return PlaybookListResponse(
+        items=[
+            PlaybookResponse(
+                id=str(p.id),
+                name=p.name,
+                description=p.description,
+                category=p.category.value,
+                is_public=p.is_public,
+                is_default=p.is_default,
+                version=p.version,
+                rules_count=len(p.rules_list) if p.rules_list else 0,
+            )
+            for p in playbooks
+        ],
+        total=total,
+        skip=skip,
+        limit=limit,
+    )
 
 
 @router.post("/", response_model=PlaybookResponse, status_code=status.HTTP_201_CREATED)
@@ -228,6 +252,7 @@ async def get_playbook(
                 risk_level=r.risk_level.value,
                 is_deal_breaker=r.is_deal_breaker,
                 detection_patterns=r.detection_patterns.get("patterns", []) if r.detection_patterns else [],
+                match_type=r.detection_patterns.get("match_type", "exact") if isinstance(r.detection_patterns, dict) else "exact",
                 suggested_language=r.suggested_language.get("text") if r.suggested_language else None,
                 order_index=r.order_index,
             )
@@ -269,14 +294,19 @@ async def update_playbook(
     
     playbook.version += 1
 
-    await db.commit()
-    await db.refresh(playbook)
-
     await log_audit_event(
         db=db, user=current_user, action="playbook_updated",
         resource_type="playbook", resource_name=playbook.name, status="success",
     )
     await db.commit()
+
+    # Reload with rules to get accurate count
+    result = await db.execute(
+        select(Playbook)
+        .options(selectinload(Playbook.rules_list))
+        .where(Playbook.id == playbook_id)
+    )
+    playbook = result.scalar_one()
 
     return PlaybookResponse(
         id=str(playbook.id),
@@ -286,7 +316,7 @@ async def update_playbook(
         is_public=playbook.is_public,
         is_default=playbook.is_default,
         version=playbook.version,
-        rules_count=0,
+        rules_count=len(playbook.rules_list) if playbook.rules_list else 0,
     )
 
 
@@ -335,10 +365,17 @@ async def toggle_publish(
     
     playbook.is_public = not playbook.is_public
     playbook.version += 1
-    
+
     await db.commit()
-    await db.refresh(playbook)
-    
+
+    # Reload with rules to get accurate count
+    result = await db.execute(
+        select(Playbook)
+        .options(selectinload(Playbook.rules_list))
+        .where(Playbook.id == playbook_id)
+    )
+    playbook = result.scalar_one()
+
     return PlaybookResponse(
         id=str(playbook.id),
         name=playbook.name,
@@ -347,7 +384,7 @@ async def toggle_publish(
         is_public=playbook.is_public,
         is_default=playbook.is_default,
         version=playbook.version,
-        rules_count=0,
+        rules_count=len(playbook.rules_list) if playbook.rules_list else 0,
     )
 
 
@@ -483,6 +520,7 @@ async def update_rule(
         risk_level=rule.risk_level.value,
         is_deal_breaker=rule.is_deal_breaker,
         detection_patterns=rule.detection_patterns.get("patterns", []) if rule.detection_patterns else [],
+        match_type=rule.detection_patterns.get("match_type", "exact") if isinstance(rule.detection_patterns, dict) else "exact",
         suggested_language=rule.suggested_language.get("text") if rule.suggested_language else None,
         order_index=rule.order_index,
     )
@@ -568,6 +606,7 @@ async def reorder_rules(
             risk_level=r.risk_level.value,
             is_deal_breaker=r.is_deal_breaker,
             detection_patterns=r.detection_patterns.get("patterns", []) if r.detection_patterns else [],
+            match_type=r.detection_patterns.get("match_type", "exact") if isinstance(r.detection_patterns, dict) else "exact",
             suggested_language=r.suggested_language.get("text") if r.suggested_language else None,
             order_index=r.order_index,
         )

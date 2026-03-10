@@ -145,12 +145,37 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
         (headers as Record<string, string>)['Authorization'] = `Bearer ${tokens.access_token}`;
     }
 
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, { ...options, headers });
+    const url = `${API_BASE_URL}${endpoint}`;
+    const response = await fetch(url, { ...options, headers });
 
     if (!response.ok) {
         if (response.status === 401) {
+            const tokens = getStoredTokens();
+            if (tokens?.refresh_token) {
+                try {
+                    const refreshResp = await fetch(`${API_BASE_URL}/auth/refresh`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ refresh_token: tokens.refresh_token }),
+                    });
+                    if (refreshResp.ok) {
+                        const newTokens = await refreshResp.json();
+                        const user = getStoredUser();
+                        if (user) saveAuth(newTokens, user);
+                        // Retry original request
+                        const retryHeaders: Record<string, string> = { ...options.headers as any };
+                        retryHeaders['Authorization'] = `Bearer ${newTokens.access_token}`;
+                        const retryResp = await fetch(url, { ...options, headers: retryHeaders });
+                        if (retryResp.ok || retryResp.status !== 401) {
+                            if (retryResp.status === 204) return undefined as T;
+                            return retryResp.json();
+                        }
+                    }
+                } catch {}
+            }
             clearAuth();
             window.location.href = '/login';
+            throw new Error('Session expired');
         }
         const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
         const detail = error.detail;
@@ -216,6 +241,17 @@ export async function register(name: string, email: string, password: string): P
 
 export async function getCurrentUser(): Promise<User> {
     return request('/auth/me');
+}
+
+export async function validateSession(): Promise<User | null> {
+    try {
+        const user = await request<User>('/auth/me');
+        const tokens = getStoredTokens();
+        if (tokens && user) saveAuth(tokens, user);
+        return user;
+    } catch {
+        return null;
+    }
 }
 
 // ============================================================================

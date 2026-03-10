@@ -55,7 +55,7 @@ export default function Playbooks() {
     };
 
     return (
-        <div className="font-['Inter',system-ui,sans-serif] min-h-screen bg-slate-50">
+        <div className="min-h-screen bg-slate-50">
             <AppHeader />
 
             {/* Main */}
@@ -81,7 +81,7 @@ export default function Playbooks() {
 
                 {/* Create Modal */}
                 {showCreate && (
-                    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+                    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" role="dialog" aria-modal="true" onKeyDown={(e) => { if (e.key === 'Escape') setShowCreate(false); }}>
                         <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-2xl">
                             <h2 className="text-xl font-bold text-slate-900 mb-6">Create Playbook</h2>
                             <form onSubmit={handleCreate}>
@@ -129,7 +129,7 @@ export default function Playbooks() {
                 {/* Loading */}
                 {isLoading && (
                     <div className="text-center py-16">
-                        <div className="w-8 h-8 border-3 border-slate-200 border-t-slate-900 rounded-full animate-spin mx-auto" />
+                        <div className="w-8 h-8 border-2 border-slate-200 border-t-slate-900 rounded-full animate-spin mx-auto" />
                     </div>
                 )}
 
@@ -146,11 +146,11 @@ export default function Playbooks() {
                         <table className="w-full border-collapse">
                             <thead>
                                 <tr className="bg-slate-50 border-b border-slate-200">
-                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Name</th>
-                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Category</th>
-                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Rules</th>
-                                    <th className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
-                                    <th className="text-right px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>
+                                    <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Name</th>
+                                    <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Category</th>
+                                    <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Rules</th>
+                                    <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
+                                    <th scope="col" className="text-right px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>
                                 </tr>
                             </thead>
                             <tbody>

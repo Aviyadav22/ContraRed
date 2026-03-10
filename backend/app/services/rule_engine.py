@@ -57,7 +57,7 @@ class RuleMatch:
     
     def cache_key(self) -> str:
         """Generate cache key for AI responses."""
-        text_hash = hashlib.md5(self.match_text.encode()).hexdigest()[:12]
+        text_hash = hashlib.sha256(self.match_text.encode()).hexdigest()[:12]
         return f"clause:{self.rule_id}:{text_hash}"
 
 

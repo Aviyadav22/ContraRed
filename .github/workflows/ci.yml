@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio pytest-cov aiosqlite httpx
+      - name: Run tests
+        env:
+          SECRET_KEY: "test-secret-key-for-ci-minimum-32-characters-long"
+          DEBUG: "true"
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+        run: pytest tests/ -v --tb=short
+
+  dashboard-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - run: npm run lint
+      - run: npm run build
+        env:
+          VITE_API_URL: "https://contrared-api.onrender.com/api/v1"
+
+  addin-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ContraRed-PoC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm install
+      - run: npm run build
+        env:
+          API_BASE_URL: "https://contrared-api.onrender.com/api/v1"

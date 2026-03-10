@@ -27,7 +27,23 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
     
     # JWT Authentication
-    SECRET_KEY: str = "your-secret-key-change-in-production"
+    SECRET_KEY: str = ""
+
+    @field_validator("SECRET_KEY", mode="before")
+    @classmethod
+    def validate_secret_key(cls, v):
+        """Ensure SECRET_KEY is set and sufficiently long."""
+        if not v or v.startswith("your-"):
+            import os
+            if os.environ.get("DEBUG", "").lower() != "true":
+                raise ValueError(
+                    "SECRET_KEY must be set to a secure value (min 32 chars). "
+                    "Never use the default placeholder in production."
+                )
+            # Allow empty/weak key only in explicit debug mode
+            if not v:
+                return "insecure-dev-only-key-do-not-use-in-prod"
+        return v
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -41,6 +57,8 @@ class Settings(BaseSettings):
     # Razorpay
     RAZORPAY_KEY_ID: str = ""
     RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_PLAN_PRO_ID: str = ""
+    RAZORPAY_PLAN_ENTERPRISE_ID: str = ""
     
     # CORS - Allow Word Add-in and Dashboard origins
     CORS_ORIGINS: List[str] = [

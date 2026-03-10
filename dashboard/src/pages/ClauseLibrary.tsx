@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { listClauses, createClause, deleteClause, type ClauseLibraryItem } from '@/api/client';
 import AppHeader from '@/components/AppHeader';
 
@@ -11,7 +11,7 @@ export default function ClauseLibrary() {
     const [newText, setNewText] = useState('');
     const [filterType, setFilterType] = useState('');
 
-    const { data: clauses, isLoading } = useQuery({
+    const { data: clauses, isLoading, error } = useQuery({
         queryKey: ['clauses', filterType],
         queryFn: () => listClauses(filterType || undefined),
     });
@@ -40,15 +40,15 @@ export default function ClauseLibrary() {
     };
 
     // Group clauses by type
-    const grouped = (clauses || []).reduce<Record<string, ClauseLibraryItem[]>>((acc, c) => {
+    const grouped = useMemo(() => (clauses || []).reduce<Record<string, ClauseLibraryItem[]>>((acc, c) => {
         (acc[c.clause_type] = acc[c.clause_type] || []).push(c);
         return acc;
-    }, {});
+    }, {}), [clauses]);
 
-    const clauseTypes = Object.keys(grouped).sort();
+    const clauseTypes = useMemo(() => Object.keys(grouped).sort(), [grouped]);
 
     return (
-        <div className="font-['Inter',system-ui,sans-serif] min-h-screen bg-slate-50">
+        <div className="min-h-screen bg-slate-50">
             <AppHeader activePage="clauses" />
 
             <main className="max-w-5xl mx-auto px-6 py-8">
@@ -70,8 +70,9 @@ export default function ClauseLibrary() {
                     <form onSubmit={handleCreate} className="bg-white border border-slate-200 rounded-xl p-6 mb-6 space-y-4">
                         <div className="grid grid-cols-2 gap-4">
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-1">Clause Type</label>
+                                <label htmlFor="clause-type" className="block text-sm font-medium text-slate-700 mb-1">Clause Type</label>
                                 <input
+                                    id="clause-type"
                                     value={newType}
                                     onChange={(e) => setNewType(e.target.value)}
                                     placeholder="e.g. Indemnification"
@@ -80,8 +81,9 @@ export default function ClauseLibrary() {
                                 />
                             </div>
                             <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-1">Name</label>
+                                <label htmlFor="clause-name" className="block text-sm font-medium text-slate-700 mb-1">Name</label>
                                 <input
+                                    id="clause-name"
                                     value={newName}
                                     onChange={(e) => setNewName(e.target.value)}
                                     placeholder="e.g. Standard Mutual Indemnification"
@@ -91,8 +93,9 @@ export default function ClauseLibrary() {
                             </div>
                         </div>
                         <div>
-                            <label className="block text-sm font-medium text-slate-700 mb-1">Approved Text</label>
+                            <label htmlFor="clause-text" className="block text-sm font-medium text-slate-700 mb-1">Approved Text</label>
                             <textarea
+                                id="clause-text"
                                 value={newText}
                                 onChange={(e) => setNewText(e.target.value)}
                                 placeholder="Paste the approved clause language here..."
@@ -144,6 +147,8 @@ export default function ClauseLibrary() {
                         ))}
                     </div>
                 )}
+
+                {error && <div className="text-red-600 p-4">Failed to load data. Please try again.</div>}
 
                 {/* Content */}
                 {isLoading ? (

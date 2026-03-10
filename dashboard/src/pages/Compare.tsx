@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { compareContracts, listPlaybooks, type CompareResponse, type DiffChange, type Playbook } from '@/api/client';
 import AppHeader from '@/components/AppHeader';
@@ -86,13 +86,13 @@ export default function Compare() {
         onError: (err) => setError(err instanceof Error ? err.message : 'Comparison failed'),
     });
 
-    const filteredChanges = result?.changes.filter(c =>
+    const filteredChanges = useMemo(() => result?.changes.filter(c =>
         filterType === 'all' || c.change_type === filterType
-    ) || [];
+    ) || [], [result, filterType]);
 
-    const addedCount = result?.changes.filter(c => c.change_type === 'added').length || 0;
-    const removedCount = result?.changes.filter(c => c.change_type === 'removed').length || 0;
-    const modifiedCount = result?.changes.filter(c => c.change_type === 'modified').length || 0;
+    const addedCount = useMemo(() => result?.changes.filter(c => c.change_type === 'added').length || 0, [result]);
+    const removedCount = useMemo(() => result?.changes.filter(c => c.change_type === 'removed').length || 0, [result]);
+    const modifiedCount = useMemo(() => result?.changes.filter(c => c.change_type === 'modified').length || 0, [result]);
 
     return (
         <div className="min-h-screen bg-slate-50">

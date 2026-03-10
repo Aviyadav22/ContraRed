@@ -79,9 +79,9 @@ logs/
 !ARCHITECTURE.md
 !backend/requirements.txt
 
-# Test outputs
+# Test outputs (but keep backend/tests/)
 test_*.txt
-test_*.py
+!backend/tests/
 *_results.txt
 *_output.txt
 *_debug*.txt
@@ -124,6 +124,11 @@ backend/__pycache__/
 backend/*.pyc
 backend/.pytest_cache/
 backend/.coverage
+backend/recent_*.json
+backend/users*.json
+backend/*_output.txt
+backend/*_debug*.txt
+backend/server_log.txt
 
 # Claude Code and Netlify cache (not for version control)
 .claude/
