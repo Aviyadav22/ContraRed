@@ -39,6 +39,149 @@ const log = {
   error: (...args: unknown[]) => { if (IS_DEV) console.error('[ContraRed]', ...args); },
 };
 
+// ============================================================================
+// Persistent Scan State
+// ============================================================================
+
+/** Save current scan state to localStorage for session persistence. */
+function saveScanState(): void {
+    if (!currentAIAnalysis) return;
+    const state = {
+        analysis: currentAIAnalysis,
+        fixedRisks: Array.from(fixedRisks),
+        timestamp: Date.now(),
+    };
+    localStorage.setItem('contrared_scan_state', JSON.stringify(state));
+    log.info('Scan state saved to localStorage');
+}
+
+/** Restore previous scan state from localStorage (if < 24h old). */
+function restoreScanState(): boolean {
+    try {
+        const stored = localStorage.getItem('contrared_scan_state');
+        if (!stored) return false;
+        const state = JSON.parse(stored);
+        const age = Date.now() - state.timestamp;
+        if (age > 24 * 60 * 60 * 1000) {
+            localStorage.removeItem('contrared_scan_state');
+            return false;
+        }
+        currentAIAnalysis = state.analysis;
+        state.fixedRisks.forEach((id: string) => fixedRisks.add(id));
+        displayAIResults(currentAIAnalysis!);
+        log.info('Scan state restored from localStorage');
+        return true;
+    } catch {
+        return false;
+    }
+}
+
+// ============================================================================
+// Word-Level Diff
+// ============================================================================
+
+/** Compute a word-level diff between original and modified text, returning HTML. */
+function wordDiff(original: string, modified: string): string {
+    const origWords = original.split(/(\s+)/);
+    const modWords = modified.split(/(\s+)/);
+    const m = origWords.length;
+    const n = modWords.length;
+
+    // LCS table
+    const dp: number[][] = Array.from({ length: m + 1 }, () => Array(n + 1).fill(0));
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            if (origWords[i - 1] === modWords[j - 1]) {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+            }
+        }
+    }
+
+    // Backtrack
+    const ops: Array<{ type: 'keep' | 'del' | 'ins'; text: string }> = [];
+    let i = m, j = n;
+    while (i > 0 || j > 0) {
+        if (i > 0 && j > 0 && origWords[i - 1] === modWords[j - 1]) {
+            ops.unshift({ type: 'keep', text: origWords[i - 1] });
+            i--; j--;
+        } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+            ops.unshift({ type: 'ins', text: modWords[j - 1] });
+            j--;
+        } else {
+            ops.unshift({ type: 'del', text: origWords[i - 1] });
+            i--;
+        }
+    }
+
+    const result: string[] = [];
+    for (const op of ops) {
+        if (op.type === 'del') {
+            result.push(`<del style="background:#FECACA;text-decoration:line-through;color:#991B1B;">${escapeHtml(op.text)}</del>`);
+        } else if (op.type === 'ins') {
+            result.push(`<ins style="background:#BBF7D0;text-decoration:underline;color:#166534;">${escapeHtml(op.text)}</ins>`);
+        } else {
+            result.push(escapeHtml(op.text));
+        }
+    }
+    return result.join('');
+}
+
+// ============================================================================
+// Smart Tooltips (Onboarding)
+// ============================================================================
+
+const TOOLTIPS = [
+    { target: 'scanBtn', text: 'Click here to scan the entire document for legal risks. The AI will analyze every clause against your selected playbook.' },
+    { target: 'scanSelectionBtn', text: 'Highlight text in Word first, then click this to scan just that selection. Great for quick checks during calls.' },
+    { target: 'playbookSelect', text: 'Choose which playbook to scan against. Different playbooks have different rules for different contract types.' },
+];
+
+function showOnboardingTooltips(): void {
+    if (localStorage.getItem('contrared_onboarded')) return;
+    let currentTooltip = 0;
+
+    function showNextTooltip(): void {
+        // Clear highlight from previous
+        if (currentTooltip > 0 && currentTooltip <= TOOLTIPS.length) {
+            const prev = document.getElementById(TOOLTIPS[currentTooltip - 1].target);
+            if (prev) { prev.style.zIndex = ''; prev.style.boxShadow = ''; }
+        }
+        if (currentTooltip >= TOOLTIPS.length) {
+            localStorage.setItem('contrared_onboarded', 'true');
+            const overlay = document.getElementById('tooltipOverlay');
+            if (overlay) overlay.style.display = 'none';
+            return;
+        }
+        const tip = TOOLTIPS[currentTooltip];
+        const overlay = document.getElementById('tooltipOverlay');
+        const text = document.getElementById('tooltipText');
+        if (overlay) overlay.style.display = 'flex';
+        if (text) text.textContent = tip.text;
+        const target = document.getElementById(tip.target);
+        if (target) {
+            target.style.position = 'relative';
+            target.style.zIndex = '1001';
+            target.style.boxShadow = '0 0 0 4px rgba(192, 57, 43, 0.3)';
+        }
+        currentTooltip++;
+    }
+
+    document.getElementById('tooltipNext')?.addEventListener('click', showNextTooltip);
+    document.getElementById('tooltipSkip')?.addEventListener('click', () => {
+        localStorage.setItem('contrared_onboarded', 'true');
+        const overlay = document.getElementById('tooltipOverlay');
+        if (overlay) overlay.style.display = 'none';
+        TOOLTIPS.forEach(t => {
+            const el = document.getElementById(t.target);
+            if (el) { el.style.zIndex = ''; el.style.boxShadow = ''; }
+        });
+    });
+
+    showNextTooltip();
+}
+
 /**
  * Read surrounding context (paragraph text) around a given text in the Word document.
  * Gives the AI model the full clause context for better fix generation.
@@ -268,8 +411,14 @@ function showMainPanel(): void {
   // Load available playbooks
   loadPlaybooks();
 
+  // Restore previous scan state if available
+  restoreScanState();
+
   // Load recent scans
   loadRecentScans();
+
+  // Show onboarding tooltips for first-time users
+  setTimeout(showOnboardingTooltips, 500);
 }
 
 /**
@@ -555,6 +704,11 @@ function handleLogout(): void {
   currentAIAnalysis = null;
   fixedRisks.clear();
 
+  // Clear persisted state
+  localStorage.removeItem('contrared_scan_state');
+  localStorage.removeItem('contrared_negotiation_session');
+  localStorage.removeItem('contrared_onboarded');
+
   // Reset UI
   if (resultsSection()) resultsSection()!.style.display = 'none';
   if (riskList()) riskList()!.innerHTML = '';
@@ -698,6 +852,7 @@ async function scanDocument(): Promise<void> {
 
     // Step 3: Display AI results (executive summary + redlines)
     displayAIResults(aiResult);
+    saveScanState();
 
     // Step 4: Highlight risks in document using three-tier search
     await highlightAIRedlines(aiResult.redlines);
@@ -800,6 +955,7 @@ async function scanSelection(): Promise<void> {
         };
         currentAIAnalysis.tokens_used += result.tokens_used;
         displayAIResults(currentAIAnalysis);
+        saveScanState();
       }
     } else {
       // Create new AIAnalysisResult from clause results
@@ -817,6 +973,7 @@ async function scanSelection(): Promise<void> {
       };
       fixedRisks.clear();
       displayAIResults(currentAIAnalysis);
+      saveScanState();
     }
 
     // Step 5: Highlight new risks in document
@@ -1469,10 +1626,12 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
       fixLabel.textContent = 'Generated Fix:';
       wrapper.appendChild(fixLabel);
 
-      const fixText = document.createElement('div');
-      fixText.className = 'generate-text';
-      fixText.textContent = result.fix_text;
-      wrapper.appendChild(fixText);
+      // Show word-level diff between original and generated fix
+      const diffView = document.createElement('div');
+      diffView.className = 'diff-view';
+      diffView.style.cssText = 'font-family:Georgia,serif;font-size:13px;line-height:1.6;padding:8px;border:1px solid var(--border,#E8E5E0);border-radius:6px;margin-bottom:8px;';
+      diffView.innerHTML = wordDiff(redline.original_text, result.fix_text);
+      wrapper.appendChild(diffView);
 
       const reasoning = document.createElement('div');
       reasoning.className = 'generate-reasoning';
@@ -1897,10 +2056,11 @@ async function applyAllRedlines(): Promise<void> {
           label.className = 'generate-label';
           label.textContent = 'Generated Fix:';
           wrapper.appendChild(label);
-          const text = document.createElement('div');
-          text.className = 'generate-text';
-          text.textContent = result.fix_text;
-          wrapper.appendChild(text);
+          const diffView = document.createElement('div');
+          diffView.className = 'diff-view';
+          diffView.style.cssText = 'font-family:Georgia,serif;font-size:13px;line-height:1.6;padding:8px;border:1px solid var(--border,#E8E5E0);border-radius:6px;margin-bottom:8px;';
+          diffView.innerHTML = wordDiff(redline.original_text, result.fix_text);
+          wrapper.appendChild(diffView);
           const reasoning = document.createElement('div');
           reasoning.className = 'generate-reasoning';
           reasoning.textContent = result.reasoning;

@@ -1593,6 +1593,12 @@
                 transition-duration: 0.01ms !important;
             }
         }
+
+        /* Smart Tooltips (onboarding) */
+        .tooltip-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.3); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+        .tooltip-box { background: var(--bg-surface, white); border-radius: 10px; padding: 16px; max-width: 280px; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
+        .tooltip-text { font-size: 13px; line-height: 1.5; margin-bottom: 12px; }
+        .tooltip-actions { display: flex; gap: 8px; justify-content: flex-end; }
     </style>
 </head>
 
@@ -1908,6 +1914,17 @@
         <div class="status-bar">
             <span id="statusIndicator" class="status-indicator offline"></span>
             <span id="statusText" class="status-text">Connecting to Office.js...</span>
+        </div>
+    </div>
+
+    <!-- Smart Tooltips (first-time user onboarding) -->
+    <div id="tooltipOverlay" class="tooltip-overlay" style="display:none;">
+        <div id="tooltipContent" class="tooltip-box">
+            <div id="tooltipText" class="tooltip-text"></div>
+            <div class="tooltip-actions">
+                <button id="tooltipNext" class="btn btn-primary btn-sm">Got it</button>
+                <button id="tooltipSkip" class="btn btn-ghost btn-sm">Skip all</button>
+            </div>
         </div>
     </div>
 </body>
