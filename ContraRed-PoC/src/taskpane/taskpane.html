@@ -1560,6 +1560,30 @@
         }
 
         /* ================================================================
+           NEGOTIATION MODE (Phase 8.4)
+           ================================================================ */
+        .negotiation-header { background: var(--bg-elevated, #F5F4F2); border: 1px solid var(--accent, #C0392B); border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+        .negotiation-title-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+        .negotiation-badge { background: var(--accent, #C0392B); color: white; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 4px; letter-spacing: 0.5px; }
+        .negotiation-timer { font-family: monospace; font-size: 14px; font-weight: 600; color: var(--text-primary); flex: 1; }
+        .negotiation-notes { width: 100%; border: 1px solid var(--border, #E8E5E0); border-radius: 6px; padding: 6px 8px; font-size: 12px; resize: none; font-family: inherit; background: var(--bg-surface, #fff); box-sizing: border-box; }
+        .auto-scan-indicator { font-size: 11px; color: var(--text-muted); margin-top: 6px; display: flex; align-items: center; gap: 4px; }
+        .auto-scan-dot { width: 6px; height: 6px; border-radius: 50%; background: #1A7A4A; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        body.negotiation-mode .risk-card { padding: 8px 10px; }
+        body.negotiation-mode .risk-explanation, body.negotiation-mode .suggested-fix, body.negotiation-mode .risk-clause { display: none; }
+        body.negotiation-mode .risk-card.expanded .risk-explanation, body.negotiation-mode .risk-card.expanded .suggested-fix, body.negotiation-mode .risk-card.expanded .risk-clause { display: block; }
+        .negotiation-actions { display: flex; gap: 4px; margin-top: 6px; }
+        .neg-btn { font-size: 11px; padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border, #E8E5E0); cursor: pointer; background: var(--bg-surface, #fff); }
+        .neg-btn.accept { color: #1A7A4A; border-color: #1A7A4A; }
+        .neg-btn.counter { color: #B7770D; border-color: #B7770D; }
+        .neg-btn.escalate { color: #C0392B; border-color: #C0392B; }
+        .neg-btn.active { color: white; }
+        .neg-btn.accept.active { background: #1A7A4A; }
+        .neg-btn.counter.active { background: #B7770D; }
+        .neg-btn.escalate.active { background: #C0392B; }
+
+        /* ================================================================
            REDUCED MOTION
            ================================================================ */
         @media (prefers-reduced-motion: reduce) {
@@ -1770,6 +1794,22 @@
                 </div>
                 <div id="recentScansList" class="recent-scans-list" style="display: none;"></div>
             </section>
+
+            <!-- Negotiation Mode Panel (Phase 8.4) -->
+            <div id="negotiationPanel" style="display:none;">
+                <div class="negotiation-header">
+                    <div class="negotiation-title-bar">
+                        <span class="negotiation-badge">NEGOTIATION MODE</span>
+                        <span id="negotiationTimer" class="negotiation-timer">00:00</span>
+                        <button id="exitNegotiationBtn" class="btn btn-ghost btn-sm">Exit</button>
+                    </div>
+                    <textarea id="negotiationNotes" class="negotiation-notes" placeholder="Quick notes during the call..." rows="2"></textarea>
+                    <div id="autoScanIndicator" class="auto-scan-indicator">
+                        <span class="auto-scan-dot"></span>
+                        Auto-scanning selections
+                    </div>
+                </div>
+            </div>
 
             <!-- Risk Summary (hidden until scan) -->
             <section id="resultsSection" class="section" style="display: none;">

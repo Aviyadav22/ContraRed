@@ -226,6 +226,9 @@ Office.onReady((info) => {
     // Keyboard shortcuts (Phase 8)
     document.addEventListener('keydown', handleKeyboardShortcuts);
 
+    // Negotiation mode exit button (Phase 8.4)
+    document.getElementById('exitNegotiationBtn')?.addEventListener('click', toggleNegotiationMode);
+
   } else {
     if (statusText()) statusText()!.textContent = 'Not running in Word';
   }
@@ -887,13 +890,108 @@ async function reScanClause(riskId: string, originalText: string): Promise<void>
 }
 
 // ============================================================================
-// Keyboard Shortcuts (Phase 8)
+// Live Negotiation Mode (Phase 8.4)
 // ============================================================================
 
-/** Placeholder — implemented in Task 6 (Phase 8.4) */
+/** Toggle negotiation mode on/off with timer, auto-scan, and compact card view. */
 function toggleNegotiationMode(): void {
-  /* Phase 8.4 - implemented in Task 6 */
+  negotiationMode = !negotiationMode;
+  const panel = document.getElementById('negotiationPanel');
+
+  if (negotiationMode) {
+    document.body.classList.add('negotiation-mode');
+    if (panel) panel.style.display = 'block';
+
+    negotiationSession = loadNegotiationSession() || {
+      started_at: Date.now(), notes: '', decisions: [], document_name: currentAIAnalysis?.filename || 'Unknown',
+    };
+
+    startNegotiationTimer();
+
+    const notesEl = document.getElementById('negotiationNotes') as HTMLTextAreaElement;
+    if (notesEl && negotiationSession.notes) notesEl.value = negotiationSession.notes;
+    notesEl?.addEventListener('input', () => {
+      if (negotiationSession) { negotiationSession.notes = notesEl.value; saveNegotiationSession(); }
+    });
+
+    registerSelectionHandler();
+    renderRedlineList();
+  } else {
+    document.body.classList.remove('negotiation-mode');
+    if (panel) panel.style.display = 'none';
+    if (negotiationTimer) { clearInterval(negotiationTimer); negotiationTimer = null; }
+    unregisterSelectionHandler();
+    saveNegotiationSession();
+    renderRedlineList();
+  }
 }
+
+function startNegotiationTimer(): void {
+  const timerEl = document.getElementById('negotiationTimer');
+  if (!timerEl || !negotiationSession) return;
+  negotiationTimer = setInterval(() => {
+    const elapsed = Math.floor((Date.now() - negotiationSession!.started_at) / 1000);
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    timerEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }, 1000);
+}
+
+function registerSelectionHandler(): void {
+  try {
+    Office.context.document.addHandlerAsync(Office.EventType.DocumentSelectionChanged, onSelectionChanged);
+  } catch (e) { log.warn('Could not register selection handler:', e); }
+}
+
+function unregisterSelectionHandler(): void {
+  try {
+    Office.context.document.removeHandlerAsync(Office.EventType.DocumentSelectionChanged, { handler: onSelectionChanged });
+  } catch (e) { log.warn('Could not unregister selection handler:', e); }
+}
+
+function onSelectionChanged(): void {
+  if (!negotiationMode) return;
+  if (selectionDebounceTimer) clearTimeout(selectionDebounceTimer);
+  selectionDebounceTimer = setTimeout(async () => {
+    const selectedText = await Word.run(async (context) => {
+      const sel = context.document.getSelection();
+      sel.load('text');
+      await context.sync();
+      return sel.text;
+    });
+    if (selectedText && selectedText.trim().length >= 20) {
+      const indicator = document.getElementById('autoScanIndicator');
+      if (indicator) indicator.textContent = 'Scanning selection...';
+      await scanSelection();
+      if (indicator) indicator.innerHTML = '<span class="auto-scan-dot"></span> Auto-scanning selections';
+    }
+  }, 1500);
+}
+
+function saveNegotiationSession(): void {
+  if (negotiationSession) localStorage.setItem('contrared_negotiation_session', JSON.stringify(negotiationSession));
+}
+
+function loadNegotiationSession(): NegotiationSession | null {
+  try {
+    const stored = localStorage.getItem('contrared_negotiation_session');
+    if (stored) return JSON.parse(stored);
+  } catch { /* ignore */ }
+  return null;
+}
+
+function recordNegotiationDecision(riskId: string, decision: 'accept' | 'counter' | 'escalate', counterText?: string): void {
+  if (!negotiationSession) return;
+  const entry: NegotiationDecision = { risk_id: riskId, decision, counter_text: counterText, timestamp: Date.now() };
+  const existing = negotiationSession.decisions.findIndex(d => d.risk_id === riskId);
+  if (existing >= 0) negotiationSession.decisions[existing] = entry;
+  else negotiationSession.decisions.push(entry);
+  saveNegotiationSession();
+}
+
+// ============================================================================
+// Keyboard Shortcuts (Phase 8)
+// ============================================================================
 
 /** Navigate to a risk card by index, wrapping around at boundaries. */
 function focusRiskCard(index: number): void {
@@ -1533,6 +1631,37 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
   // Re-scan button handler
   const reScanBtn = card.querySelector('.rescan-btn');
   reScanBtn?.addEventListener('click', () => reScanClause(redline.id, redline.original_text));
+
+  // Negotiation mode: add accept/counter/escalate buttons and compact card behavior
+  if (negotiationMode) {
+    const negActions = document.createElement('div');
+    negActions.className = 'negotiation-actions';
+    negActions.innerHTML = `
+      <button class="neg-btn accept" data-decision="accept">Accept</button>
+      <button class="neg-btn counter" data-decision="counter">Counter</button>
+      <button class="neg-btn escalate" data-decision="escalate">Escalate</button>
+    `;
+    card.appendChild(negActions);
+
+    const existingDecision = negotiationSession?.decisions.find(d => d.risk_id === redline.id);
+    if (existingDecision) {
+      const activeBtn = negActions.querySelector(`[data-decision="${existingDecision.decision}"]`);
+      if (activeBtn) activeBtn.classList.add('active');
+    }
+
+    negActions.querySelectorAll('.neg-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const decision = (btn as HTMLElement).dataset.decision as 'accept' | 'counter' | 'escalate';
+        negActions.querySelectorAll('.neg-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        recordNegotiationDecision(redline.id, decision);
+      });
+    });
+
+    // Make card expandable in negotiation mode
+    const header = card.querySelector('.risk-card-header');
+    header?.addEventListener('click', () => card.classList.toggle('expanded'));
+  }
 
   return card;
 }
