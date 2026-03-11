@@ -17,6 +17,7 @@ const ClauseLibrary = React.lazy(() => import('@/pages/ClauseLibrary'));
 const Templates = React.lazy(() => import('@/pages/Templates'));
 const Analytics = React.lazy(() => import('@/pages/Analytics'));
 const Compare = React.lazy(() => import('@/pages/Compare'));
+const BatchUpload = React.lazy(() => import('@/pages/BatchUpload'));
 
 
 const queryClient = new QueryClient({
@@ -64,6 +65,7 @@ export default function App() {
             <Route path="/clause-library" element={<ProtectedRoute><ClauseLibrary /></ProtectedRoute>} />
             <Route path="/templates" element={<ProtectedRoute><Templates /></ProtectedRoute>} />
             <Route path="/compare" element={<ProtectedRoute><Compare /></ProtectedRoute>} />
+            <Route path="/batch-upload" element={<ProtectedRoute><BatchUpload /></ProtectedRoute>} />
             <Route path="/audit-logs" element={<ProtectedRoute><AuditLogs /></ProtectedRoute>} />
 
             {/* Admin-only routes */}

@@ -570,3 +570,44 @@ export function getAnalyticsExportUrl(days?: number): string {
     const qs = days ? `?days=${days}` : '';
     return `${API_BASE_URL}/analytics/export${qs}`;
 }
+
+// ============================================================================
+// Batch Processing (Phase 8)
+// ============================================================================
+
+export interface BatchFileStatus {
+    filename: string;
+    status: 'queued' | 'processing' | 'completed' | 'error';
+    document_id?: string;
+    risk_summary?: { red: number; yellow: number; total: number };
+    error?: string;
+}
+
+export interface BatchStatusResponse {
+    batch_id: string;
+    files: BatchFileStatus[];
+    overall_progress: number;
+    status: 'processing' | 'completed' | 'partial_failure';
+}
+
+export async function batchAnalyze(files: File[], playbookId?: string): Promise<{ batch_id: string; file_count: number }> {
+    const formData = new FormData();
+    files.forEach(f => formData.append('files', f));
+    if (playbookId) formData.append('playbook_id', playbookId);
+
+    const tokens = getStoredTokens();
+    const res = await fetch(`${API_BASE_URL}/documents/batch-analyze`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${tokens?.access_token}` },
+        body: formData,
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ detail: 'Upload failed' }));
+        throw new Error(typeof err.detail === 'string' ? err.detail : `HTTP ${res.status}`);
+    }
+    return res.json();
+}
+
+export async function getBatchStatus(batchId: string): Promise<BatchStatusResponse> {
+    return request(`/documents/batch/${batchId}/status`);
+}
