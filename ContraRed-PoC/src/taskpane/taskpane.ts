@@ -831,6 +831,62 @@ async function scanSelection(): Promise<void> {
 }
 
 // ============================================================================
+// Quick Re-Scan (Phase 8.3)
+// ============================================================================
+
+/**
+ * Re-scan a specific clause after a fix has been applied to verify it resolved the risk.
+ * Updates the card in-place with new results or marks it as resolved.
+ */
+async function reScanClause(riskId: string, originalText: string): Promise<void> {
+  const card = document.getElementById(`risk-${riskId}`);
+  if (!card) return;
+
+  const reScanBtn = card.querySelector('.rescan-btn') as HTMLButtonElement | null;
+  if (reScanBtn) { reScanBtn.disabled = true; reScanBtn.textContent = 'Re-scanning...'; }
+
+  try {
+    const surroundingText = await getSurroundingContext(originalText);
+    const textToScan = surroundingText || originalText;
+    if (textToScan.length < 20) { showToastOnCard(card, 'Not enough text to re-scan.'); return; }
+
+    const selectedPlaybookId = (document.getElementById('playbookSelect') as HTMLSelectElement)?.value || undefined;
+    const result = await api.analyzeClause(textToScan, selectedPlaybookId);
+
+    if (result.risks.length === 0) {
+      card.classList.add('fixed');
+      card.dataset.risk = 'green';
+      fixedRisks.add(riskId);
+      showToastOnCard(card, 'Risk resolved! Clause is now clean.');
+      // Update counts
+      if (currentAIAnalysis) {
+        currentAIAnalysis.risk_summary = {
+          red: currentAIAnalysis.redlines.filter(r => r.risk_level === 'RED' && !fixedRisks.has(r.id)).length,
+          yellow: currentAIAnalysis.redlines.filter(r => r.risk_level === 'YELLOW' && !fixedRisks.has(r.id)).length,
+        };
+        const rc = document.getElementById('redCount');
+        const yc = document.getElementById('yellowCount');
+        if (rc) rc.textContent = String(currentAIAnalysis.risk_summary.red);
+        if (yc) yc.textContent = String(currentAIAnalysis.risk_summary.yellow);
+      }
+    } else {
+      const newRisk = result.risks[0];
+      const riskTitle = card.querySelector('.risk-title');
+      const riskExpl = card.querySelector('.risk-explanation');
+      if (riskTitle) riskTitle.textContent = newRisk.rule_name;
+      if (riskExpl) riskExpl.textContent = newRisk.explanation;
+      card.dataset.risk = newRisk.risk_level.toLowerCase();
+      showToastOnCard(card, `Re-scanned: ${newRisk.risk_level} risk still present.`);
+    }
+  } catch (error) {
+    log.error('Re-scan failed:', error);
+    showToastOnCard(card, 'Re-scan failed. Try again.');
+  } finally {
+    if (reScanBtn) { reScanBtn.disabled = false; reScanBtn.textContent = 'Re-Scan'; }
+  }
+}
+
+// ============================================================================
 // Keyboard Shortcuts (Phase 8)
 // ============================================================================
 
@@ -1217,6 +1273,7 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
         </svg>
         Research
       </button>
+      <button class="btn btn-secondary btn-sm rescan-btn" style="display:none;">Re-Scan</button>
     </div>
     <div class="generate-panel" style="display:none;"></div>
     <div class="research-panel" style="display:none;"></div>
@@ -1473,6 +1530,10 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
     }
   });
 
+  // Re-scan button handler
+  const reScanBtn = card.querySelector('.rescan-btn');
+  reScanBtn?.addEventListener('click', () => reScanClause(redline.id, redline.original_text));
+
   return card;
 }
 
@@ -1613,6 +1674,10 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, 
       fixedRisks.add(redline.id);
       cardElement.classList.add('fixed');
       cardElement.dataset.appliedFix = textToApply;
+
+      // Show re-scan button so user can verify the fix
+      const reScanBtn = cardElement.querySelector('.rescan-btn') as HTMLElement;
+      if (reScanBtn) reScanBtn.style.display = 'inline-flex';
     });
   } catch (error) {
     showToastOnCard(cardElement, 'Fix failed: ' + (error instanceof Error ? error.message : String(error) || 'Unknown error'));
