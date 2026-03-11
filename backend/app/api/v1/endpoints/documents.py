@@ -15,6 +15,7 @@ import io
 import json
 import logging
 import re
+import time
 from datetime import datetime, timezone
 import httpx
 import zipfile
@@ -28,7 +29,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
 from app.models.user import User
-from app.models.document import Document, DocumentRisk, DocumentStatus
+from app.models.document import Document, DocumentRisk, DocumentVersion, DocumentComparison, DocumentStatus
 from app.models.document import RiskLevel as DBRiskLevel
 from app.models.audit_log import log_audit_event
 from app.models.playbook import Playbook
@@ -38,6 +39,7 @@ from app.services.rule_engine import RuleEngine, RuleMatch
 from app.services.ai_service import AIService
 from app.services.cache_service import get_cache
 from app.services.gemini_analyzer import gemini_analyzer, AIServiceError, AIServiceUnavailable, AIRateLimited, AIServiceTimeout, _sanitize_for_prompt
+from app.services.analysis_pipeline import analysis_pipeline, PipelineResult
 from app.services.structure_extractor import StructureExtractor, ContractMap
 from app.core.config import settings
 
@@ -144,6 +146,12 @@ class AIRedlineItem(BaseModel):
     explanation: str
     recommendation: str  # Lawyer-readable guidance (not exact replacement text)
     redline_type: Literal["violation", "missing"] = "violation"
+    # Phase 4: confidence and verification fields
+    confidence: Optional[float] = None  # Weighted score 0-1
+    confidence_level: Optional[str] = None  # HIGH/MEDIUM/LOW
+    verification_status: Optional[str] = None  # exact/normalized/fuzzy_corrected
+    is_deal_breaker: bool = False
+    cross_references: Optional[List[str]] = None
 
 
 class AIAnalysisResponse(BaseModel):
@@ -155,6 +163,26 @@ class AIAnalysisResponse(BaseModel):
     total_risks: int
     risk_summary: dict  # {red: int, yellow: int}
     tokens_used: int = 0
+    # Phase 4: pipeline metadata
+    jurisdiction: Optional[str] = None  # Detected jurisdiction code
+    jurisdiction_name: Optional[str] = None  # Human-readable jurisdiction name
+    hallucination_stats: Optional[dict] = None
+    pipeline_partial: bool = False  # True if pipeline degraded gracefully
+
+
+class ClauseAnalyzeRequest(BaseModel):
+    """Request to analyze a single clause/selection."""
+    clause_text: str = Field(..., min_length=20, max_length=10000)
+    playbook_id: Optional[str] = None
+    jurisdiction: Optional[str] = None
+    document_id: Optional[str] = None
+
+
+class ClauseAnalyzeResponse(BaseModel):
+    """Response from single-clause analysis."""
+    risks: List[AIRedlineItem]
+    tokens_used: int = 0
+    analysis_time_ms: int = 0
 
 
 class ExportReportRequest(BaseModel):
@@ -176,6 +204,8 @@ class DocumentListItem(BaseModel):
     total_risks: int
     risk_summary: Optional[Dict] = None
     created_at: str
+    version_number: int = 1
+    content_hash: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -207,6 +237,8 @@ async def list_documents(
             total_risks=d.total_risks or 0,
             risk_summary=d.risk_summary,
             created_at=d.created_at.isoformat() if d.created_at else "",
+            version_number=d.version_number or 1,
+            content_hash=d.content_hash,
         )
         for d in docs
     ]
@@ -274,11 +306,14 @@ async def analyze_document(
     else:
         rule_engine = RuleEngine()  # Use default rules
     
-    # Create document record
+    # Create document record (with org + version tracking)
+    content_hash = Document.compute_content_hash(request.text)
     document = Document(
         user_id=current_user.id,
+        organization_id=current_user.organization_id,
         filename=request.filename,
         status=DocumentStatus.PROCESSING,
+        content_hash=content_hash,
     )
     db.add(document)
     await db.flush()
@@ -292,12 +327,15 @@ async def analyze_document(
 
         if matches:
             # Create async tasks for all matches
+            # Tenant-scoped cache key prefix
+            _org_id = str(current_user.organization_id) if current_user.organization_id else None
+
             async def enrich_with_cache(match: RuleMatch) -> RuleMatch:
-                """Enrich a match, checking cache first."""
+                """Enrich a match, checking cache first (tenant-scoped)."""
                 # Check cache
                 cache_key = match.cache_key()
                 if cache.is_connected:
-                    cached = await cache.get(cache_key)
+                    cached = await cache.get(cache_key, org_id=_org_id)
                     if cached:
                         match.ai_explanation = cached.get("explanation")
                         match.suggested_fix = cached.get("suggested_fix")
@@ -310,12 +348,12 @@ async def analyze_document(
                 match.ai_explanation = explanation
                 match.suggested_fix = suggested_fix
 
-                # Store in cache
+                # Store in cache (tenant-scoped)
                 if cache.is_connected and (explanation or suggested_fix):
                     await cache.set(cache_key, {
                         "explanation": explanation,
                         "suggested_fix": suggested_fix,
-                    }, ttl=3600)
+                    }, ttl=3600, org_id=_org_id)
 
                 return match
 
@@ -438,6 +476,146 @@ async def analyze_document(
 
 
 # ============================================================================
+# Async Analysis Endpoint (Phase 2.3) — returns 202 + job_id
+# ============================================================================
+
+class AsyncAnalyzeResponse(BaseModel):
+    """Response from async analysis submission."""
+    job_id: str
+    document_id: str
+    status: str = "queued"
+    poll_url: str
+
+
+class JobStatusResponse(BaseModel):
+    """Job status polling response."""
+    job_id: str
+    status: str
+    document_id: Optional[str] = None
+    created_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    error: Optional[str] = None
+
+
+@router.post("/analyze-async", response_model=AsyncAnalyzeResponse, status_code=202)
+@limiter.limit("20/minute")
+async def analyze_async(
+    request: AIAnalyzeRequest,
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _quota=Depends(check_and_increment_quota),
+):
+    """
+    Submit contract for async analysis. Returns 202 + job_id immediately.
+    Poll GET /documents/jobs/{job_id} for results.
+    """
+    from app.workers.tasks import task_queue, AnalysisJob, JobStatus
+
+    content_hash = Document.compute_content_hash(request.text)
+
+    # Create document record
+    playbook_uuid = None
+    if request.playbook_id:
+        try:
+            playbook_uuid = UUID(request.playbook_id)
+        except ValueError:
+            pass
+
+    doc = Document(
+        user_id=current_user.id,
+        organization_id=current_user.organization_id,
+        playbook_id=playbook_uuid,
+        filename=request.filename or "untitled.docx",
+        status=DocumentStatus.PROCESSING,
+        content_hash=content_hash,
+    )
+    db.add(doc)
+    await db.flush()
+    doc_id = str(doc.id)
+
+    # Load playbook rules
+    playbook_rules = []
+    playbook_name = "Default"
+    if request.playbook_id:
+        try:
+            result = await db.execute(
+                select(Playbook)
+                .options(selectinload(Playbook.rules_list))
+                .where(Playbook.id == playbook_uuid)
+            )
+            playbook = result.scalar_one_or_none()
+            if playbook:
+                playbook_name = playbook.name
+                playbook_rules = [
+                    {
+                        "name": rule.clause_type,
+                        "risk_level": rule.risk_level.value.upper() if hasattr(rule.risk_level, 'value') else str(rule.risk_level).upper(),
+                        "primary_position": rule.primary_position or "",
+                        "fallback_position": rule.fallback_position or "",
+                        "is_deal_breaker": rule.is_deal_breaker,
+                        "verification_prompt": rule.verification_prompt or "",
+                    }
+                    for rule in playbook.rules_list
+                ]
+        except Exception as e:
+            logger.error("Error loading playbook for async: %s", e)
+
+    await db.commit()
+
+    # Create job
+    job = AnalysisJob(
+        job_id=str(uuid4()),
+        document_id=doc_id,
+        user_id=str(current_user.id),
+        organization_id=str(current_user.organization_id) if current_user.organization_id else None,
+        contract_text=request.text,
+        playbook_id=request.playbook_id,
+        playbook_name=playbook_name,
+        playbook_rules=playbook_rules,
+    )
+
+    await task_queue.enqueue(job)
+
+    # If no Redis, run inline in background
+    if not task_queue.is_redis_available:
+        asyncio.create_task(task_queue.run_analysis_inline(job))
+
+    return AsyncAnalyzeResponse(
+        job_id=job.job_id,
+        document_id=doc_id,
+        status="queued",
+        poll_url=f"/api/v1/documents/jobs/{job.job_id}",
+    )
+
+
+@router.get("/jobs/{job_id}", response_model=JobStatusResponse)
+async def get_job_status(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Poll job status. Returns current status of an async analysis job."""
+    from app.workers.tasks import task_queue
+
+    status_data = await task_queue.get_job_status(job_id)
+    if not status_data:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    # Verify ownership
+    if status_data.get("user_id") != str(current_user.id):
+        raise HTTPException(status_code=403, detail="Access denied")
+
+    return JobStatusResponse(
+        job_id=job_id,
+        status=status_data.get("status", "unknown"),
+        document_id=status_data.get("document_id"),
+        created_at=status_data.get("created_at"),
+        completed_at=status_data.get("completed_at"),
+        error=status_data.get("error"),
+    )
+
+
+# ============================================================================
 # AI-First Analysis Endpoint - Full Gemini Analysis
 # ============================================================================
 
@@ -496,13 +674,15 @@ async def analyze_full_ai(
         # Sanitize playbook name before passing to AI
         playbook_name = _sanitize_for_prompt(playbook_name, max_length=200)
 
-        # Call Gemini analyzer with full contract + playbook (with timeout)
+        # Phase 4: Use the 5-stage analysis pipeline instead of direct Gemini call
+        # Pipeline includes: extraction -> classification -> risk assessment ->
+        # hallucination verification -> confidence scoring + enrichment
         try:
-            result = await asyncio.wait_for(
-                gemini_analyzer.analyze_full_contract(
+            pipeline_result: PipelineResult = await asyncio.wait_for(
+                analysis_pipeline.run(
                     contract_text=request.text,
                     playbook_rules=playbook_rules,
-                    playbook_name=playbook_name
+                    playbook_name=playbook_name,
                 ),
                 timeout=120.0,
             )
@@ -513,8 +693,8 @@ async def analyze_full_ai(
             )
 
         risk_summary = {
-            "red": sum(1 for r in result.redlines if r.risk_level == "RED"),
-            "yellow": sum(1 for r in result.redlines if r.risk_level == "YELLOW"),
+            "red": sum(1 for r in pipeline_result.redlines if r.risk_level == "RED"),
+            "yellow": sum(1 for r in pipeline_result.redlines if r.risk_level == "YELLOW"),
         }
 
         # Persist document metadata (ZDR-safe: no contract text stored)
@@ -525,13 +705,16 @@ async def analyze_full_ai(
             except ValueError:
                 pass
 
+        content_hash = Document.compute_content_hash(request.text)
         doc = Document(
             user_id=current_user.id,
+            organization_id=current_user.organization_id,
             playbook_id=playbook_uuid,
             filename=request.filename or "untitled.docx",
             status=DocumentStatus.COMPLETED,
-            total_risks=len(result.redlines),
+            total_risks=len(pipeline_result.redlines),
             risk_summary=risk_summary,
+            content_hash=content_hash,
             processed_at=datetime.now(timezone.utc),
         )
         db.add(doc)
@@ -544,39 +727,56 @@ async def analyze_full_ai(
             resource_type="contract",
             resource_name=request.filename or "untitled.docx",
             ip_address=client_ip,
-            risk_count=len(result.redlines),
+            risk_count=len(pipeline_result.redlines),
             details=json.dumps({
                 "playbook": playbook_name,
-                "redlines_count": len(result.redlines),
-                "tokens_used": result.tokens_used,
+                "redlines_count": len(pipeline_result.redlines),
+                "tokens_used": pipeline_result.total_tokens_used,
+                "pipeline_partial": pipeline_result.partial,
+                "stages": len(pipeline_result.stage_metrics),
             }),
         )
         await db.commit()
         await db.refresh(doc)
         doc_id = str(doc.id)
 
-        # Build response
+        # Build response — map FinalRedline to AIRedlineItem
         redline_items = [
             AIRedlineItem(
                 id=str(uuid4()),
                 risk_level=r.risk_level,
                 rule_name=r.rule_name,
-                original_text=r.original_text,
+                original_text=r.verified_text or r.original_text,
                 explanation=r.explanation,
                 recommendation=r.recommendation,
-                redline_type=getattr(r, 'redline_type', 'violation'),
+                redline_type=r.redline_type,
+                confidence=round(r.confidence.score, 3),
+                confidence_level=r.confidence.level.value,
+                verification_status=r.verification_status,
+                is_deal_breaker=r.is_deal_breaker,
+                cross_references=r.cross_references or None,
             )
-            for r in result.redlines
+            for r in pipeline_result.redlines
         ]
+
+        # Get jurisdiction info from the pipeline's stage 3 (which calls gemini_analyzer)
+        jurisdiction_code = None
+        jurisdiction_name = None
+        # Extract from the analyzer's last result metadata if available
+        if hasattr(gemini_analyzer, '_last_jurisdiction_code'):
+            jurisdiction_code = gemini_analyzer._last_jurisdiction_code
+            jurisdiction_name = gemini_analyzer._last_jurisdiction_name
 
         return AIAnalysisResponse(
             document_id=doc_id,
             filename=request.filename or "untitled.docx",
-            executive_summary=result.executive_summary,
+            executive_summary=pipeline_result.executive_summary,
             redlines=redline_items,
             total_risks=len(redline_items),
             risk_summary=risk_summary,
-            tokens_used=result.tokens_used,
+            tokens_used=pipeline_result.total_tokens_used,
+            hallucination_stats=pipeline_result.hallucination_stats or None,
+            pipeline_partial=pipeline_result.partial,
         )
         
     except HTTPException:
@@ -607,6 +807,139 @@ async def analyze_full_ai(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"message": "AI analysis failed. Please try again.", "error_code": "unknown_error"}
+        )
+
+
+# ============================================================================
+# Analyze Single Clause Endpoint (Phase 8)
+# ============================================================================
+
+@router.post("/analyze-clause", response_model=ClauseAnalyzeResponse)
+@limiter.limit("30/minute")
+async def analyze_clause(
+    request: ClauseAnalyzeRequest,
+    http_request: Request,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+    _quota=Depends(check_and_increment_quota),
+):
+    """
+    Analyze a single clause/text selection for risks.
+
+    Lightweight alternative to /analyze-full — designed for inline
+    selection scanning from the Word Add-in.
+    """
+    start_time = time.perf_counter()
+    client_ip = http_request.client.host if http_request.client else None
+
+    # Load playbook rules if specified
+    playbook_rules = []
+    playbook_name = "Default"
+
+    if request.playbook_id:
+        try:
+            playbook_uuid = UUID(request.playbook_id)
+            result = await db.execute(
+                select(Playbook)
+                .options(selectinload(Playbook.rules_list))
+                .where(Playbook.id == playbook_uuid)
+            )
+            playbook = result.scalar_one_or_none()
+
+            if playbook:
+                playbook_name = playbook.name
+                playbook_rules = [
+                    {
+                        "name": rule.clause_type,
+                        "risk_level": rule.risk_level.value.upper() if hasattr(rule.risk_level, 'value') else str(rule.risk_level).upper(),
+                        "primary_position": rule.primary_position or "",
+                        "fallback_position": rule.fallback_position or "",
+                        "is_deal_breaker": rule.is_deal_breaker,
+                        "verification_prompt": rule.verification_prompt or "",
+                    }
+                    for rule in playbook.rules_list
+                ]
+        except Exception as e:
+            logger.error("Error loading playbook for clause analysis: %s", e)
+
+    try:
+        ai_result = await asyncio.wait_for(
+            gemini_analyzer.analyze_clause(
+                clause_text=request.clause_text,
+                playbook_rules=playbook_rules,
+                playbook_name=playbook_name,
+                jurisdiction=request.jurisdiction,
+            ),
+            timeout=30.0,
+        )
+
+        redline_items = [
+            AIRedlineItem(
+                id=item.get("id", str(uuid4())),
+                risk_level=item.get("risk_level", "YELLOW"),
+                rule_name=item.get("rule_name", "Unknown Rule"),
+                original_text=item.get("original_text", ""),
+                explanation=item.get("explanation", ""),
+                recommendation=item.get("recommendation", ""),
+                redline_type=item.get("redline_type", "violation"),
+            )
+            for item in ai_result.get("redlines", [])
+        ]
+
+        elapsed_ms = int((time.perf_counter() - start_time) * 1000)
+
+        # Log audit event
+        await log_audit_event(
+            db=db,
+            user=current_user,
+            action="clause_analyzed",
+            resource_type="clause",
+            resource_name=request.document_id or "inline-selection",
+            ip_address=client_ip,
+            risk_count=len(redline_items),
+            details=json.dumps({
+                "playbook": playbook_name,
+                "risks_found": len(redline_items),
+                "tokens_used": ai_result.get("tokens_used", 0),
+                "analysis_time_ms": elapsed_ms,
+            }),
+        )
+        await db.commit()
+
+        return ClauseAnalyzeResponse(
+            risks=redline_items,
+            tokens_used=ai_result.get("tokens_used", 0),
+            analysis_time_ms=elapsed_ms,
+        )
+
+    except asyncio.TimeoutError:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail={"message": "Clause analysis timed out. Please try again.", "error_code": "ai_timeout"},
+        )
+    except AIServiceUnavailable as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"message": e.message, "error_code": e.error_code},
+        )
+    except AIRateLimited as e:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"message": e.message, "error_code": e.error_code},
+        )
+    except AIServiceError as e:
+        logger.error("Clause analysis failed: %s", e.message)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"message": e.message, "error_code": e.error_code},
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Clause analysis failed", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"message": "Clause analysis failed. Please try again.", "error_code": "unknown_error"},
         )
 
 
@@ -1038,7 +1371,7 @@ async def compare_contracts(
 @router.post("/analyze-file", response_model=AnalysisResult)
 @limiter.limit("20/minute")
 async def analyze_file(
-    http_request: Request,
+    request: Request,
     file: UploadFile = File(...),
     playbook_id: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
@@ -1067,9 +1400,9 @@ async def analyze_file(
         )
     
     # Get client info for audit
-    client_ip = http_request.client.host if http_request.client else None
-    user_agent = http_request.headers.get("user-agent")
-    
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
+
     # Read file content
     file_bytes = await file.read()
 
@@ -1151,10 +1484,12 @@ async def analyze_file(
         token_counts_file = []
 
         if matches:
+            _org_id_file = str(current_user.organization_id) if current_user.organization_id else None
+
             async def enrich_with_cache(match: RuleMatch) -> RuleMatch:
                 cache_key = match.cache_key()
                 if cache.is_connected:
-                    cached = await cache.get(cache_key)
+                    cached = await cache.get(cache_key, org_id=_org_id_file)
                     if cached:
                         match.ai_explanation = cached.get("explanation")
                         match.suggested_fix = cached.get("suggested_fix")
@@ -1170,7 +1505,7 @@ async def analyze_file(
                     await cache.set(cache_key, {
                         "explanation": explanation,
                         "suggested_fix": suggested_fix,
-                    }, ttl=3600)
+                    }, ttl=3600, org_id=_org_id_file)
 
                 return match
 
@@ -1672,4 +2007,232 @@ async def get_document(
             )
             for risk in risks
         ]
+    )
+
+
+# ============================================================================
+# Document Versioning Endpoints (Phase 2.1)
+# ============================================================================
+
+class DocumentVersionResponse(BaseModel):
+    id: str
+    version_number: int
+    content_hash: str
+    risk_summary: Optional[Dict] = None
+    total_risks: int = 0
+    metadata: Optional[Dict] = None
+    created_at: str
+
+
+class CreateVersionRequest(BaseModel):
+    content_hash: Optional[str] = None
+    metadata: Optional[Dict] = None
+
+
+@router.post("/{document_id}/versions", response_model=DocumentVersionResponse, status_code=status.HTTP_201_CREATED)
+async def create_document_version(
+    document_id: UUID,
+    version_data: Optional[CreateVersionRequest] = None,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create an explicit version snapshot of a document's current state."""
+    # Verify document access
+    doc_result = await db.execute(
+        select(Document)
+        .where(Document.id == document_id)
+        .where(
+            (Document.user_id == current_user.id)
+            | (Document.organization_id == current_user.organization_id)
+        )
+    )
+    document = doc_result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    root_id = document.root_document_id or document.id
+
+    # Determine next version number
+    from sqlalchemy import func
+    max_result = await db.execute(
+        select(func.coalesce(func.max(DocumentVersion.version_number), 0))
+        .where(DocumentVersion.document_id == root_id)
+    )
+    next_version = max_result.scalar() + 1
+
+    # Build content hash from document's current state
+    content_hash = (
+        (version_data.content_hash if version_data else None)
+        or document.content_hash
+        or ""
+    )
+
+    version = DocumentVersion(
+        document_id=root_id,
+        version_number=next_version,
+        content_hash=content_hash,
+        risk_summary=document.risk_summary,
+        total_risks=document.total_risks,
+        version_metadata=(version_data.metadata if version_data else None),
+        created_by=current_user.id,
+    )
+
+    db.add(version)
+
+    # Update document's version_number
+    document.version_number = next_version
+
+    await log_audit_event(
+        db, user=current_user, action="document_version_created",
+        resource_type="document",
+        resource_name=document.filename,
+        details=json.dumps({"version": next_version, "document_id": str(document_id)}),
+    )
+    await db.commit()
+    await db.refresh(version)
+
+    return DocumentVersionResponse(
+        id=str(version.id),
+        version_number=version.version_number,
+        content_hash=version.content_hash,
+        risk_summary=version.risk_summary,
+        total_risks=version.total_risks,
+        metadata=version.version_metadata,
+        created_at=version.created_at.isoformat() if version.created_at else "",
+    )
+
+
+@router.get("/{document_id}/versions", response_model=List[DocumentVersionResponse])
+async def list_document_versions(
+    document_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all versions of a document."""
+    from app.models.document import DocumentVersion
+
+    # Verify document access
+    doc_result = await db.execute(
+        select(Document)
+        .where(Document.id == document_id)
+        .where(
+            (Document.user_id == current_user.id)
+            | (Document.organization_id == current_user.organization_id)
+        )
+    )
+    document = doc_result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Get all versions (for the root document chain)
+    root_id = document.root_document_id or document.id
+    result = await db.execute(
+        select(DocumentVersion)
+        .where(DocumentVersion.document_id == root_id)
+        .order_by(DocumentVersion.version_number.asc())
+    )
+    versions = result.scalars().all()
+
+    return [
+        DocumentVersionResponse(
+            id=str(v.id),
+            version_number=v.version_number,
+            content_hash=v.content_hash,
+            risk_summary=v.risk_summary,
+            total_risks=v.total_risks,
+            metadata=v.metadata,
+            created_at=v.created_at.isoformat() if v.created_at else "",
+        )
+        for v in versions
+    ]
+
+
+class DiffResponse(BaseModel):
+    document_id: str
+    version_a: int
+    version_b: int
+    diff_data: Optional[Dict] = None
+
+
+@router.get("/{document_id}/diff", response_model=DiffResponse)
+async def get_version_diff(
+    document_id: UUID,
+    a: int,
+    b: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get diff between two document versions."""
+    from app.models.document import DocumentVersion, DocumentComparison
+
+    # Verify access
+    doc_result = await db.execute(
+        select(Document)
+        .where(Document.id == document_id)
+        .where(
+            (Document.user_id == current_user.id)
+            | (Document.organization_id == current_user.organization_id)
+        )
+    )
+    if not doc_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Check cache
+    root_id = document_id
+    cached = await db.execute(
+        select(DocumentComparison)
+        .where(DocumentComparison.document_id == root_id)
+        .where(DocumentComparison.version_a == a)
+        .where(DocumentComparison.version_b == b)
+    )
+    comparison = cached.scalar_one_or_none()
+    if comparison:
+        return DiffResponse(
+            document_id=str(document_id),
+            version_a=a,
+            version_b=b,
+            diff_data=comparison.diff_data,
+        )
+
+    # Load both versions' risk summaries for structural diff
+    va_result = await db.execute(
+        select(DocumentVersion)
+        .where(DocumentVersion.document_id == root_id)
+        .where(DocumentVersion.version_number == a)
+    )
+    vb_result = await db.execute(
+        select(DocumentVersion)
+        .where(DocumentVersion.document_id == root_id)
+        .where(DocumentVersion.version_number == b)
+    )
+    va = va_result.scalar_one_or_none()
+    vb = vb_result.scalar_one_or_none()
+
+    if not va or not vb:
+        raise HTTPException(status_code=404, detail="Version not found")
+
+    diff_data = {
+        "version_a_risks": va.total_risks,
+        "version_b_risks": vb.total_risks,
+        "risk_delta": vb.total_risks - va.total_risks,
+        "hash_changed": va.content_hash != vb.content_hash,
+        "risk_summary_a": va.risk_summary,
+        "risk_summary_b": vb.risk_summary,
+    }
+
+    # Cache the comparison
+    comp = DocumentComparison(
+        document_id=root_id,
+        version_a=a,
+        version_b=b,
+        diff_data=diff_data,
+    )
+    db.add(comp)
+    await db.commit()
+
+    return DiffResponse(
+        document_id=str(document_id),
+        version_a=a,
+        version_b=b,
+        diff_data=diff_data,
     )
