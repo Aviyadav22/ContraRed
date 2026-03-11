@@ -589,6 +589,12 @@
             box-shadow: var(--shadow-md);
         }
 
+        .risk-card.keyboard-focused {
+            outline: 2px solid var(--accent, #C0392B);
+            outline-offset: 2px;
+            box-shadow: 0 0 0 4px rgba(192, 57, 43, 0.15);
+        }
+
         .risk-card.fixed {
             opacity: 0.55;
             filter: grayscale(0.4);
@@ -1696,6 +1702,13 @@
                         <span id="scanBtnText">Scan Document</span>
                         <div id="scanSpinner" class="spinner" style="display: none;"></div>
                     </button>
+                    <button id="scanSelectionBtn" class="btn btn-secondary btn-full" style="margin-top: 6px;">
+                        <span id="scanSelectionBtnText">Scan Selection</span>
+                        <div id="scanSelectionSpinner" class="spinner" style="display:none;"></div>
+                    </button>
+                    <div class="shortcut-hint" style="font-size:11px; color:var(--text-muted, #A09B96); margin-top:4px; text-align:center;">
+                        Ctrl+Shift+S: Scan Selection &middot; Ctrl+Shift+D: Full Scan &middot; Alt+&uarr;/&darr;: Navigate
+                    </div>
                 </div>
 
                 <!-- Template Picker -->

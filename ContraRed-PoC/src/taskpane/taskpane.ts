@@ -5,7 +5,7 @@
  * Now with AI-First analysis using Gemini for holistic contract review.
  */
 
-import { api, AIRedlineItem, AIAnalysisResult, DocumentListItem } from './api';
+import { api, AIRedlineItem, AIAnalysisResult, ClauseAnalysisResult, NegotiationDecision, NegotiationSession, DocumentListItem } from './api';
 import Fuse from 'fuse.js';
 
 // ============================================================================
@@ -99,6 +99,18 @@ let activeFilter: 'ALL' | 'RED' | 'YELLOW' | 'UNFIXED' = 'ALL';
 let activeSort: 'risk_level' | 'rule_name' = 'risk_level';
 let searchQuery = '';
 
+// Selection scanning state
+let isSelectionScanning = false;
+
+// Keyboard navigation state
+let currentRiskIndex = -1;
+
+// Negotiation mode state
+let negotiationMode = false;
+let negotiationSession: NegotiationSession | null = null;
+let negotiationTimer: ReturnType<typeof setInterval> | null = null;
+let selectionDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
 // ============================================================================
 // DOM Elements
 // ============================================================================
@@ -161,6 +173,7 @@ Office.onReady((info) => {
     loginBtn()?.addEventListener('click', handleLogin);
     logoutBtn()?.addEventListener('click', handleLogout);
     scanBtn()?.addEventListener('click', scanDocument);
+    document.getElementById('scanSelectionBtn')?.addEventListener('click', scanSelection);
 
     // Template picker
     document.getElementById('templateBtn')?.addEventListener('click', toggleTemplatePicker);
@@ -209,6 +222,9 @@ Office.onReady((info) => {
 
     // Export report
     document.getElementById('exportReportBtn')?.addEventListener('click', exportReport);
+
+    // Keyboard shortcuts (Phase 8)
+    document.addEventListener('keydown', handleKeyboardShortcuts);
 
   } else {
     if (statusText()) statusText()!.textContent = 'Not running in Word';
@@ -690,6 +706,239 @@ async function scanDocument(): Promise<void> {
   } finally {
     isScanning = false;
     setScanLoading(false);
+  }
+}
+
+/**
+ * Scan only the currently selected text in Word for risks.
+ * Lighter-weight than full document scan — calls /documents/analyze-clause.
+ * Merges results into existing analysis if one exists, or creates a new one.
+ */
+async function scanSelection(): Promise<void> {
+  if (isSelectionScanning) return;  // Prevent double-click race condition
+  isSelectionScanning = true;
+
+  const btnText = document.getElementById('scanSelectionBtnText');
+  const spinner = document.getElementById('scanSelectionSpinner');
+  if (btnText) btnText.textContent = 'Scanning...';
+  if (spinner) spinner.style.display = 'inline-block';
+
+  try {
+    // Step 1: Get selected text from Word
+    const selectedText = await Word.run(async (context) => {
+      const sel = context.document.getSelection();
+      sel.load('text');
+      await context.sync();
+      return sel.text;
+    });
+
+    // Validate selection length
+    if (!selectedText || selectedText.trim().length < 20) {
+      displayScanError(new Error('Please select at least 20 characters of contract text to scan.'));
+      return;
+    }
+
+    if (selectedText.length > 10240) {
+      displayScanError(new Error('Selection too large (max ~10KB). Please select a smaller section of text.'));
+      return;
+    }
+
+    // Step 2: Call clause analysis API
+    const selectedPlaybookId = (document.getElementById('playbookSelect') as HTMLSelectElement)?.value || undefined;
+    log.info('Starting selection scan...', { length: selectedText.length });
+
+    const result: ClauseAnalysisResult = await api.analyzeClause(selectedText, selectedPlaybookId);
+
+    // Step 3: Handle results
+    if (!result.risks || result.risks.length === 0) {
+      // Show temporary "No Risks Found" card that auto-removes after 10s
+      const results = document.getElementById('resultsSection') as HTMLElement | null;
+      if (results) {
+        results.style.display = 'block';
+        const noRiskCard = document.createElement('div');
+        noRiskCard.className = 'risk-card';
+        noRiskCard.style.borderLeft = '3px solid var(--risk-low, #1A7A4A)';
+        noRiskCard.innerHTML = `
+          <div style="padding: 12px;">
+            <strong style="color: var(--risk-low, #1A7A4A);">No Risks Found</strong>
+            <p style="margin: 4px 0 0; color: var(--text-secondary); font-size: 12px;">
+              The selected text appears compliant. No issues detected.
+            </p>
+          </div>
+        `;
+        const riskList = document.getElementById('riskList');
+        if (riskList) {
+          riskList.prepend(noRiskCard);
+        } else {
+          results.appendChild(noRiskCard);
+        }
+        setTimeout(() => noRiskCard.remove(), 10000);
+      }
+      log.info('Selection scan complete: no risks found.');
+      return;
+    }
+
+    // Step 4: Merge or create analysis results
+    if (currentAIAnalysis) {
+      // Dedup: skip risks with same rule_name AND original_text prefix (first 50 chars)
+      const existingKeys = new Set(
+        currentAIAnalysis.redlines.map(r => `${r.rule_name}::${r.original_text.substring(0, 50)}`)
+      );
+      const newRisks = result.risks.filter(
+        r => !existingKeys.has(`${r.rule_name}::${r.original_text.substring(0, 50)}`)
+      );
+
+      if (newRisks.length > 0) {
+        currentAIAnalysis.redlines = [...currentAIAnalysis.redlines, ...newRisks];
+        currentAIAnalysis.total_risks = currentAIAnalysis.redlines.length;
+        currentAIAnalysis.risk_summary = {
+          red: currentAIAnalysis.redlines.filter(r => r.risk_level === 'RED').length,
+          yellow: currentAIAnalysis.redlines.filter(r => r.risk_level === 'YELLOW').length,
+        };
+        currentAIAnalysis.tokens_used += result.tokens_used;
+        displayAIResults(currentAIAnalysis);
+      }
+    } else {
+      // Create new AIAnalysisResult from clause results
+      currentAIAnalysis = {
+        document_id: 'selection-scan',
+        filename: 'Selection Scan',
+        executive_summary: ['Risks found in selected text.'],
+        redlines: result.risks,
+        total_risks: result.risks.length,
+        risk_summary: {
+          red: result.risks.filter(r => r.risk_level === 'RED').length,
+          yellow: result.risks.filter(r => r.risk_level === 'YELLOW').length,
+        },
+        tokens_used: result.tokens_used,
+      };
+      fixedRisks.clear();
+      displayAIResults(currentAIAnalysis);
+    }
+
+    // Step 5: Highlight new risks in document
+    await highlightAIRedlines(result.risks);
+    log.info('Selection scan complete:', { risks: result.risks.length, tokens: result.tokens_used, time_ms: result.analysis_time_ms });
+
+  } catch (error) {
+    log.error('Selection scan failed:', error);
+    displayScanError(error instanceof Error ? error : new Error(String(error)));
+  } finally {
+    isSelectionScanning = false;
+    if (btnText) btnText.textContent = 'Scan Selection';
+    if (spinner) spinner.style.display = 'none';
+  }
+}
+
+// ============================================================================
+// Keyboard Shortcuts (Phase 8)
+// ============================================================================
+
+/** Placeholder — implemented in Task 6 (Phase 8.4) */
+function toggleNegotiationMode(): void {
+  /* Phase 8.4 - implemented in Task 6 */
+}
+
+/** Navigate to a risk card by index, wrapping around at boundaries. */
+function focusRiskCard(index: number): void {
+  const cards = document.querySelectorAll('.risk-card');
+  if (cards.length === 0) return;
+
+  // Remove existing focus
+  cards.forEach(c => c.classList.remove('keyboard-focused'));
+
+  // Wrap around
+  if (index < 0) index = cards.length - 1;
+  if (index >= cards.length) index = 0;
+
+  currentRiskIndex = index;
+  const card = cards[currentRiskIndex] as HTMLElement;
+  card.classList.add('keyboard-focused');
+  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/** Returns the redline data for the currently focused card. */
+function getFocusedRedline(): AIRedlineItem | null {
+  const filtered = getFilteredRedlines();
+  if (currentRiskIndex < 0 || currentRiskIndex >= filtered.length) return null;
+  return filtered[currentRiskIndex];
+}
+
+/** Clicks a button inside the currently focused risk card. */
+function clickFocusedCardButton(selector: string): void {
+  const cards = document.querySelectorAll('.risk-card');
+  if (currentRiskIndex < 0 || currentRiskIndex >= cards.length) return;
+  const btn = cards[currentRiskIndex].querySelector(selector) as HTMLElement | null;
+  if (btn) btn.click();
+}
+
+/** Global keyboard shortcut handler. */
+function handleKeyboardShortcuts(e: KeyboardEvent): void {
+  // Don't intercept when user is typing in form fields
+  const tag = (e.target as HTMLElement)?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+
+  // Ctrl+Shift+S → Scan Selection
+  if (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+    e.preventDefault();
+    scanSelection();
+    return;
+  }
+
+  // Ctrl+Shift+D → Scan Document
+  if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
+    e.preventDefault();
+    scanDocument();
+    return;
+  }
+
+  // Ctrl+Shift+N → Toggle Negotiation Mode
+  if (e.ctrlKey && e.shiftKey && (e.key === 'N' || e.key === 'n')) {
+    e.preventDefault();
+    toggleNegotiationMode();
+    return;
+  }
+
+  // Alt+ArrowUp → Previous risk card
+  if (e.altKey && e.key === 'ArrowUp') {
+    e.preventDefault();
+    focusRiskCard(currentRiskIndex - 1);
+    return;
+  }
+
+  // Alt+ArrowDown → Next risk card
+  if (e.altKey && e.key === 'ArrowDown') {
+    e.preventDefault();
+    focusRiskCard(currentRiskIndex + 1);
+    return;
+  }
+
+  // Alt+H → Highlight focused risk
+  if (e.altKey && (e.key === 'H' || e.key === 'h')) {
+    e.preventDefault();
+    clickFocusedCardButton('.highlight-btn');
+    return;
+  }
+
+  // Alt+G → Generate fix for focused risk
+  if (e.altKey && (e.key === 'G' || e.key === 'g')) {
+    e.preventDefault();
+    clickFocusedCardButton('.generate-fix-btn');
+    return;
+  }
+
+  // Alt+A → Apply fix for focused risk
+  if (e.altKey && (e.key === 'A' || e.key === 'a')) {
+    e.preventDefault();
+    clickFocusedCardButton('.apply-btn');
+    return;
+  }
+
+  // Alt+R → Research focused risk
+  if (e.altKey && (e.key === 'R' || e.key === 'r')) {
+    e.preventDefault();
+    clickFocusedCardButton('.research-btn');
+    return;
   }
 }
 
