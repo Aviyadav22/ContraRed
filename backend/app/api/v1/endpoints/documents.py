@@ -944,6 +944,299 @@ async def analyze_clause(
 
 
 # ============================================================================
+# Batch Analysis Endpoints (Phase 8.6)
+# ============================================================================
+
+class BatchAnalyzeResponse(BaseModel):
+    """Response from batch analysis initiation."""
+    batch_id: str
+    file_count: int
+    status: str = "processing"
+
+
+class BatchFileStatus(BaseModel):
+    """Status of a single file in a batch."""
+    filename: str
+    status: Literal["queued", "processing", "completed", "error"]
+    document_id: Optional[str] = None
+    risk_summary: Optional[dict] = None
+    error: Optional[str] = None
+
+
+class BatchStatusResponse(BaseModel):
+    """Full batch status."""
+    batch_id: str
+    files: List[BatchFileStatus]
+    overall_progress: int  # 0-100
+    status: Literal["processing", "completed", "partial_failure"]
+
+
+# Simple in-memory batch tracking (production should use Redis)
+_batch_store: Dict[str, dict] = {}
+
+
+@router.post("/batch-analyze", response_model=BatchAnalyzeResponse)
+@limiter.limit("5/minute")
+async def batch_analyze(
+    http_request: Request,
+    files: List[UploadFile] = File(...),
+    playbook_id: Optional[str] = Form(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Upload multiple .docx files for concurrent batch analysis.
+
+    Max 10 files per batch. Only .docx files are accepted.
+    Returns immediately with a batch_id to poll for status.
+    """
+    if len(files) > 10:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "Maximum 10 files per batch.", "error_code": "batch_too_large"},
+        )
+
+    if len(files) == 0:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"message": "At least one file is required.", "error_code": "no_files"},
+        )
+
+    batch_id = str(uuid4())
+    file_statuses: List[dict] = []
+    file_contents: List[dict] = []
+
+    for idx, upload_file in enumerate(files):
+        filename = upload_file.filename or f"file_{idx}.docx"
+
+        # Validate file extension
+        if not filename.lower().endswith(".docx"):
+            file_statuses.append({
+                "filename": filename,
+                "status": "error",
+                "document_id": None,
+                "risk_summary": None,
+                "error": "Only .docx files are supported.",
+            })
+            file_contents.append({"filename": filename, "text": None})
+            continue
+
+        # Read file and extract text from .docx
+        try:
+            raw_bytes = await upload_file.read()
+            with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
+                if "word/document.xml" not in zf.namelist():
+                    raise ValueError("Invalid .docx: missing word/document.xml")
+                xml_content = zf.read("word/document.xml").decode("utf-8", errors="replace")
+                text = re.sub(r"<[^>]+>", " ", xml_content)
+                text = re.sub(r"\s+", " ", text).strip()
+
+            if len(text) < 50:
+                file_statuses.append({
+                    "filename": filename,
+                    "status": "error",
+                    "document_id": None,
+                    "risk_summary": None,
+                    "error": "Document contains too little text to analyze.",
+                })
+                file_contents.append({"filename": filename, "text": None})
+                continue
+
+            file_statuses.append({
+                "filename": filename,
+                "status": "queued",
+                "document_id": None,
+                "risk_summary": None,
+                "error": None,
+            })
+            file_contents.append({"filename": filename, "text": text})
+
+        except (zipfile.BadZipFile, ValueError) as e:
+            file_statuses.append({
+                "filename": filename,
+                "status": "error",
+                "document_id": None,
+                "risk_summary": None,
+                "error": f"Failed to read .docx: {str(e)}",
+            })
+            file_contents.append({"filename": filename, "text": None})
+
+    # Store batch info
+    _batch_store[batch_id] = {
+        "user_id": str(current_user.id),
+        "files": file_statuses,
+        "playbook_id": playbook_id,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Launch background processing
+    asyncio.create_task(
+        _process_batch(batch_id, file_contents, playbook_id, str(current_user.id), db)
+    )
+
+    logger.info(f"Batch {batch_id} created with {len(files)} files for user {current_user.id}")
+
+    return BatchAnalyzeResponse(
+        batch_id=batch_id,
+        file_count=len(files),
+        status="processing",
+    )
+
+
+async def _process_batch(
+    batch_id: str,
+    file_contents: List[dict],
+    playbook_id: Optional[str],
+    user_id: str,
+    db: AsyncSession,
+):
+    """Background task to process all files in a batch concurrently."""
+    semaphore = asyncio.Semaphore(3)  # Max 3 concurrent analyses
+
+    # Load playbook rules once if playbook_id is given
+    playbook_rules = None
+    playbook_name = None
+    if playbook_id:
+        try:
+            result = await db.execute(
+                select(Playbook)
+                .options(selectinload(Playbook.rules_list))
+                .where(Playbook.id == playbook_id)
+            )
+            playbook = result.scalar_one_or_none()
+            if playbook:
+                playbook_name = playbook.name
+                playbook_rules = [
+                    {"name": r.name, "description": r.description, "severity": r.severity}
+                    for r in (playbook.rules_list or [])
+                ]
+        except Exception as e:
+            logger.warning(f"Batch {batch_id}: failed to load playbook {playbook_id}: {e}")
+
+    async def _analyze_single(idx: int, file_info: dict):
+        """Analyze a single file within the batch."""
+        async with semaphore:
+            batch = _batch_store.get(batch_id)
+            if not batch:
+                return
+
+            # Skip files that already errored during upload
+            if batch["files"][idx]["status"] == "error":
+                return
+
+            if file_info["text"] is None:
+                return
+
+            batch["files"][idx]["status"] = "processing"
+
+            try:
+                pipeline_result: PipelineResult = await asyncio.wait_for(
+                    analysis_pipeline.run(
+                        contract_text=file_info["text"],
+                        playbook_rules=playbook_rules,
+                        playbook_name=playbook_name,
+                    ),
+                    timeout=120.0,
+                )
+
+                risk_summary = {
+                    "red": sum(1 for r in pipeline_result.redlines if r.risk_level == "RED"),
+                    "yellow": sum(1 for r in pipeline_result.redlines if r.risk_level == "YELLOW"),
+                    "total": len(pipeline_result.redlines),
+                }
+
+                doc_id = str(uuid4())
+                batch["files"][idx]["status"] = "completed"
+                batch["files"][idx]["document_id"] = doc_id
+                batch["files"][idx]["risk_summary"] = risk_summary
+
+                logger.info(
+                    f"Batch {batch_id} file '{file_info['filename']}': "
+                    f"completed with {risk_summary['total']} risks"
+                )
+
+            except asyncio.TimeoutError:
+                batch["files"][idx]["status"] = "error"
+                batch["files"][idx]["error"] = "Analysis timed out after 120 seconds."
+                logger.warning(f"Batch {batch_id} file '{file_info['filename']}': timed out")
+
+            except Exception as e:
+                batch["files"][idx]["status"] = "error"
+                batch["files"][idx]["error"] = f"Analysis failed: {str(e)}"
+                logger.error(f"Batch {batch_id} file '{file_info['filename']}': error - {e}")
+
+    # Run all file analyses concurrently (bounded by semaphore)
+    tasks = [
+        _analyze_single(idx, file_info)
+        for idx, file_info in enumerate(file_contents)
+    ]
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Update overall batch status
+    batch = _batch_store.get(batch_id)
+    if batch:
+        has_error = any(f["status"] == "error" for f in batch["files"])
+        has_completed = any(f["status"] == "completed" for f in batch["files"])
+        if has_error and has_completed:
+            batch["overall_status"] = "partial_failure"
+        elif has_error:
+            batch["overall_status"] = "partial_failure"
+        else:
+            batch["overall_status"] = "completed"
+
+        logger.info(f"Batch {batch_id} finished: {batch['overall_status']}")
+
+
+@router.get("/batch/{batch_id}/status", response_model=BatchStatusResponse)
+async def batch_status(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Get the status of a batch analysis job.
+
+    Returns progress and per-file status for the given batch_id.
+    """
+    batch = _batch_store.get(batch_id)
+    if not batch:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "Batch not found.", "error_code": "batch_not_found"},
+        )
+
+    if batch["user_id"] != str(current_user.id):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"message": "Access denied.", "error_code": "forbidden"},
+        )
+
+    file_statuses = [BatchFileStatus(**f) for f in batch["files"]]
+
+    total = len(file_statuses)
+    done = sum(1 for f in file_statuses if f.status in ("completed", "error"))
+    progress = int((done / total) * 100) if total > 0 else 0
+
+    if progress == 100:
+        has_error = any(f.status == "error" for f in file_statuses)
+        has_completed = any(f.status == "completed" for f in file_statuses)
+        if has_error and has_completed:
+            overall_status = "partial_failure"
+        elif has_error:
+            overall_status = "partial_failure"
+        else:
+            overall_status = "completed"
+    else:
+        overall_status = "processing"
+
+    return BatchStatusResponse(
+        batch_id=batch_id,
+        files=file_statuses,
+        overall_progress=progress,
+        status=overall_status,
+    )
+
+
+# ============================================================================
 # Generate Clause Endpoint
 # ============================================================================
 
