@@ -1,10 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { getStoredUser, getTeamMembers, changeTeamMemberRole, removeTeamMember, type TeamMember } from '@/api/client';
 import AppHeader from '@/components/AppHeader';
 
 export default function Team() {
     const user = getStoredUser();
     const queryClient = useQueryClient();
+    const [inviteEmail, setInviteEmail] = useState('');
+    const [inviteRole, setInviteRole] = useState('analyst');
+    const [inviteMessage, setInviteMessage] = useState<string | null>(null);
+    const [confirmRoleChange, setConfirmRoleChange] = useState<{ id: string; role: string } | null>(null);
+    const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
 
     const { data: members, isLoading, error } = useQuery<TeamMember[]>({
         queryKey: ['team-members'],
@@ -22,15 +28,11 @@ export default function Team() {
     });
 
     const handleRoleChange = (memberId: string, newRole: string) => {
-        if (confirm(`Change this member's role to ${newRole}?`)) {
-            roleMutation.mutate({ userId: memberId, role: newRole });
-        }
+        setConfirmRoleChange({ id: memberId, role: newRole });
     };
 
     const handleRemove = (member: TeamMember) => {
-        if (confirm(`Remove ${member.name} (${member.email}) from the organization?`)) {
-            removeMutation.mutate(member.id);
-        }
+        setConfirmRemoveId(member.id);
     };
 
     return (
@@ -39,6 +41,55 @@ export default function Team() {
 
             <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
                 <h1 className="text-2xl font-bold text-slate-900 mb-6">Team Management</h1>
+
+                {/* Invite Member */}
+                <div className="bg-white border border-slate-200 rounded-lg p-5 mb-6">
+                    <h2 className="text-sm font-semibold text-slate-800 mb-3">Invite Member</h2>
+                    <form
+                        onSubmit={(e) => {
+                            e.preventDefault();
+                            setInviteMessage('Team invitation feature coming soon');
+                            setTimeout(() => setInviteMessage(null), 4000);
+                        }}
+                        className="flex items-end gap-3"
+                    >
+                        <div className="flex-1 max-w-xs">
+                            <label htmlFor="invite-email" className="block text-xs font-medium text-slate-500 mb-1">Email</label>
+                            <input
+                                id="invite-email"
+                                type="email"
+                                required
+                                value={inviteEmail}
+                                onChange={(e) => setInviteEmail(e.target.value)}
+                                placeholder="colleague@company.com"
+                                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-300"
+                            />
+                        </div>
+                        <div>
+                            <label htmlFor="invite-role" className="block text-xs font-medium text-slate-500 mb-1">Role</label>
+                            <select
+                                id="invite-role"
+                                value={inviteRole}
+                                onChange={(e) => setInviteRole(e.target.value)}
+                                className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                            >
+                                <option value="analyst">Analyst</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                        </div>
+                        <button
+                            type="submit"
+                            className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors"
+                        >
+                            Send Invite
+                        </button>
+                    </form>
+                    {inviteMessage && (
+                        <div className="mt-3 text-sm text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg">
+                            {inviteMessage}
+                        </div>
+                    )}
+                </div>
 
                 {error && <div className="text-red-600 p-4">Failed to load data. Please try again.</div>}
 
@@ -72,6 +123,12 @@ export default function Team() {
                                         <td className="px-4 py-3">
                                             {member.id === user?.id ? (
                                                 <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded">{member.role} (you)</span>
+                                            ) : confirmRoleChange?.id === member.id ? (
+                                                <span className="inline-flex items-center gap-1.5">
+                                                    <span className="text-[12px] text-slate-500">Change to {confirmRoleChange.role}?</span>
+                                                    <button onClick={() => { roleMutation.mutate({ userId: confirmRoleChange.id, role: confirmRoleChange.role }); setConfirmRoleChange(null); }} className="text-[12px] font-semibold text-red-600 bg-red-50 px-2 py-0.5 rounded hover:bg-red-100">Yes</button>
+                                                    <button onClick={() => setConfirmRoleChange(null)} className="text-[12px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded hover:bg-slate-200">No</button>
+                                                </span>
                                             ) : (
                                                 <select
                                                     value={member.role === 'user' ? 'analyst' : member.role}
@@ -89,13 +146,21 @@ export default function Team() {
                                         </td>
                                         <td className="px-4 py-3">
                                             {member.id !== user?.id && (
-                                                <button
-                                                    onClick={() => handleRemove(member)}
-                                                    disabled={removeMutation.isPending}
-                                                    className="text-xs text-red-600 hover:text-red-800 font-medium"
-                                                >
-                                                    Remove
-                                                </button>
+                                                confirmRemoveId === member.id ? (
+                                                    <span className="inline-flex items-center gap-1.5">
+                                                        <span className="text-[12px] text-slate-500">Remove?</span>
+                                                        <button onClick={() => { removeMutation.mutate(member.id); setConfirmRemoveId(null); }} className="text-[12px] font-semibold text-red-600 bg-red-50 px-2 py-0.5 rounded hover:bg-red-100">Yes</button>
+                                                        <button onClick={() => setConfirmRemoveId(null)} className="text-[12px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded hover:bg-slate-200">No</button>
+                                                    </span>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => handleRemove(member)}
+                                                        disabled={removeMutation.isPending}
+                                                        className="text-xs text-red-600 hover:text-red-800 font-medium"
+                                                    >
+                                                        Remove
+                                                    </button>
+                                                )
                                             )}
                                         </td>
                                     </tr>

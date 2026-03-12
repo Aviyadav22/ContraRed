@@ -12,6 +12,7 @@ import AppHeader from '@/components/AppHeader';
 
 const MAX_FILES = 10;
 const ACCEPTED_EXT = '.docx';
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 const POLL_INTERVAL = 3000;
 
 const styles = {
@@ -306,13 +307,23 @@ export default function BatchUpload() {
             setError('Only .docx files are accepted.');
             return;
         }
+        const oversized = arr.filter(f => f.size > MAX_FILE_SIZE);
+        const valid = arr.filter(f => f.size <= MAX_FILE_SIZE);
+        if (oversized.length > 0) {
+            setError(`${oversized.length} file(s) exceed 20MB limit and were excluded.`);
+        }
+        if (valid.length === 0) {
+            return;
+        }
         setFiles(prev => {
-            const combined = [...prev, ...arr];
+            const combined = [...prev, ...valid];
             if (combined.length > MAX_FILES) {
-                setError(`Maximum ${MAX_FILES} files allowed.`);
+                setTimeout(() => setError(`Maximum ${MAX_FILES} files allowed.`), 0);
                 return combined.slice(0, MAX_FILES);
             }
-            setError(null);
+            if (oversized.length === 0) {
+                setTimeout(() => setError(null), 0);
+            }
             return combined;
         });
     }, []);
@@ -353,6 +364,10 @@ export default function BatchUpload() {
     };
 
     const handleReset = () => {
+        if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+        }
         setFiles([]);
         setPlaybookId('');
         setBatchId(null);
@@ -361,32 +376,34 @@ export default function BatchUpload() {
     };
 
     return (
-        <div style={styles.page}>
+        <div className="min-h-screen" style={{ background: '#FAFAF9' }}>
             <AppHeader />
-            <main style={styles.main}>
+            <main className="max-w-[960px] mx-auto px-6 py-8">
                 <div>
-                    <h1 style={styles.heading}>Batch Upload</h1>
-                    <p style={styles.subheading}>
+                    <h1 className="text-2xl font-bold text-[#1a1a1a] m-0">Batch Upload</h1>
+                    <p className="text-sm text-[#6B6760] mt-1">
                         Upload multiple contracts for parallel AI analysis (max {MAX_FILES} files)
                     </p>
                 </div>
 
                 {/* Upload Section - shown when no batch is active */}
                 {!batchId && (
-                    <div style={styles.section}>
+                    <div className="mt-6">
                         {/* Drop Zone */}
                         <div
-                            style={styles.dropZone(isDragOver)}
+                            className={`border-2 border-dashed rounded-xl py-12 px-6 text-center cursor-pointer transition-colors ${
+                                isDragOver ? 'border-[#C0392B] bg-red-50' : 'border-[#E8E5E0] bg-white'
+                            }`}
                             onDrop={handleDrop}
                             onDragOver={handleDragOver}
                             onDragLeave={handleDragLeave}
                             onClick={() => fileInputRef.current?.click()}
                         >
-                            <div style={styles.dropIcon}>&#128196;</div>
-                            <div style={styles.dropText}>
+                            <div className="text-[40px] text-[#8A8885] mb-2">&#128196;</div>
+                            <div className="text-[15px] font-medium text-[#1a1a1a]">
                                 Drop .docx files here or click to browse
                             </div>
-                            <div style={styles.dropHint}>
+                            <div className="text-[13px] text-[#8A8885] mt-1">
                                 Up to {MAX_FILES} Word documents
                             </div>
                             <input
@@ -404,15 +421,15 @@ export default function BatchUpload() {
 
                         {/* File List */}
                         {files.length > 0 && (
-                            <div style={styles.fileList}>
+                            <div className="mt-4 flex flex-col gap-2">
                                 {files.map((f, i) => (
-                                    <div key={`${f.name}-${i}`} style={styles.fileItem}>
+                                    <div key={`${f.name}-${i}`} className="flex items-center justify-between bg-white border border-[#E8E5E0] rounded-lg px-3.5 py-2.5">
                                         <div>
-                                            <span style={styles.fileName}>{f.name}</span>
-                                            <span style={styles.fileSize}>{formatSize(f.size)}</span>
+                                            <span className="text-sm font-medium text-[#1a1a1a]">{f.name}</span>
+                                            <span className="text-xs text-[#8A8885] ml-2">{formatSize(f.size)}</span>
                                         </div>
                                         <button
-                                            style={styles.removeBtn}
+                                            className="bg-transparent border-none text-lg text-[#8A8885] cursor-pointer px-1 leading-none"
                                             onClick={(e) => { e.stopPropagation(); removeFile(i); }}
                                             title="Remove file"
                                         >
@@ -424,11 +441,11 @@ export default function BatchUpload() {
                         )}
 
                         {/* Controls */}
-                        <div style={styles.row}>
-                            <div style={styles.fieldGroup}>
-                                <label style={styles.label}>Playbook (optional)</label>
+                        <div className="flex items-end gap-4 mt-5">
+                            <div className="flex flex-col flex-1 max-w-[300px]">
+                                <label className="text-xs font-medium text-[#6B6760] mb-1">Playbook (optional)</label>
                                 <select
-                                    style={styles.select}
+                                    className="px-3 py-2 border border-[#E8E5E0] rounded-lg text-sm text-[#1a1a1a] bg-white"
                                     value={playbookId}
                                     onChange={(e) => setPlaybookId(e.target.value)}
                                 >
@@ -439,7 +456,11 @@ export default function BatchUpload() {
                                 </select>
                             </div>
                             <button
-                                style={styles.uploadBtn(files.length === 0 || uploading)}
+                                className={`px-6 py-2 rounded-lg text-sm font-semibold border-none ${
+                                    files.length === 0 || uploading
+                                        ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                                        : 'bg-[#C0392B] text-white cursor-pointer'
+                                }`}
                                 disabled={files.length === 0 || uploading}
                                 onClick={handleUpload}
                             >
@@ -447,15 +468,15 @@ export default function BatchUpload() {
                             </button>
                         </div>
 
-                        {error && <div style={styles.errorBox}>{error}</div>}
+                        {error && <div className="mt-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-[#C0392B] text-sm">{error}</div>}
                     </div>
                 )}
 
                 {/* Progress Section - shown when batch is active */}
                 {batchId && (
-                    <div style={styles.progressContainer}>
-                        <div style={styles.progressHeader}>
-                            <span style={styles.progressTitle}>
+                    <div className="mt-6 bg-white border border-[#E8E5E0] rounded-xl p-6">
+                        <div className="flex justify-between items-center mb-4">
+                            <span className="text-base font-semibold text-[#1a1a1a]">
                                 Batch Analysis
                             </span>
                             {batchStatus && (
@@ -468,12 +489,15 @@ export default function BatchUpload() {
                         </div>
 
                         {/* Progress Bar */}
-                        <div style={styles.progressBarOuter}>
-                            <div style={styles.progressBarInner(batchStatus?.overall_progress ?? 0)} />
+                        <div className="w-full h-2 bg-[#E8E5E0] rounded overflow-hidden mb-5">
+                            <div
+                                className="h-full bg-[#C0392B] rounded transition-all duration-400"
+                                style={{ width: `${batchStatus?.overall_progress ?? 0}%` }}
+                            />
                         </div>
 
                         {!batchStatus && (
-                            <div style={{ textAlign: 'center', color: '#8A8885', fontSize: '14px', padding: '20px 0' }}>
+                            <div className="text-center text-[#8A8885] text-sm py-5">
                                 Starting batch analysis...
                             </div>
                         )}
@@ -511,7 +535,10 @@ export default function BatchUpload() {
                         )}
 
                         {batchStatus && batchStatus.status !== 'processing' && (
-                            <button style={styles.newBatchBtn} onClick={handleReset}>
+                            <button
+                                className="mt-5 px-5 py-2 bg-white text-[#1a1a1a] border border-[#E8E5E0] rounded-lg text-sm font-medium cursor-pointer hover:bg-slate-50"
+                                onClick={handleReset}
+                            >
                                 New Batch Upload
                             </button>
                         )}

@@ -4,7 +4,7 @@ API V1 Router - Aggregates all endpoint routers.
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, users, documents, playbooks, billing, audit, team, clauses, templates, analytics
+from app.api.v1.endpoints import auth, users, documents, playbooks, billing, audit, team, clauses, templates, analytics, sso, feedback
 
 api_router = APIRouter()
 
@@ -76,4 +76,18 @@ api_router.include_router(
     analytics.router,
     prefix="/analytics",
     tags=["Analytics"]
+)
+
+# SSO (SAML/OIDC via WorkOS)
+api_router.include_router(
+    sso.router,
+    prefix="/sso",
+    tags=["SSO"]
+)
+
+# Rule Feedback (Phase 5)
+api_router.include_router(
+    feedback.router,
+    prefix="/feedback",
+    tags=["Rule Feedback"]
 )

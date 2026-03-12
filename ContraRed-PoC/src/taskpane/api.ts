@@ -4,7 +4,7 @@
  */
 
 // @ts-expect-error process.env injected by webpack DefinePlugin
-const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8008/api/v1';
+const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8000/api/v1';
 
 // ============================================================================
 // Types - Matched to Phase 2 Backend Schema
@@ -51,6 +51,28 @@ interface AIAnalysisResult {
     total_risks: number;
     risk_summary: { red: number; yellow: number };
     tokens_used: number;
+}
+
+// Clause-level analysis (for selection scanning / re-scan)
+interface ClauseAnalysisResult {
+    risks: AIRedlineItem[];
+    tokens_used: number;
+    analysis_time_ms: number;
+}
+
+// Negotiation decision tracking
+interface NegotiationDecision {
+    risk_id: string;
+    decision: 'accept' | 'counter' | 'escalate';
+    counter_text?: string;
+    timestamp: number;
+}
+
+interface NegotiationSession {
+    started_at: number;
+    notes: string;
+    decisions: NegotiationDecision[];
+    document_name: string;
 }
 
 // Playbook types
@@ -133,6 +155,7 @@ class ContraRedAPI {
     private accessToken: string | null = null;
     private refreshToken: string | null = null;
     private currentUser: User | null = null;
+    private isRefreshing = false;
 
     constructor() {
         // Try to load tokens from localStorage on init
@@ -191,17 +214,34 @@ class ContraRedAPI {
         const method = options.method || 'GET';
         const body = options.body;
 
-        const response = await fetch(url, {
-            ...options,
-            headers,
-        });
+        // AbortController timeout: 2 minutes
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 120000);
+
+        let response: Response;
+        try {
+            response = await fetch(url, {
+                ...options,
+                headers,
+                signal: controller.signal,
+            });
+        } catch (err) {
+            clearTimeout(timeoutId);
+            if (err instanceof DOMException && err.name === 'AbortError') {
+                throw new Error('Request timed out after 2 minutes. The server may be slow or unreachable.');
+            }
+            throw err;
+        } finally {
+            clearTimeout(timeoutId);
+        }
 
         if (response.status === 204) {
             return undefined as T;
         }
 
-        if (response.status === 401) {
-            // Try refresh
+        if (response.status === 401 && !this.isRefreshing) {
+            // Try refresh with loop guard
+            this.isRefreshing = true;
             const tokens = this.getStoredTokens();
             if (tokens?.refresh_token) {
                 try {
@@ -215,6 +255,7 @@ class ContraRedAPI {
                         this.accessToken = newTokens.access_token;
                         this.refreshToken = newTokens.refresh_token;
                         localStorage.setItem('contrared_tokens', JSON.stringify(newTokens));
+                        this.isRefreshing = false;
                         // Retry with new token
                         headers['Authorization'] = `Bearer ${newTokens.access_token}`;
                         const retryResp = await fetch(url, { method, headers, body: body as BodyInit | undefined });
@@ -223,9 +264,16 @@ class ContraRedAPI {
                             return retryResp.json();
                         }
                     }
-                } catch { /* refresh failed, fall through */ }
+                } catch {
+                    this.isRefreshing = false;
+                    this.logout();
+                    throw new Error('Session expired. Please log in again.');
+                }
             }
-            throw new Error(`Authentication failed: ${response.status}`);
+            this.isRefreshing = false;
+            throw new Error('Session expired. Please log in again.');
+        } else if (response.status === 401 && this.isRefreshing) {
+            throw new Error('Session expired. Please log in again.');
         }
 
         if (!response.ok) {
@@ -277,7 +325,17 @@ class ContraRedAPI {
     }
 
     isLoggedIn(): boolean {
-        return !!this.accessToken;
+        if (!this.accessToken) return false;
+        try {
+            const payload = JSON.parse(atob(this.accessToken.split('.')[1]));
+            if (payload.exp && payload.exp * 1000 < Date.now()) {
+                // Token expired
+                return false;
+            }
+            return true;
+        } catch {
+            return false;
+        }
     }
 
     getUser(): User | null {
@@ -338,6 +396,21 @@ class ContraRedAPI {
         return this.request('/documents/analyze-full', {
             method: 'POST',
             body: JSON.stringify({ text, filename, playbook_id: playbookId }),
+        });
+    }
+
+    /**
+     * Analyze a single clause/selection for risks.
+     * Lighter-weight than full document scan — used for Scan Selection.
+     */
+    async analyzeClause(clauseText: string, playbookId?: string, jurisdiction?: string): Promise<ClauseAnalysisResult> {
+        return this.request('/documents/analyze-clause', {
+            method: 'POST',
+            body: JSON.stringify({
+                clause_text: clauseText,
+                playbook_id: playbookId,
+                jurisdiction,
+            }),
         });
     }
 
@@ -531,4 +604,4 @@ class ContraRedAPI {
 
 // Export singleton instance
 export const api = new ContraRedAPI();
-export type { User, RedlineResponse, Playbook, PlaybookRule, PlaybookDetail, AIRedlineItem, AIAnalysisResult, ClauseLibraryItem, DocumentListItem, TemplateListItem };
+export type { User, RedlineResponse, Playbook, PlaybookRule, PlaybookDetail, AIRedlineItem, AIAnalysisResult, ClauseAnalysisResult, NegotiationDecision, NegotiationSession, ClauseLibraryItem, DocumentListItem, TemplateListItem };

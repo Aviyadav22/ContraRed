@@ -12,10 +12,12 @@
   <Description DefaultValue="AI-powered contract redlining and review for Microsoft Word"/>
 
   <IconUrl DefaultValue="https://contrared-addin.netlify.app/assets/logo.png"/>
-  <SupportUrl DefaultValue="https://contrared-addin.netlify.app"/>
+  <HighResolutionIconUrl DefaultValue="https://contrared-addin.netlify.app/assets/icon-80.png"/>
+  <SupportUrl DefaultValue="https://contrared.com/support"/>
 
   <AppDomains>
     <AppDomain>https://contrared-addin.netlify.app</AppDomain>
+    <AppDomain>https://contrared.com</AppDomain>
   </AppDomains>
 
   <Hosts>
@@ -24,7 +26,7 @@
 
   <Requirements>
     <Sets>
-      <Set Name="WordApi" MinVersion="1.3"/>
+      <Set Name="WordApi" MinVersion="1.4"/>
     </Sets>
   </Requirements>
 
@@ -33,5 +35,72 @@
   </DefaultSettings>
 
   <Permissions>ReadWriteDocument</Permissions>
+
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/taskpaneappversionoverrides" xsi:type="VersionOverridesV1_0">
+      <Hosts>
+          <Host xsi:type="Document">
+              <DesktopFormFactor>
+                  <GetStarted>
+                      <Title resid="GetStarted.Title"/>
+                      <Description resid="GetStarted.Description"/>
+                      <LearnMoreUrl resid="GetStarted.LearnMoreUrl"/>
+                  </GetStarted>
+                  <ExtensionPoint xsi:type="PrimaryCommandSurface">
+                      <OfficeTab id="TabHome">
+                          <Group id="ContraRedGroup">
+                              <Label resid="GroupLabel"/>
+                              <Icon>
+                                  <bt:Image size="16" resid="Icon.16x16"/>
+                                  <bt:Image size="32" resid="Icon.32x32"/>
+                                  <bt:Image size="80" resid="Icon.80x80"/>
+                              </Icon>
+                              <Control xsi:type="Button" id="ContraRedButton">
+                                  <Label resid="TaskpaneButton.Label"/>
+                                  <Supertip>
+                                      <Title resid="TaskpaneButton.Label"/>
+                                      <Description resid="TaskpaneButton.Tooltip"/>
+                                  </Supertip>
+                                  <Icon>
+                                      <bt:Image size="16" resid="Icon.16x16"/>
+                                      <bt:Image size="32" resid="Icon.32x32"/>
+                                      <bt:Image size="80" resid="Icon.80x80"/>
+                                  </Icon>
+                                  <Action xsi:type="ShowTaskpane">
+                                      <TaskpaneId>ContraRedPane</TaskpaneId>
+                                      <SourceLocation resid="Taskpane.Url"/>
+                                  </Action>
+                              </Control>
+                          </Group>
+                      </OfficeTab>
+                  </ExtensionPoint>
+              </DesktopFormFactor>
+          </Host>
+      </Hosts>
+      <Resources>
+          <bt:Images>
+              <bt:Image id="Icon.16x16" DefaultValue="https://contrared-addin.netlify.app/assets/icon-16.png"/>
+              <bt:Image id="Icon.32x32" DefaultValue="https://contrared-addin.netlify.app/assets/icon-32.png"/>
+              <bt:Image id="Icon.80x80" DefaultValue="https://contrared-addin.netlify.app/assets/icon-80.png"/>
+          </bt:Images>
+          <bt:Urls>
+              <bt:Url id="Taskpane.Url" DefaultValue="https://contrared-addin.netlify.app/taskpane.html"/>
+              <bt:Url id="GetStarted.LearnMoreUrl" DefaultValue="https://contrared.com/support"/>
+          </bt:Urls>
+          <bt:ShortStrings>
+              <bt:String id="GroupLabel" DefaultValue="ContraRed"/>
+              <bt:String id="TaskpaneButton.Label" DefaultValue="ContraRed"/>
+              <bt:String id="GetStarted.Title" DefaultValue="ContraRed AI Contract Review"/>
+          </bt:ShortStrings>
+          <bt:LongStrings>
+              <bt:String id="TaskpaneButton.Tooltip" DefaultValue="Open ContraRed AI-powered contract review panel"/>
+              <bt:String id="GetStarted.Description" DefaultValue="AI-powered contract redlining and review. Click ContraRed on the ribbon to get started."/>
+          </bt:LongStrings>
+      </Resources>
+  </VersionOverrides>
+
+  <!-- Store listing URLs -->
+  <!-- PrivacyUrl: https://contrared.com/privacy -->
+  <!-- TermsOfUseUrl: https://contrared.com/terms -->
+  <!-- These URLs should be configured in the AppSource/Partner Center listing -->
 
 </OfficeApp>

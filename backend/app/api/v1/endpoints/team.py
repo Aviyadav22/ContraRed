@@ -3,16 +3,17 @@ Team management endpoints.
 Allows org admins to list, update roles, and remove team members.
 """
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.db.session import get_db
 from app.models.user import User, UserRole
-from app.api.dependencies import require_admin
+from app.api.dependencies import require_permission
 from app.models.audit_log import log_audit_event
 from app.api.v1.endpoints.auth import limiter
 
@@ -29,35 +30,55 @@ class TeamMemberResponse(BaseModel):
     is_active: bool
 
 
+class TeamListResponse(BaseModel):
+    items: List[TeamMemberResponse]
+    total: int
+
+
 class ChangeRoleRequest(BaseModel):
-    role: str  # analyst, admin
+    role: Literal["analyst", "admin"]
 
 
-@router.get("/members", response_model=List[TeamMemberResponse])
+@router.get("/members", response_model=TeamListResponse)
 async def list_members(
-    current_user: User = Depends(require_admin),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    current_user: User = Depends(require_permission("team.read")),
     db: AsyncSession = Depends(get_db)
 ):
-    """List all users in the current organization. Requires ADMIN role."""
+    """List all users in the current organization with pagination."""
     if not current_user.organization_id:
-        return []
+        return TeamListResponse(items=[], total=0)
 
+    # Total count
+    count_result = await db.execute(
+        select(func.count(User.id)).where(User.organization_id == current_user.organization_id)
+    )
+    total = count_result.scalar() or 0
+
+    # Paginated results
     result = await db.execute(
-        select(User).where(User.organization_id == current_user.organization_id)
+        select(User)
+        .where(User.organization_id == current_user.organization_id)
+        .offset(offset)
+        .limit(limit)
     )
     members = result.scalars().all()
 
-    return [
-        TeamMemberResponse(
-            id=str(m.id),
-            email=m.email,
-            name=m.name,
-            role=m.role.value,
-            last_login=m.last_login.isoformat() if m.last_login else None,
-            is_active=m.is_active,
-        )
-        for m in members
-    ]
+    return TeamListResponse(
+        items=[
+            TeamMemberResponse(
+                id=str(m.id),
+                email=m.email,
+                name=m.name,
+                role=m.role.value,
+                last_login=m.last_login.isoformat() if m.last_login else None,
+                is_active=m.is_active,
+            )
+            for m in members
+        ],
+        total=total,
+    )
 
 
 @router.put("/members/{user_id}/role", response_model=TeamMemberResponse)
@@ -66,18 +87,10 @@ async def change_role(
     user_id: UUID,
     body: ChangeRoleRequest,
     request: Request,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_permission("user.manage")),
     db: AsyncSession = Depends(get_db)
 ):
-    """Change a team member's role. Requires ADMIN role."""
-    # Validate target role
-    allowed_roles = {"analyst", "admin"}
-    if body.role not in allowed_roles:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Role must be one of: {', '.join(allowed_roles)}"
-        )
-
+    """Change a team member's role."""
     # Find target user
     result = await db.execute(select(User).where(User.id == user_id))
     target_user = result.scalar_one_or_none()
@@ -123,10 +136,10 @@ async def change_role(
 async def remove_member(
     user_id: UUID,
     request: Request,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_permission("team.manage")),
     db: AsyncSession = Depends(get_db)
 ):
-    """Remove a user from the organization. Requires ADMIN role."""
+    """Remove a user from the organization."""
     result = await db.execute(select(User).where(User.id == user_id))
     target_user = result.scalar_one_or_none()
 

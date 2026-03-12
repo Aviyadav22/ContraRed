@@ -81,6 +81,16 @@ export default function Dashboard() {
             title: 'Audit Logs',
             desc: 'View activity history and compliance audit trail.',
         },
+        {
+            to: '/executive',
+            title: 'Executive Dashboard',
+            desc: 'High-level metrics and ROI insights for leadership.',
+        },
+        {
+            to: '/reports',
+            title: 'Reports',
+            desc: 'Generate and download detailed contract analysis reports.',
+        },
     ];
 
     return (
@@ -91,6 +101,14 @@ export default function Dashboard() {
                 <h1 className="text-2xl font-semibold mb-8" style={{ color: '#1A1A19', letterSpacing: '-0.02em' }}>
                     Dashboard
                 </h1>
+
+                {/* Onboarding Welcome */}
+                {stats?.documents_analyzed === 0 && (
+                    <div style={{ backgroundColor: '#FFF8F0', border: '1px solid #E8D5C0' }} className="p-6 rounded-lg text-center mb-6">
+                        <h3 className="text-lg font-semibold mb-2" style={{ color: '#8B4513' }}>Welcome to ContraRed!</h3>
+                        <p className="text-sm mb-4" style={{ color: '#6B5B4F' }}>Get started by scanning your first contract in the Word Add-in, or explore the features below.</p>
+                    </div>
+                )}
 
                 {/* Stats Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">

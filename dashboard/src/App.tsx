@@ -18,6 +18,10 @@ const Templates = React.lazy(() => import('@/pages/Templates'));
 const Analytics = React.lazy(() => import('@/pages/Analytics'));
 const Compare = React.lazy(() => import('@/pages/Compare'));
 const BatchUpload = React.lazy(() => import('@/pages/BatchUpload'));
+const Executive = React.lazy(() => import('@/pages/Executive'));
+const Reports = React.lazy(() => import('@/pages/Reports'));
+const Marketplace = React.lazy(() => import('@/pages/Marketplace'));
+const ForgotPassword = React.lazy(() => import('@/pages/ForgotPassword'));
 
 
 const queryClient = new QueryClient({
@@ -33,6 +37,19 @@ const queryClient = new QueryClient({
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated()) {
     return <Navigate to="/login" replace />;
+  }
+  // Check token expiry
+  const token = localStorage.getItem('contrared_tokens');
+  if (token) {
+    try {
+      const parsed = JSON.parse(token);
+      const payload = JSON.parse(atob(parsed.access_token.split('.')[1]));
+      if (payload.exp && payload.exp * 1000 < Date.now()) {
+        localStorage.removeItem('contrared_tokens');
+        localStorage.removeItem('contrared_user');
+        return <Navigate to="/login" replace />;
+      }
+    } catch { /* malformed token, let request-level auth handle it */ }
   }
   return <>{children}</>;
 }
@@ -52,12 +69,13 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <Suspense fallback={<div className="flex items-center justify-center min-h-screen"><div className="text-slate-400">Loading...</div></div>}>
+        <Suspense fallback={<div className="flex flex-col items-center justify-center min-h-screen" style={{ backgroundColor: '#FAFAF9' }}><div className="text-2xl font-bold mb-4" style={{ color: '#C0392B' }}>ContraRed</div><div className="animate-spin rounded-full h-8 w-8 border-2 border-slate-300" style={{ borderTopColor: '#C0392B' }}></div></div>}>
           <Routes>
             {/* Public routes */}
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
 
             {/* Protected routes - all authenticated users */}
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
@@ -67,12 +85,15 @@ export default function App() {
             <Route path="/compare" element={<ProtectedRoute><Compare /></ProtectedRoute>} />
             <Route path="/batch-upload" element={<ProtectedRoute><BatchUpload /></ProtectedRoute>} />
             <Route path="/audit-logs" element={<ProtectedRoute><AuditLogs /></ProtectedRoute>} />
+            <Route path="/marketplace" element={<ProtectedRoute><Marketplace /></ProtectedRoute>} />
 
             {/* Admin-only routes */}
             <Route path="/playbooks/:id" element={<AdminRoute><PlaybookEditor /></AdminRoute>} />
             <Route path="/analytics" element={<AdminRoute><Analytics /></AdminRoute>} />
             <Route path="/billing" element={<AdminRoute><Billing /></AdminRoute>} />
             <Route path="/team" element={<AdminRoute><Team /></AdminRoute>} />
+            <Route path="/executive" element={<AdminRoute><Executive /></AdminRoute>} />
+            <Route path="/reports" element={<AdminRoute><Reports /></AdminRoute>} />
 
             {/* Catch-all 404 */}
             <Route path="*" element={<NotFound />} />

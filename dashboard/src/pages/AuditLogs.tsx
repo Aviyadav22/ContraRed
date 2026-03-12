@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { getAuditLogs, type AuditLogPage } from '@/api/client';
 import AppHeader from '@/components/AppHeader';
@@ -7,14 +7,29 @@ export default function AuditLogs() {
     const [page, setPage] = useState(1);
     const [actionFilter, setActionFilter] = useState('');
     const [emailFilter, setEmailFilter] = useState('');
+    const [debouncedEmail, setDebouncedEmail] = useState('');
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+    const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    useEffect(() => {
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+            setDebouncedEmail(emailFilter);
+            setPage(1);
+        }, 300);
+        return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+    }, [emailFilter]);
 
     const { data, isLoading, error } = useQuery<AuditLogPage>({
-        queryKey: ['audit-logs', page, actionFilter, emailFilter],
+        queryKey: ['audit-logs', page, actionFilter, debouncedEmail, dateFrom, dateTo],
         queryFn: () => getAuditLogs({
             page,
             page_size: 25,
             action: actionFilter || undefined,
-            user_email: emailFilter || undefined,
+            user_email: debouncedEmail || undefined,
+            date_from: dateFrom || undefined,
+            date_to: dateTo || undefined,
         }),
     });
 
@@ -28,7 +43,7 @@ export default function AuditLogs() {
                 <h1 className="text-2xl font-bold text-slate-900 mb-6">Audit Logs</h1>
 
                 {/* Filters */}
-                <div className="flex gap-4 mb-6">
+                <div className="flex gap-4 mb-6 flex-wrap items-end">
                     <select
                         value={actionFilter}
                         onChange={(e) => { setActionFilter(e.target.value); setPage(1); }}
@@ -52,9 +67,28 @@ export default function AuditLogs() {
                         type="text"
                         placeholder="Filter by email..."
                         value={emailFilter}
-                        onChange={(e) => { setEmailFilter(e.target.value); setPage(1); }}
+                        onChange={(e) => setEmailFilter(e.target.value)}
                         className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white w-64"
                     />
+
+                    <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium text-slate-500">From</label>
+                        <input
+                            type="date"
+                            value={dateFrom}
+                            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+                            className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        />
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <label className="text-xs font-medium text-slate-500">To</label>
+                        <input
+                            type="date"
+                            value={dateTo}
+                            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+                            className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        />
+                    </div>
                 </div>
 
                 {error && <div className="text-red-600 p-4">Failed to load data. Please try again.</div>}

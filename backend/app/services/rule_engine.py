@@ -4,12 +4,20 @@ Rule Engine - Pattern-based clause detection and risk assessment.
 This module provides regex-based rule matching against contract text,
 returning matched clauses with risk levels and exact text snippets
 for frontend highlighting.
+
+Rule Engine 2.0 adds the SmartRule system:
+  - negative_patterns: match X, but NOT if Y appears in the same context window
+  - context_window: chars around match for negative pattern checking (default 500)
+  - escalation_conditions: conditions that raise risk (e.g., YELLOW -> RED)
+  - de_escalation_conditions: conditions that lower risk (e.g., RED -> YELLOW)
+  - Fixed: indemnification base risk YELLOW, escalates to RED only when one-sided
+    AND (uncapped OR covers all losses)
 """
 
 import logging
 import re
 import hashlib
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -27,7 +35,11 @@ class RiskLevel(str, Enum):
 
 @dataclass
 class RulePattern:
-    """A single detection rule with patterns and metadata."""
+    """A single detection rule with patterns and metadata.
+
+    This is the original (v1) rule format.  Fully backward-compatible.
+    SmartRule extends this with negative patterns and escalation logic.
+    """
     id: str
     name: str
     clause_type: str
@@ -36,6 +48,24 @@ class RulePattern:
     primary_position: str  # What the playbook prefers
     fallback_position: Optional[str] = None
     is_deal_breaker: bool = False
+
+
+@dataclass
+class SmartRule(RulePattern):
+    """Rule Engine 2.0 - Enhanced rule with negative patterns and escalation.
+
+    Extends RulePattern with:
+      - negative_patterns: if ANY of these match within context_window, suppress the match
+      - context_window: characters around match to check for negative patterns (default 500)
+      - escalation_conditions: regex patterns that, if found in context, raise risk one level
+      - de_escalation_conditions: regex patterns that, if found in context, lower risk one level
+
+    Backward-compatible: a SmartRule can be used anywhere a RulePattern is expected.
+    """
+    negative_patterns: List[str] = field(default_factory=list)
+    context_window: int = 500
+    escalation_conditions: List[str] = field(default_factory=list)
+    de_escalation_conditions: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -54,14 +84,39 @@ class RuleMatch:
     # These will be populated by AI service
     ai_explanation: Optional[str] = None
     suggested_fix: Optional[str] = None
-    
+    # Rule Engine 2.0: track whether escalation/de-escalation was applied
+    original_risk_level: Optional[RiskLevel] = None  # Set when escalation changes level
+    escalation_reason: Optional[str] = None
+
     def cache_key(self) -> str:
         """Generate cache key for AI responses."""
         text_hash = hashlib.sha256(self.match_text.encode()).hexdigest()[:12]
         return f"clause:{self.rule_id}:{text_hash}"
 
 
-# Default rules for common contract clause patterns
+# ---------------------------------------------------------------------------
+# Risk escalation / de-escalation helpers
+# ---------------------------------------------------------------------------
+
+_RISK_ORDER = [RiskLevel.GREEN, RiskLevel.YELLOW, RiskLevel.RED]
+
+
+def _escalate_risk(level: RiskLevel) -> RiskLevel:
+    """Raise risk level by one step (GREEN->YELLOW, YELLOW->RED, RED stays RED)."""
+    idx = _RISK_ORDER.index(level)
+    return _RISK_ORDER[min(idx + 1, len(_RISK_ORDER) - 1)]
+
+
+def _deescalate_risk(level: RiskLevel) -> RiskLevel:
+    """Lower risk level by one step (RED->YELLOW, YELLOW->GREEN, GREEN stays GREEN)."""
+    idx = _RISK_ORDER.index(level)
+    return _RISK_ORDER[max(idx - 1, 0)]
+
+
+# ---------------------------------------------------------------------------
+# Default rules - backward-compatible list mixing RulePattern and SmartRule
+# ---------------------------------------------------------------------------
+
 DEFAULT_RULES: List[RulePattern] = [
     # === RED RISKS (Critical) ===
     RulePattern(
@@ -92,11 +147,15 @@ DEFAULT_RULES: List[RulePattern] = [
         primary_position="Termination requires 30 days written notice with cure period",
         is_deal_breaker=True,
     ),
-    RulePattern(
+
+    # --- INDEMNIFICATION: base risk YELLOW, escalates to RED only when one-sided
+    #     AND (uncapped OR covers "any and all" losses).  This fixes the false
+    #     positive where "mutual indemnify and hold harmless" was flagged RED.
+    SmartRule(
         id="broad_indemnification",
         name="Broad Indemnification",
         clause_type="indemnification",
-        risk_level=RiskLevel.RED,
+        risk_level=RiskLevel.YELLOW,   # <-- Changed from RED to YELLOW
         patterns=[
             r"\b(indemnify\s+and\s+hold\s+harmless)\b",
             r"\b(defend,?\s+indemnify,?\s+(and\s+)?hold\s+harmless)\b",
@@ -105,7 +164,24 @@ DEFAULT_RULES: List[RulePattern] = [
         ],
         primary_position="Mutual indemnification limited to third-party IP claims",
         fallback_position="Indemnification capped at contract value",
+        is_deal_breaker=False,
+        negative_patterns=[
+            # Suppress if clause explicitly says "mutual" + "limited to"
+            r"\bmutual(ly)?\b.{0,80}\blimited\s+to\b",
+        ],
+        context_window=500,
+        escalation_conditions=[
+            # Escalate YELLOW -> RED if one-sided AND (uncapped OR "any and all")
+            r"\b(one[\s-]?sided|unilateral)\b",
+            r"\b(uncapped|without\s+(any\s+)?cap|no\s+cap)\b",
+            r"\b(any\s+and\s+all\s+(loss|damage|claim|liabilit))",
+        ],
+        de_escalation_conditions=[
+            # De-escalate if "mutual" AND "capped at"
+            r"\bmutual(ly)?\b.{0,120}\bcapped?\s+(at|to)\b",
+        ],
     ),
+
     RulePattern(
         id="ip_assignment",
         name="Broad IP Assignment",
@@ -119,7 +195,7 @@ DEFAULT_RULES: List[RulePattern] = [
         primary_position="Pre-existing IP remains with original owner",
         is_deal_breaker=True,
     ),
-    
+
     # === YELLOW RISKS (Warning) ===
     RulePattern(
         id="auto_renewal",
@@ -208,7 +284,7 @@ DEFAULT_RULES: List[RulePattern] = [
         ],
         primary_position="Reverse engineering permitted for interoperability",
     ),
-    
+
     # === GREEN (Standard/Acceptable) ===
     RulePattern(
         id="governing_law",
@@ -239,23 +315,40 @@ DEFAULT_RULES: List[RulePattern] = [
 class RuleEngine:
     """
     Regex-based rule engine for contract clause detection.
-    
+
+    Supports both RulePattern (v1) and SmartRule (v2) transparently.
+    SmartRule adds: negative_patterns, context_window, escalation/de-escalation.
+
     Usage:
         engine = RuleEngine()
         matches = engine.evaluate(contract_text)
         # Each match has match_text for Word highlighting
     """
-    
-    def __init__(self, rules: Optional[List[RulePattern]] = None):
+
+    def __init__(self, rules: Optional[List[RulePattern]] = None, use_expanded: bool = True):
         """
         Initialize with custom rules or use defaults.
-        
+
         Args:
-            rules: Custom rules to use. If None, uses DEFAULT_RULES.
+            rules: Custom rules to use. If None, uses expanded rules library (75 rules)
+                   or DEFAULT_RULES based on use_expanded flag.
+                   Accepts both RulePattern and SmartRule instances.
+            use_expanded: If True and no custom rules provided, use the Phase 5
+                         expanded rules library (75 rules). If False, use legacy 16 rules.
         """
-        self.rules = rules or DEFAULT_RULES
+        if rules is not None:
+            self.rules = rules
+        elif use_expanded:
+            try:
+                from app.services.rules_library import ALL_RULES
+                self.rules = ALL_RULES
+            except ImportError:
+                logger.warning("Rules library not found, falling back to default 16 rules")
+                self.rules = DEFAULT_RULES
+        else:
+            self.rules = DEFAULT_RULES
         # Compile patterns for performance
-        self._compiled_rules = []
+        self._compiled_rules: List[tuple] = []
         for rule in self.rules:
             compiled_patterns = []
             for pattern in rule.patterns:
@@ -263,47 +356,139 @@ class RuleEngine:
                     compiled_patterns.append(re.compile(pattern, re.IGNORECASE))
                 except re.error as e:
                     logger.warning("Invalid pattern in rule %s: %s", rule.id, e)
-            self._compiled_rules.append((rule, compiled_patterns))
-    
+
+            # Compile negative patterns (SmartRule only)
+            compiled_negatives = []
+            if isinstance(rule, SmartRule):
+                for neg_pat in rule.negative_patterns:
+                    try:
+                        compiled_negatives.append(re.compile(neg_pat, re.IGNORECASE))
+                    except re.error as e:
+                        logger.warning("Invalid negative pattern in rule %s: %s", rule.id, e)
+
+            # Compile escalation conditions (SmartRule only)
+            compiled_escalations = []
+            compiled_deescalations = []
+            if isinstance(rule, SmartRule):
+                for esc_pat in rule.escalation_conditions:
+                    try:
+                        compiled_escalations.append(re.compile(esc_pat, re.IGNORECASE))
+                    except re.error as e:
+                        logger.warning("Invalid escalation pattern in rule %s: %s", rule.id, e)
+                for deesc_pat in rule.de_escalation_conditions:
+                    try:
+                        compiled_deescalations.append(re.compile(deesc_pat, re.IGNORECASE))
+                    except re.error as e:
+                        logger.warning("Invalid de-escalation pattern in rule %s: %s", rule.id, e)
+
+            self._compiled_rules.append((
+                rule,
+                compiled_patterns,
+                compiled_negatives,
+                compiled_escalations,
+                compiled_deescalations,
+            ))
+
     def evaluate(self, text: str) -> List[RuleMatch]:
         """
         Evaluate text against all rules.
-        
+
+        For SmartRule instances, applies negative pattern suppression and
+        escalation/de-escalation logic on the context window around each match.
+
         Args:
             text: Full contract text to analyze.
-            
+
         Returns:
             List of RuleMatch objects with match_text snippets.
         """
         # INPUT HYGIENE: Normalize Word document artifacts
         # This handles non-breaking spaces, smart quotes, etc.
         text = normalize_text(text)
-        
+
         matches: List[RuleMatch] = []
-        
-        for rule, compiled_patterns in self._compiled_rules:
+
+        for rule, compiled_patterns, compiled_negatives, compiled_escalations, compiled_deescalations in self._compiled_rules:
             # Collect all matches for THIS rule, then de-duplicate
             rule_matches = []
-            
+
+            context_window = rule.context_window if isinstance(rule, SmartRule) else 500
+
             for pattern in compiled_patterns:
                 for match in pattern.finditer(text):
-                    match_text = match.group(0)
                     start_offset = match.start()
                     end_offset = match.end()
-                    
+
+                    # --- SmartRule: negative pattern suppression ---
+                    if compiled_negatives:
+                        ctx_start = max(0, start_offset - context_window)
+                        ctx_end = min(len(text), end_offset + context_window)
+                        context_text = text[ctx_start:ctx_end]
+
+                        suppressed = False
+                        for neg_re in compiled_negatives:
+                            if neg_re.search(context_text):
+                                logger.debug(
+                                    "Suppressed match for rule %s due to negative pattern in context",
+                                    rule.id,
+                                )
+                                suppressed = True
+                                break
+                        if suppressed:
+                            continue
+
                     # Expand match to get surrounding context (full sentence)
                     expanded_text = self._expand_to_sentence(text, start_offset, end_offset)
-                    
+
                     rule_matches.append({
                         'start': start_offset,
                         'end': end_offset,
                         'match_text': expanded_text,
                     })
-            
+
             # De-duplicate overlapping matches for this rule
             unique_matches = self._remove_overlapping_matches(rule_matches)
-            
+
             for m in unique_matches:
+                # --- SmartRule: escalation / de-escalation ---
+                effective_risk = rule.risk_level
+                original_risk = None
+                escalation_reason = None
+
+                if compiled_escalations or compiled_deescalations:
+                    ctx_start = max(0, m['start'] - (rule.context_window if isinstance(rule, SmartRule) else 500))
+                    ctx_end = min(len(text), m['end'] + (rule.context_window if isinstance(rule, SmartRule) else 500))
+                    context_text = text[ctx_start:ctx_end]
+
+                    # Check de-escalation first (takes priority — more specific)
+                    for deesc_re in compiled_deescalations:
+                        if deesc_re.search(context_text):
+                            new_risk = _deescalate_risk(effective_risk)
+                            if new_risk != effective_risk:
+                                original_risk = effective_risk
+                                effective_risk = new_risk
+                                escalation_reason = f"De-escalated: context matches de-escalation pattern"
+                                logger.debug(
+                                    "Rule %s de-escalated %s -> %s",
+                                    rule.id, original_risk.value, effective_risk.value,
+                                )
+                            break
+
+                    # Check escalation (only if not already de-escalated)
+                    if original_risk is None:
+                        for esc_re in compiled_escalations:
+                            if esc_re.search(context_text):
+                                new_risk = _escalate_risk(effective_risk)
+                                if new_risk != effective_risk:
+                                    original_risk = effective_risk
+                                    effective_risk = new_risk
+                                    escalation_reason = f"Escalated: context matches escalation pattern"
+                                    logger.debug(
+                                        "Rule %s escalated %s -> %s",
+                                        rule.id, original_risk.value, effective_risk.value,
+                                    )
+                                break
+
                 matches.append(RuleMatch(
                     rule_id=rule.id,
                     rule_name=rule.name,
@@ -311,18 +496,20 @@ class RuleEngine:
                     match_text=m['match_text'],
                     start_offset=m['start'],
                     end_offset=m['end'],
-                    risk_level=rule.risk_level,
+                    risk_level=effective_risk,
                     primary_position=rule.primary_position,
                     fallback_position=rule.fallback_position,
                     is_deal_breaker=rule.is_deal_breaker,
+                    original_risk_level=original_risk,
+                    escalation_reason=escalation_reason,
                 ))
-        
+
         # De-duplicate across ALL rules (same text matched by different rules)
         matches = self._dedupe_cross_rule_matches(matches)
-        
+
         # Sort by position in document
         matches.sort(key=lambda m: m.start_offset)
-        
+
         return matches
     
     def _remove_overlapping_matches(self, matches: List[dict]) -> List[dict]:
@@ -498,15 +685,45 @@ class RuleEngine:
             if rule.suggested_language:
                 suggested_text = rule.suggested_language.get("text")
             
-            rules.append(RulePattern(
-                id=str(rule.id),
-                name=rule.clause_type,
-                clause_type=rule.clause_type,
-                risk_level=risk_level,
-                patterns=safe_patterns,
-                primary_position=rule.primary_position or suggested_text or "",
-                fallback_position=rule.fallback_position,
-                is_deal_breaker=rule.is_deal_breaker,
-            ))
-        
+            # Phase 4: Create SmartRule with escalation/de-escalation from detection_patterns
+            negative_pats = []
+            escalation_pats = []
+            deescalation_pats = []
+            context_win = 500
+            if rule.detection_patterns:
+                negative_pats = rule.detection_patterns.get("negative_patterns", [])
+                negative_pats = negative_pats if isinstance(negative_pats, list) else []
+                escalation_pats = rule.detection_patterns.get("escalation_conditions", [])
+                escalation_pats = escalation_pats if isinstance(escalation_pats, list) else []
+                deescalation_pats = rule.detection_patterns.get("de_escalation_conditions", [])
+                deescalation_pats = deescalation_pats if isinstance(deescalation_pats, list) else []
+                context_win = rule.detection_patterns.get("context_window", 500)
+
+            if negative_pats or escalation_pats or deescalation_pats:
+                rules.append(SmartRule(
+                    id=str(rule.id),
+                    name=rule.clause_type,
+                    clause_type=rule.clause_type,
+                    risk_level=risk_level,
+                    patterns=safe_patterns,
+                    primary_position=rule.primary_position or suggested_text or "",
+                    fallback_position=rule.fallback_position,
+                    is_deal_breaker=rule.is_deal_breaker,
+                    negative_patterns=negative_pats,
+                    context_window=context_win,
+                    escalation_conditions=escalation_pats,
+                    de_escalation_conditions=deescalation_pats,
+                ))
+            else:
+                rules.append(RulePattern(
+                    id=str(rule.id),
+                    name=rule.clause_type,
+                    clause_type=rule.clause_type,
+                    risk_level=risk_level,
+                    patterns=safe_patterns,
+                    primary_position=rule.primary_position or suggested_text or "",
+                    fallback_position=rule.fallback_position,
+                    is_deal_breaker=rule.is_deal_breaker,
+                ))
+
         return cls(rules=rules) if rules else cls()

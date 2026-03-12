@@ -25,6 +25,7 @@ export default function Templates() {
     const [previewId, setPreviewId] = useState<string | null>(null);
     const [previewContent, setPreviewContent] = useState<string | null>(null);
     const [downloading, setDownloading] = useState<string | null>(null);
+    const [error, setError] = useState('');
 
     const { data: templates, isLoading } = useQuery({
         queryKey: ['templates', filterCategory],
@@ -40,11 +41,11 @@ export default function Templates() {
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${template.name.replace(/[^a-zA-Z0-9]/g, '_')}.txt`;
+            a.download = `${template.name.replace(/[^a-zA-Z0-9]/g, '_')}.docx`;
             a.click();
             URL.revokeObjectURL(url);
         } catch (err) {
-            alert(err instanceof Error ? err.message : 'Download failed');
+            setError(err instanceof Error ? err.message : 'Download failed');
         } finally {
             setDownloading(null);
         }
@@ -89,6 +90,14 @@ export default function Templates() {
                         </select>
                     </div>
                 </div>
+
+                {/* Error banner */}
+                {error && (
+                    <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg mb-4 text-sm flex items-center justify-between">
+                        <span>{error}</span>
+                        <button onClick={() => setError('')} className="ml-2 text-red-400 hover:text-red-600 font-bold">&times;</button>
+                    </div>
+                )}
 
                 {/* Loading */}
                 {isLoading && (

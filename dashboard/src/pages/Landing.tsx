@@ -48,10 +48,10 @@ export default function Landing() {
             <nav className="fixed top-0 left-0 right-0 z-50 backdrop-blur-xl bg-white/85 border-b border-slate-200">
                 <div className="max-w-7xl mx-auto px-8 h-16 flex items-center justify-between">
                     <img src="/logo.png" alt="ContraRed" className="h-20" />
-                    <div className="flex items-center gap-10">
-                        <a href="#features" className="text-sm font-medium text-slate-600 no-underline hover:text-slate-900">Features</a>
-                        <a href="#how-it-works" className="text-sm font-medium text-slate-600 no-underline hover:text-slate-900">How It Works</a>
-                        <a href="#contact" className="text-sm font-medium text-slate-600 no-underline hover:text-slate-900">Contact</a>
+                    <div className="flex items-center gap-4 md:gap-10">
+                        <a href="#features" className="hidden md:block text-sm font-medium text-slate-600 no-underline hover:text-slate-900">Features</a>
+                        <a href="#how-it-works" className="hidden md:block text-sm font-medium text-slate-600 no-underline hover:text-slate-900">How It Works</a>
+                        <a href="#contact" className="hidden md:block text-sm font-medium text-slate-600 no-underline hover:text-slate-900">Contact</a>
                         <Link
                             to="/login"
                             className="text-sm font-semibold text-white bg-slate-900 px-6 py-2.5 rounded-lg no-underline hover:bg-slate-800 transition-colors"
@@ -77,7 +77,7 @@ export default function Landing() {
 
                 <div className="relative max-w-[900px] mx-auto px-8">
                     {/* Headline */}
-                    <h1 className="text-7xl font-extrabold tracking-tight leading-none mb-6 text-slate-900">
+                    <h1 className="text-4xl md:text-7xl font-extrabold tracking-tight leading-none mb-6 text-slate-900">
                         Catch liabilities
                         <br />
                         <span className="text-red-600">Before</span> you sign
@@ -127,7 +127,7 @@ export default function Landing() {
           TRUST INDICATORS
           ================================================================ */}
             <section className="bg-slate-50 border-y border-slate-200">
-                <div className="max-w-[1100px] mx-auto px-8 py-12 flex justify-center gap-16 flex-wrap">
+                <div className="max-w-[1100px] mx-auto px-8 py-12 flex justify-center gap-6 md:gap-16 flex-wrap">
                     {TRUST_INDICATORS.map((item) => (
                         <div key={item.text} className="flex items-center gap-2.5">
                             {item.icon}
@@ -149,12 +149,12 @@ export default function Landing() {
                         Every clause. Every risk. Every fix.
                     </h2>
                     <p className="text-lg text-slate-500 max-w-[600px] mx-auto">
-                        Purpose-built for legal teams who reviews dozens of contracts every week.
+                        Purpose-built for legal teams who review dozens of contracts every week.
                     </p>
                 </div>
 
                 {/* Feature 1: Contract Analysis */}
-                <div className="max-w-[1200px] mx-auto mb-28 px-8 flex items-center gap-20">
+                <div className="max-w-[1200px] mx-auto mb-28 px-8 flex flex-col md:flex-row items-center gap-8 md:gap-20">
                     <div className="flex-1">
                         <div className="inline-flex items-center gap-2 bg-red-500/[0.08] text-red-600 px-3.5 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider mb-5">
                             Risk Detection
@@ -181,13 +181,14 @@ export default function Landing() {
                                 src="/feature-risk-summary.png"
                                 alt="Risk Summary"
                                 className="w-full block"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                             />
                         </div>
                     </div>
                 </div>
 
                 {/* Feature 2: Surgical Redlining — reversed layout */}
-                <div className="max-w-[1200px] mx-auto mb-28 px-8 flex items-center gap-20 flex-row-reverse">
+                <div className="max-w-[1200px] mx-auto mb-28 px-8 flex flex-col md:flex-row-reverse items-center gap-8 md:gap-20">
                     <div className="flex-1">
                         <div className="inline-flex items-center gap-2 bg-blue-600/[0.08] text-blue-600 px-3.5 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider mb-5">
                             Precision Redlining
@@ -214,6 +215,7 @@ export default function Landing() {
                                 src="/feature-redline.png"
                                 alt="Precision Redlining"
                                 className="w-full block"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                             />
                         </div>
                     </div>
@@ -221,7 +223,7 @@ export default function Landing() {
 
 
                 {/* Feature 3: Custom Playbooks */}
-                <div className="max-w-[1200px] mx-auto mb-28 px-8 flex items-center gap-20">
+                <div className="max-w-[1200px] mx-auto mb-28 px-8 flex flex-col md:flex-row items-center gap-8 md:gap-20">
                     <div className="flex-1">
                         <div className="inline-flex items-center gap-2 bg-green-500/[0.08] text-green-600 px-3.5 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider mb-5">
                             Custom Playbooks
@@ -249,13 +251,14 @@ export default function Landing() {
                                 src="/feature-playbook.png"
                                 alt="Custom Playbooks"
                                 className="w-full block"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                             />
                         </div>
                     </div>
                 </div>
 
                 {/* Feature 4: Word Integration — reversed */}
-                <div className="max-w-[1200px] mx-auto mb-20 px-8 flex items-center gap-20 flex-row-reverse">
+                <div className="max-w-[1200px] mx-auto mb-20 px-8 flex flex-col md:flex-row-reverse items-center gap-8 md:gap-20">
                     <div className="flex-1">
                         <div className="inline-flex items-center gap-2 bg-indigo-500/[0.08] text-indigo-500 px-3.5 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider mb-5">
                             Native Integration
@@ -282,6 +285,7 @@ export default function Landing() {
                                 src="/feature-word-addin.png"
                                 alt="Word Add-in"
                                 className="w-full block"
+                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                             />
                         </div>
                     </div>
@@ -380,14 +384,14 @@ export default function Landing() {
           FOOTER
           ================================================================ */}
             <footer className="pt-16 pb-8 px-8 bg-slate-900 border-t border-slate-800">
-                <div className="max-w-[1100px] mx-auto flex justify-between items-start">
+                <div className="max-w-[1100px] mx-auto flex flex-col md:flex-row justify-between items-start gap-8">
                     <div>
                         <img src="/logo.png" alt="ContraRed" className="h-6 opacity-70" />
                         <p className="text-[13px] text-slate-500 mt-4">
                             Contract intelligence for enterprise legal teams.
                         </p>
                     </div>
-                    <div className="flex gap-20">
+                    <div className="flex gap-10 md:gap-20">
                         <div>
                             <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">Product</h4>
                             <div className="flex flex-col gap-2.5">

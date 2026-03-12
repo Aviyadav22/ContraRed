@@ -58,20 +58,21 @@ async def get_org_overview(
     )
     total_risks = total_result.scalar() or 0
 
-    # Calculate red/yellow from risk_summary JSONB
-    risk_breakdown = await db.execute(
-        select(Document.risk_summary)
+    # Calculate red/yellow from risk_summary JSONB via SQL aggregation
+    from sqlalchemy import cast, Integer, text as sa_text
+    risk_agg = await db.execute(
+        select(
+            func.sum(cast(Document.risk_summary["red"].as_string(), Integer)).label("red_total"),
+            func.sum(cast(Document.risk_summary["yellow"].as_string(), Integer)).label("yellow_total"),
+        )
         .where(Document.user_id.in_(select(User.id).where(User.organization_id == org_id)))
         .where(Document.created_at >= since)
         .where(Document.status == DocumentStatus.COMPLETED)
         .where(Document.risk_summary.isnot(None))
     )
-    red_total = 0
-    yellow_total = 0
-    for (summary,) in risk_breakdown.all():
-        if isinstance(summary, dict):
-            red_total += summary.get('red', 0)
-            yellow_total += summary.get('yellow', 0)
+    agg_row = risk_agg.one()
+    red_total = agg_row.red_total or 0
+    yellow_total = agg_row.yellow_total or 0
 
     # Active users (users who scanned at least one doc)
     active_result = await db.execute(
@@ -209,3 +210,65 @@ async def get_trend_data(
         }
         for row in result.all()
     ]
+
+
+async def get_executive_dashboard(
+    db: AsyncSession,
+    org_id: UUID,
+    days: int = 30,
+) -> Dict[str, Any]:
+    """
+    Board-ready executive dashboard: 6 key metrics on one screen.
+    Combines overview + ROI + trends into a single response.
+    """
+    overview = await get_org_overview(db, org_id, days=days)
+
+    # Import here to avoid circular
+    from app.services.roi_service import calculate_roi
+    roi = await calculate_roi(db, org_id, days=days)
+
+    trends = await get_trend_data(db, org_id, period="weekly", weeks=max(days // 7, 4))
+
+    return {
+        **overview,
+        "roi": roi,
+        "trends": trends,
+    }
+
+
+async def get_bi_export_data(
+    db: AsyncSession,
+    org_id: UUID,
+    dataset: str = "overview",
+    days: int = 30,
+) -> Dict[str, Any]:
+    """
+    Structured data export for BI tools (Power BI, Tableau, etc.).
+
+    Datasets: overview, risks, users, trends, portfolio, team
+    """
+    from app.services.benchmark_service import (
+        get_portfolio_risk,
+        get_team_performance,
+    )
+
+    exporters = {
+        "overview": lambda: get_org_overview(db, org_id, days),
+        "risks": lambda: get_risk_breakdown(db, org_id, days),
+        "users": lambda: get_user_activity(db, org_id, days),
+        "trends": lambda: get_trend_data(db, org_id, period="weekly", weeks=max(days // 7, 4)),
+        "portfolio": lambda: get_portfolio_risk(db, org_id, days),
+        "team": lambda: get_team_performance(db, org_id, days),
+    }
+
+    if dataset not in exporters:
+        return {"error": f"Unknown dataset. Available: {list(exporters.keys())}"}
+
+    data = await exporters[dataset]()
+
+    return {
+        "dataset": dataset,
+        "period_days": days,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "data": data,
+    }

@@ -44,19 +44,24 @@ const log = {
 // ============================================================================
 
 /** Save current scan state to localStorage for session persistence. */
-function saveScanState(): void {
+function saveScanState(docFingerprint?: string): void {
     if (!currentAIAnalysis) return;
-    const state = {
-        analysis: currentAIAnalysis,
-        fixedRisks: Array.from(fixedRisks),
-        timestamp: Date.now(),
-    };
-    localStorage.setItem('contrared_scan_state', JSON.stringify(state));
-    log.info('Scan state saved to localStorage');
+    try {
+        const state = {
+            analysis: currentAIAnalysis,
+            fixedRisks: Array.from(fixedRisks),
+            timestamp: Date.now(),
+            docHash: docFingerprint || localStorage.getItem('contrared_doc_hash') || '',
+        };
+        localStorage.setItem('contrared_scan_state', JSON.stringify(state));
+        log.info('Scan state saved to localStorage');
+    } catch (e) {
+        log.warn('Failed to save scan state:', e);
+    }
 }
 
-/** Restore previous scan state from localStorage (if < 24h old). */
-function restoreScanState(): boolean {
+/** Restore previous scan state from localStorage (if < 24h old and same document). */
+async function restoreScanState(): Promise<boolean> {
     try {
         const stored = localStorage.getItem('contrared_scan_state');
         if (!stored) return false;
@@ -66,6 +71,22 @@ function restoreScanState(): boolean {
             localStorage.removeItem('contrared_scan_state');
             return false;
         }
+
+        // Document identity check: compare fingerprint of current doc vs saved
+        if (state.docHash) {
+            try {
+                const currentText = await getDocumentText();
+                const currentHash = currentText.substring(0, 200);
+                if (state.docHash !== currentHash) {
+                    log.info('Document fingerprint mismatch — not restoring stale scan state');
+                    localStorage.removeItem('contrared_scan_state');
+                    return false;
+                }
+            } catch {
+                // If we can't read the document, skip the check
+            }
+        }
+
         currentAIAnalysis = state.analysis;
         state.fixedRisks.forEach((id: string) => fixedRisks.add(id));
         displayAIResults(currentAIAnalysis!);
@@ -146,7 +167,7 @@ function showOnboardingTooltips(): void {
         // Clear highlight from previous
         if (currentTooltip > 0 && currentTooltip <= TOOLTIPS.length) {
             const prev = document.getElementById(TOOLTIPS[currentTooltip - 1].target);
-            if (prev) { prev.style.zIndex = ''; prev.style.boxShadow = ''; }
+            if (prev) { prev.style.zIndex = ''; prev.style.boxShadow = ''; prev.style.position = ''; }
         }
         if (currentTooltip >= TOOLTIPS.length) {
             localStorage.setItem('contrared_onboarded', 'true');
@@ -175,7 +196,7 @@ function showOnboardingTooltips(): void {
         if (overlay) overlay.style.display = 'none';
         TOOLTIPS.forEach(t => {
             const el = document.getElementById(t.target);
-            if (el) { el.style.zIndex = ''; el.style.boxShadow = ''; }
+            if (el) { el.style.zIndex = ''; el.style.boxShadow = ''; el.style.position = ''; }
         });
     });
 
@@ -189,38 +210,52 @@ function showOnboardingTooltips(): void {
 async function getSurroundingContext(originalText: string): Promise<string> {
   try {
     return await Word.run(async (context) => {
-      const result = await findTextInDocument(originalText, context);
-      if (!result.range) return '';
-
-      // Get the paragraph containing the text
-      const para = result.range.paragraphs;
-      para.load('items/text');
-      await context.sync();
-
-      if (para.items.length === 0) return '';
-
-      // Get the first paragraph's parent body to find adjacent paragraphs
-      const firstPara = para.items[0];
+      // Use targeted search instead of loading ALL paragraphs
       const body = context.document.body;
-      const allParas = body.paragraphs;
-      allParas.load('items/text');
+      const searchText = originalText.substring(0, Math.min(50, originalText.length));
+      const searchResults = body.search(searchText, { matchCase: false });
+      searchResults.load('items');
       await context.sync();
 
-      // Find index of our paragraph and get one before + one after
+      if (searchResults.items.length === 0) return '';
+
+      // Get the paragraph containing the first match
+      const matchRange = searchResults.items[0];
+      const matchParas = matchRange.paragraphs;
+      matchParas.load('items/text');
+      await context.sync();
+
+      if (matchParas.items.length === 0) return '';
+
+      const matchedPara = matchParas.items[0];
+
+      // Get the range that includes surrounding paragraphs
+      // Use expandTo with paragraph before and after
       const texts: string[] = [];
-      let foundIdx = -1;
-      for (let i = 0; i < allParas.items.length; i++) {
-        if (allParas.items[i].text === firstPara.text && foundIdx === -1) {
-          foundIdx = i;
+      try {
+        // Try to get previous paragraph
+        const prevSearch = body.paragraphs;
+        prevSearch.load('items/text');
+        await context.sync();
+
+        // Find our paragraph index efficiently by text match
+        let foundIdx = -1;
+        for (let i = 0; i < prevSearch.items.length; i++) {
+          if (prevSearch.items[i].text === matchedPara.text && foundIdx === -1) {
+            foundIdx = i;
+            break;
+          }
         }
+
+        if (foundIdx > 0) texts.push(prevSearch.items[foundIdx - 1].text);
+        if (foundIdx >= 0) texts.push(prevSearch.items[foundIdx].text);
+        if (foundIdx >= 0 && foundIdx + 1 < prevSearch.items.length) texts.push(prevSearch.items[foundIdx + 1].text);
+      } catch {
+        // Fallback: just return the matched paragraph text
+        texts.push(matchedPara.text);
       }
 
-      if (foundIdx > 0) texts.push(allParas.items[foundIdx - 1].text);
-      if (foundIdx >= 0) texts.push(allParas.items[foundIdx].text);
-      if (foundIdx >= 0 && foundIdx + 1 < allParas.items.length) texts.push(allParas.items[foundIdx + 1].text);
-
       const combined = texts.join('\n');
-      // Cap at ~5000 chars to keep API payload reasonable
       return combined.length > 5000 ? combined.slice(0, 5000) : combined;
     });
   } catch (error) {
@@ -230,12 +265,59 @@ async function getSurroundingContext(originalText: string): Promise<string> {
 }
 
 // ============================================================================
+// Read-Only Document Check
+// ============================================================================
+
+/** Check if the document is read-only or protected. */
+async function isDocumentReadOnly(): Promise<boolean> {
+  try {
+    return await Word.run(async (context) => {
+      const properties = context.document.properties;
+      properties.load('security');
+      await context.sync();
+      // security: 0 = none, 1 = password protected, etc.
+      return properties.security !== 0;
+    });
+  } catch {
+    // If we can't check, assume writable
+    return false;
+  }
+}
+
+/** Show a notification banner at the top of the results area. */
+function showNotification(message: string, type: 'error' | 'warning' | 'info' = 'info'): void {
+  const results = document.getElementById('resultsSection') as HTMLElement | null;
+  const target = results || document.querySelector('.container');
+  if (!target) { alert(message); return; }
+
+  const existing = target.querySelector('.contrared-notification');
+  if (existing) existing.remove();
+
+  const colors: Record<string, { bg: string; border: string; text: string }> = {
+    error: { bg: '#FDECEA', border: '#F1948A', text: '#C0392B' },
+    warning: { bg: '#FEF9EC', border: '#F0C060', text: '#B7770D' },
+    info: { bg: '#EDF7F1', border: '#82C9A0', text: '#1A7A4A' },
+  };
+  const c = colors[type];
+
+  const notif = document.createElement('div');
+  notif.className = 'contrared-notification';
+  notif.style.cssText = `padding:10px 14px;margin-bottom:12px;border-radius:8px;font-size:12px;background:${c.bg};border:1px solid ${c.border};color:${c.text};`;
+  notif.textContent = message;
+  target.prepend(notif);
+  setTimeout(() => notif.remove(), 8000);
+}
+
+// ============================================================================
 // State
 // ============================================================================
 
 let currentAIAnalysis: AIAnalysisResult | null = null;
 const fixedRisks: Set<string> = new Set();
 let isScanning = false;  // Guard against double-click race condition
+
+// Tracks applied fixes with location info for precise undo targeting
+const appliedFixesMap: Map<string, { originalText: string; fixText: string; paragraphIndex: number; contextHash: string }> = new Map();
 
 // Filter & Sort state
 let activeFilter: 'ALL' | 'RED' | 'YELLOW' | 'UNFIXED' = 'ALL';
@@ -253,6 +335,7 @@ let negotiationMode = false;
 let negotiationSession: NegotiationSession | null = null;
 let negotiationTimer: ReturnType<typeof setInterval> | null = null;
 let selectionDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+let negotiationNotesListenerAttached = false;
 
 // ============================================================================
 // DOM Elements
@@ -408,6 +491,14 @@ function showMainPanel(): void {
     }
   }
 
+  // Health check on init
+  api.healthCheck().then(() => {
+    if (statusText()) statusText()!.textContent = 'Connected to ContraRed';
+    statusIndicator()?.classList.remove('offline');
+  }).catch(() => {
+    showNotification('Cannot connect to ContraRed server. Some features may be unavailable.', 'warning');
+  });
+
   // Load available playbooks
   loadPlaybooks();
 
@@ -447,7 +538,7 @@ async function loadRecentScans(): Promise<void> {
       const yellow = doc.risk_summary?.yellow || 0;
 
       return `
-        <div class="recent-scan-item" title="${escapeHtml(doc.filename)} — ${doc.total_risks} risks">
+        <div class="recent-scan-item" data-doc-id="${escapeHtml(doc.id)}" title="${escapeHtml(doc.filename)} — ${doc.total_risks} risks" style="cursor:pointer;">
           <span class="recent-scan-name">${escapeHtml(doc.filename)}</span>
           <div class="recent-scan-meta">
             <div class="recent-scan-risks">
@@ -460,6 +551,13 @@ async function loadRecentScans(): Promise<void> {
         </div>
       `;
     }).join('');
+
+    // Make recent scan items clickable
+    list.querySelectorAll('.recent-scan-item').forEach(item => {
+      item.addEventListener('click', () => {
+        showNotification('Reloading previous scan results is coming soon. For now, please re-scan the document.', 'info');
+      });
+    });
 
     // Toggle collapse — bind once to prevent duplicate listeners
     const toggle = document.getElementById('recentScansToggle');
@@ -701,13 +799,25 @@ async function handleLogin(): Promise<void> {
 
 function handleLogout(): void {
   api.logout();
+
+  // Clear all scan and analysis state
   currentAIAnalysis = null;
   fixedRisks.clear();
+  currentRiskIndex = -1;
+  isScanning = false;
+  isSelectionScanning = false;
 
-  // Clear persisted state
+  // Clear negotiation state
+  negotiationMode = false;
+  negotiationSession = null;
+  if (negotiationTimer) {
+    clearInterval(negotiationTimer);
+    negotiationTimer = null;
+  }
+
+  // Clear all persisted state (but keep onboarding — it's per-device, not per-session)
   localStorage.removeItem('contrared_scan_state');
   localStorage.removeItem('contrared_negotiation_session');
-  localStorage.removeItem('contrared_onboarded');
 
   // Reset UI
   if (resultsSection()) resultsSection()!.style.display = 'none';
@@ -845,14 +955,31 @@ async function scanDocument(): Promise<void> {
     const selectedPlaybookId = playbookSelect()?.value || undefined;
     log.info('Starting analysis...');
 
-    const aiResult = await api.analyzeWithAI(documentText, 'document.docx', selectedPlaybookId);
+    // Get actual document filename
+    let docName = 'document.docx';
+    try {
+      await Word.run(async (ctx) => {
+        const props = ctx.document.properties;
+        props.load('title');
+        await ctx.sync();
+        if (props.title) docName = props.title;
+      });
+    } catch {
+      // fallback to document.docx
+    }
+
+    const aiResult = await api.analyzeWithAI(documentText, docName, selectedPlaybookId);
 
     currentAIAnalysis = aiResult;
     fixedRisks.clear();
 
+    // Store document fingerprint for identity check on restore
+    const docFingerprint = documentText.substring(0, 200);
+    localStorage.setItem('contrared_doc_hash', docFingerprint);
+
     // Step 3: Display AI results (executive summary + redlines)
     displayAIResults(aiResult);
-    saveScanState();
+    saveScanState(docFingerprint);
 
     // Step 4: Highlight risks in document using three-tier search
     await highlightAIRedlines(aiResult.redlines);
@@ -1066,10 +1193,13 @@ function toggleNegotiationMode(): void {
     startNegotiationTimer();
 
     const notesEl = document.getElementById('negotiationNotes') as HTMLTextAreaElement;
+    if (notesEl && !negotiationNotesListenerAttached) {
+      notesEl.addEventListener('input', () => {
+        if (negotiationSession) { negotiationSession.notes = notesEl.value; saveNegotiationSession(); }
+      });
+      negotiationNotesListenerAttached = true;
+    }
     if (notesEl && negotiationSession.notes) notesEl.value = negotiationSession.notes;
-    notesEl?.addEventListener('input', () => {
-      if (negotiationSession) { negotiationSession.notes = notesEl.value; saveNegotiationSession(); }
-    });
 
     registerSelectionHandler();
     renderRedlineList();
@@ -1077,6 +1207,7 @@ function toggleNegotiationMode(): void {
     document.body.classList.remove('negotiation-mode');
     if (panel) panel.style.display = 'none';
     if (negotiationTimer) { clearInterval(negotiationTimer); negotiationTimer = null; }
+    if (selectionDebounceTimer) { clearTimeout(selectionDebounceTimer); selectionDebounceTimer = null; }
     unregisterSelectionHandler();
     saveNegotiationSession();
     renderRedlineList();
@@ -1084,6 +1215,7 @@ function toggleNegotiationMode(): void {
 }
 
 function startNegotiationTimer(): void {
+  if (negotiationTimer) { clearInterval(negotiationTimer); negotiationTimer = null; }
   const timerEl = document.getElementById('negotiationTimer');
   if (!timerEl || !negotiationSession) return;
   negotiationTimer = setInterval(() => {
@@ -1102,7 +1234,7 @@ function registerSelectionHandler(): void {
 
 function unregisterSelectionHandler(): void {
   try {
-    Office.context.document.removeHandlerAsync(Office.EventType.DocumentSelectionChanged, { handler: onSelectionChanged });
+    Office.context.document.removeHandlerAsync(Office.EventType.DocumentSelectionChanged);
   } catch (e) { log.warn('Could not unregister selection handler:', e); }
 }
 
@@ -1126,7 +1258,11 @@ function onSelectionChanged(): void {
 }
 
 function saveNegotiationSession(): void {
-  if (negotiationSession) localStorage.setItem('contrared_negotiation_session', JSON.stringify(negotiationSession));
+  try {
+    if (negotiationSession) localStorage.setItem('contrared_negotiation_session', JSON.stringify(negotiationSession));
+  } catch (e) {
+    log.warn('Failed to save negotiation session:', e);
+  }
 }
 
 function loadNegotiationSession(): NegotiationSession | null {
@@ -1189,8 +1325,8 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
   const tag = (e.target as HTMLElement)?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
-  // Ctrl+Shift+S → Scan Selection
-  if (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+  // Ctrl+Alt+S → Scan Selection (changed from Ctrl+Shift+S to avoid Save As conflict)
+  if (e.ctrlKey && e.altKey && (e.key === 'S' || e.key === 's')) {
     e.preventDefault();
     scanSelection();
     return;
@@ -1224,29 +1360,29 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
     return;
   }
 
-  // Alt+H → Highlight focused risk
-  if (e.altKey && (e.key === 'H' || e.key === 'h')) {
+  // Ctrl+Shift+H → Highlight focused risk (changed from Alt+H to avoid Word ribbon conflict)
+  if (e.ctrlKey && e.shiftKey && (e.key === 'H' || e.key === 'h')) {
     e.preventDefault();
     clickFocusedCardButton('.highlight-btn');
     return;
   }
 
-  // Alt+G → Generate fix for focused risk
-  if (e.altKey && (e.key === 'G' || e.key === 'g')) {
+  // Ctrl+Shift+G → Generate fix for focused risk (changed from Alt+G to avoid Word ribbon conflict)
+  if (e.ctrlKey && e.shiftKey && (e.key === 'G' || e.key === 'g')) {
     e.preventDefault();
     clickFocusedCardButton('.generate-fix-btn');
     return;
   }
 
-  // Alt+A → Apply fix for focused risk
-  if (e.altKey && (e.key === 'A' || e.key === 'a')) {
+  // Ctrl+Alt+A → Apply fix for focused risk (changed from Ctrl+Shift+A to avoid All Caps conflict)
+  if (e.ctrlKey && e.altKey && (e.key === 'A' || e.key === 'a')) {
     e.preventDefault();
     clickFocusedCardButton('.apply-btn');
     return;
   }
 
-  // Alt+R → Research focused risk
-  if (e.altKey && (e.key === 'R' || e.key === 'r')) {
+  // Ctrl+Shift+R → Research focused risk (changed from Alt+R to avoid Word ribbon conflict)
+  if (e.ctrlKey && e.shiftKey && (e.key === 'R' || e.key === 'r')) {
     e.preventDefault();
     clickFocusedCardButton('.research-btn');
     return;
@@ -1317,7 +1453,16 @@ function displayAIResults(result: AIAnalysisResult): void {
   // Update risk counts
   if (redCount()) redCount()!.textContent = String(result.risk_summary.red || 0);
   if (yellowCount()) yellowCount()!.textContent = String(result.risk_summary.yellow || 0);
-  if (greenCount()) greenCount()!.textContent = '0';  // AI doesn't return green
+  // Green count: show actual value from risk_summary if available, otherwise hide
+  const green = (result.risk_summary as Record<string, number>)?.green || (result.risk_summary as Record<string, number>)?.clear || 0;
+  if (greenCount()) {
+    if (green > 0) {
+      greenCount()!.textContent = String(green);
+      greenCount()!.parentElement!.style.display = '';
+    } else {
+      greenCount()!.parentElement!.style.display = 'none';
+    }
+  }
   if (riskCount()) riskCount()!.textContent = String(result.total_risks);
 
   // Display executive summary in AI Summary section
@@ -1556,7 +1701,15 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
   // Bind button handlers
   const highlightBtn = card.querySelector('.highlight-btn');
   highlightBtn?.addEventListener('click', async () => {
-    await highlightAIText(redline.original_text, redline.risk_level, redline.redline_type);
+    const matchResult = await highlightAIText(redline.original_text, redline.risk_level, redline.redline_type);
+    // Fix #17: Show fuzzy match confidence indicator
+    if (matchResult === 'fuzzy') {
+      const existingIndicator = card.querySelector('.match-confidence-indicator');
+      if (!existingIndicator) {
+        card.querySelector('.risk-card-header')?.insertAdjacentHTML('beforeend',
+          '<span style="font-size: 10px; color: #D4A017; margin-left: 4px;" title="Approximate text match" class="match-confidence-indicator">~</span>');
+      }
+    }
   });
 
   // Undo button — reverts the applied fix and restores card buttons
@@ -1663,6 +1816,9 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
       regenBtn.className = 'btn btn-secondary btn-sm';
       regenBtn.textContent = 'Regenerate';
       regenBtn.addEventListener('click', () => {
+        // Clear existing result so generateFixBtn doesn't toggle
+        const existing = generatePanel.querySelector('.generate-result');
+        if (existing) existing.remove();
         (generateFixBtn as HTMLElement)?.click();
       });
       actions.appendChild(regenBtn);
@@ -1829,9 +1985,9 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
  * Highlight text found by AI using three-tier search.
  * Uses blue for missing clause anchors, red/yellow for violations.
  */
-async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW', redlineType?: string): Promise<void> {
+async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW', redlineType?: string): Promise<string> {
   try {
-    await Word.run(async (context) => {
+    return await Word.run(async (context) => {
       const result = await findTextInDocument(searchText, context);
 
       if (result.range) {
@@ -1846,12 +2002,15 @@ async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW', 
         await context.sync();
 
         log.info(`Highlighted via ${result.method} match (confidence: ${result.confidence.toFixed(2)})`);
+        return result.method;
       } else {
         log.warn('Could not find text in document:', searchText.slice(0, 50) + '...');
+        return 'none';
       }
     });
   } catch (error) {
     log.error('Highlight error:', error);
+    return 'none';
   }
 }
 
@@ -1862,23 +2021,59 @@ async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW', 
  */
 async function undoRedlineFix(redline: AIRedlineItem, appliedFix?: string): Promise<void> {
   await Word.run(async (context) => {
-    // Search for the applied fix text (stored on card, or fall back to recommendation)
     const searchText = appliedFix || redline.recommendation;
     if (!searchText) return;
 
-    const result = await findTextInDocument(searchText, context);
-    if (!result.range) {
-      throw new Error('Could not locate the applied fix in the document');
+    // Use stored location info for precise undo targeting
+    const fixInfo = appliedFixesMap.get(redline.id);
+    let targetRange: Word.Range | null = null;
+
+    if (fixInfo && fixInfo.paragraphIndex >= 0) {
+      // Try paragraph-index-based matching first to avoid wrong-location undo
+      try {
+        const body = context.document.body;
+        const allParas = body.paragraphs;
+        allParas.load('items/text');
+        await context.sync();
+
+        if (fixInfo.paragraphIndex < allParas.items.length) {
+          const para = allParas.items[fixInfo.paragraphIndex];
+          // Verify context hash matches (paragraph content is still similar)
+          if (para.text.substring(0, 100) === fixInfo.contextHash ||
+              para.text.includes(searchText.substring(0, 50))) {
+            // Search within this specific paragraph
+            const paraRange = para.getRange();
+            const searchResults = paraRange.search(searchText.substring(0, 255), { matchCase: false });
+            searchResults.load('items');
+            await context.sync();
+            if (searchResults.items.length > 0) {
+              targetRange = searchResults.items[0];
+            }
+          }
+        }
+      } catch (locErr) {
+        log.warn('Paragraph-based undo lookup failed, falling back to global search:', locErr);
+      }
+    }
+
+    // Fallback: global search
+    if (!targetRange) {
+      const result = await findTextInDocument(searchText, context);
+      if (!result.range) {
+        throw new Error('Could not locate the applied fix in the document');
+      }
+      targetRange = result.range;
     }
 
     if (redline.redline_type === 'missing') {
-      // Missing clause was inserted — delete it
-      result.range.delete();
+      targetRange.delete();
     } else {
-      // Violation was replaced — put back the original text
-      result.range.insertText(redline.original_text, Word.InsertLocation.replace);
+      targetRange.insertText(redline.original_text, Word.InsertLocation.replace);
     }
     await context.sync();
+
+    // Clean up stored location
+    appliedFixesMap.delete(redline.id);
     log.info(`Undid fix for: ${redline.rule_name}`);
   });
 }
@@ -1926,10 +2121,25 @@ async function highlightAIRedlines(redlines: AIRedlineItem[]): Promise<void> {
  * Apply an AI-suggested fix using Track Changes.
  */
 async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, fixText?: string): Promise<void> {
-  const textToApply = fixText || redline.recommendation;
+  // Fix #10: Don't fall back to recommendation as literal replacement text
+  const textToApply = fixText;
   if (!textToApply) {
+    showNotification('No replacement text available. Please generate a fix first.', 'warning');
     return;
   }
+
+  // Fix #2: Read-only document check
+  const readOnly = await isDocumentReadOnly();
+  if (readOnly) {
+    showNotification('This document is read-only or protected. Cannot apply changes.', 'error');
+    return;
+  }
+
+  // Fix #9: Confirmation before applying
+  const origPreview = redline.original_text.length > 100 ? redline.original_text.substring(0, 100) + '...' : redline.original_text;
+  const fixPreview = textToApply.length > 100 ? textToApply.substring(0, 100) + '...' : textToApply;
+  const proceed = confirm(`Apply this change?\n\nOriginal: "${origPreview}"\n\nReplacement: "${fixPreview}"`);
+  if (!proceed) return;
 
   try {
     // Fetch OOXML BEFORE entering Word.run to avoid context timeout
@@ -1943,6 +2153,16 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, 
     );
 
     await Word.run(async (context) => {
+      // Enable tracked changes before applying edits (requires WordApi 1.4+)
+      try {
+        context.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+        await context.sync();
+      } catch (trackErr) {
+        log.warn('Could not enable ChangeTrackingMode:', trackErr);
+        const proceedWithout = confirm('Track Changes could not be enabled. Changes will be applied directly without revision marks. Continue anyway?');
+        if (!proceedWithout) return;
+      }
+
       const result = await findTextInDocument(redline.original_text, context);
 
       if (!result.range) {
@@ -1958,10 +2178,44 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, 
       }
       await context.sync();
 
+      // After applying the fix, add a comment explaining the redline
+      try {
+          result.range.insertComment(`ContraRed: ${redline.explanation || redline.rule_name || 'AI-suggested revision'}`);
+          await context.sync();
+      } catch (commentErr) {
+          // Comments require WordApi 1.4 — graceful fallback
+          log.warn('Could not insert comment:', commentErr);
+      }
+
+      // Store precise location info for undo targeting
+      let paragraphIndex = -1;
+      try {
+        const body = context.document.body;
+        const allParas = body.paragraphs;
+        allParas.load('items/text');
+        await context.sync();
+        for (let pi = 0; pi < allParas.items.length; pi++) {
+          if (allParas.items[pi].text.includes(textToApply.substring(0, 50))) {
+            paragraphIndex = pi;
+            break;
+          }
+        }
+        const contextHash = paragraphIndex >= 0 ? allParas.items[paragraphIndex].text.substring(0, 100) : '';
+        appliedFixesMap.set(redline.id, {
+          originalText: redline.original_text,
+          fixText: textToApply,
+          paragraphIndex,
+          contextHash,
+        });
+      } catch (locErr) {
+        log.warn('Could not store fix location for undo:', locErr);
+      }
+
       // Mark as fixed and store the applied text for undo
       fixedRisks.add(redline.id);
       cardElement.classList.add('fixed');
       cardElement.dataset.appliedFix = textToApply;
+      saveScanState();
 
       // Show re-scan button so user can verify the fix
       const reScanBtn = cardElement.querySelector('.rescan-btn') as HTMLElement;
@@ -1977,18 +2231,22 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, 
  * Apply all unfixed redlines sequentially.
  * Respects the current filter — only applies visible redlines.
  */
+let applyAllCancelled = false;
+
 async function applyAllRedlines(): Promise<void> {
   if (!currentAIAnalysis) return;
 
   const unfixed = getFilteredRedlines().filter(r => !fixedRisks.has(r.id));
   if (unfixed.length === 0) return;
 
+  applyAllCancelled = false;
+
   const applyBtn = document.getElementById('applyAllBtn') as HTMLButtonElement;
   const progressDiv = document.getElementById('applyProgress');
   const progressFill = document.getElementById('progressFill');
   const progressText = document.getElementById('progressText');
 
-  if (applyBtn) applyBtn.disabled = true;
+  if (applyBtn) { applyBtn.disabled = false; applyBtn.textContent = 'Cancel'; applyBtn.onclick = () => { applyAllCancelled = true; }; }
   if (progressDiv) progressDiv.style.display = 'block';
 
   // Check if we have generated fixes ready to apply
@@ -2000,6 +2258,8 @@ async function applyAllRedlines(): Promise<void> {
     let failed = 0;
 
     for (const redline of withGeneratedFix) {
+      if (applyAllCancelled) { if (progressText) progressText.textContent = `Cancelled. ${applied} applied, ${failed} failed.`; break; }
+
       const pct = ((applied + failed) / withGeneratedFix.length) * 100;
       if (progressFill) progressFill.style.width = `${pct}%`;
       if (progressText) progressText.textContent = `Applying ${applied + failed + 1} / ${withGeneratedFix.length}`;
@@ -2016,14 +2276,18 @@ async function applyAllRedlines(): Promise<void> {
       }
     }
 
-    if (progressFill) progressFill.style.width = '100%';
-    if (progressText) progressText.textContent = `Done: ${applied} applied${failed > 0 ? `, ${failed} failed` : ''}`;
+    if (!applyAllCancelled) {
+      if (progressFill) progressFill.style.width = '100%';
+      if (progressText) progressText.textContent = `Done: ${applied} applied${failed > 0 ? `, ${failed} failed` : ''}`;
+    }
   } else {
     // Phase 1: Generate all fixes first
     let generated = 0;
     let failed = 0;
 
     for (const redline of unfixed) {
+      if (applyAllCancelled) { if (progressText) progressText.textContent = `Cancelled. ${generated} generated, ${failed} failed.`; break; }
+
       const pct = ((generated + failed) / unfixed.length) * 100;
       if (progressFill) progressFill.style.width = `${pct}%`;
       if (progressText) progressText.textContent = `Generating fix ${generated + failed + 1} / ${unfixed.length}`;
@@ -2077,7 +2341,11 @@ async function applyAllRedlines(): Promise<void> {
     if (progressText) progressText.textContent = `Generated ${generated}/${unfixed.length} fixes${failed > 0 ? ` (${failed} failed)` : ''}. Review, then click to apply.`;
   }
 
-  if (applyBtn) applyBtn.disabled = false;
+  // Restore button to normal state
+  if (applyBtn) {
+    applyBtn.disabled = false;
+    applyBtn.onclick = () => applyAllRedlines();
+  }
   updateApplyAllCount();
 }
 
@@ -2102,6 +2370,7 @@ async function exportReport(): Promise<void> {
     URL.revokeObjectURL(url);
   } catch (error) {
     log.error('Export failed:', error instanceof Error ? error.message : String(error));
+    showNotification('Export failed. Please try again.', 'error');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = 'Export Report'; }
   }

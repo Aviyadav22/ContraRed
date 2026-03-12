@@ -1,29 +1,45 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useState, useMemo } from 'react';
-import { listClauses, createClause, deleteClause, type ClauseLibraryItem } from '@/api/client';
+import { listClauses, createClause, updateClause, deleteClause, type ClauseLibraryItem } from '@/api/client';
 import AppHeader from '@/components/AppHeader';
 
 export default function ClauseLibrary() {
     const queryClient = useQueryClient();
     const [showCreate, setShowCreate] = useState(false);
+    const [editingId, setEditingId] = useState<string | null>(null);
     const [newName, setNewName] = useState('');
     const [newType, setNewType] = useState('');
     const [newText, setNewText] = useState('');
     const [filterType, setFilterType] = useState('');
+    const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
     const { data: clauses, isLoading, error } = useQuery({
         queryKey: ['clauses', filterType],
         queryFn: () => listClauses(filterType || undefined),
     });
 
+    const resetForm = () => {
+        setShowCreate(false);
+        setEditingId(null);
+        setNewName('');
+        setNewType('');
+        setNewText('');
+    };
+
     const createMutation = useMutation({
         mutationFn: (data: { clause_type: string; name: string; approved_text: string }) => createClause(data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['clauses'] });
-            setShowCreate(false);
-            setNewName('');
-            setNewType('');
-            setNewText('');
+            resetForm();
+        },
+    });
+
+    const updateMutation = useMutation({
+        mutationFn: ({ id, data }: { id: string; data: { clause_type: string; name: string; approved_text: string } }) =>
+            updateClause(id, data),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['clauses'] });
+            resetForm();
         },
     });
 
@@ -32,11 +48,24 @@ export default function ClauseLibrary() {
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['clauses'] }),
     });
 
-    const handleCreate = (e: React.FormEvent) => {
+    const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (newName.trim() && newType.trim() && newText.trim()) {
-            createMutation.mutate({ clause_type: newType, name: newName, approved_text: newText });
+            const payload = { clause_type: newType, name: newName, approved_text: newText };
+            if (editingId) {
+                updateMutation.mutate({ id: editingId, data: payload });
+            } else {
+                createMutation.mutate(payload);
+            }
         }
+    };
+
+    const handleEdit = (clause: ClauseLibraryItem) => {
+        setEditingId(clause.id);
+        setNewName(clause.name);
+        setNewType(clause.clause_type);
+        setNewText(clause.approved_text);
+        setShowCreate(true);
     };
 
     // Group clauses by type
@@ -58,7 +87,7 @@ export default function ClauseLibrary() {
                         <p className="text-sm text-slate-500 mt-1">Saved approved clause language for contract review</p>
                     </div>
                     <button
-                        onClick={() => setShowCreate(!showCreate)}
+                        onClick={() => { if (showCreate) { resetForm(); } else { setShowCreate(true); } }}
                         className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors"
                     >
                         + New Clause
@@ -67,7 +96,7 @@ export default function ClauseLibrary() {
 
                 {/* Create Form */}
                 {showCreate && (
-                    <form onSubmit={handleCreate} className="bg-white border border-slate-200 rounded-xl p-6 mb-6 space-y-4">
+                    <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-xl p-6 mb-6 space-y-4">
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <label htmlFor="clause-type" className="block text-sm font-medium text-slate-700 mb-1">Clause Type</label>
@@ -107,14 +136,16 @@ export default function ClauseLibrary() {
                         <div className="flex gap-3">
                             <button
                                 type="submit"
-                                disabled={createMutation.isPending}
+                                disabled={createMutation.isPending || updateMutation.isPending}
                                 className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
                             >
-                                {createMutation.isPending ? 'Saving...' : 'Save Clause'}
+                                {(createMutation.isPending || updateMutation.isPending)
+                                    ? 'Saving...'
+                                    : editingId ? 'Update Clause' : 'Save Clause'}
                             </button>
                             <button
                                 type="button"
-                                onClick={() => setShowCreate(false)}
+                                onClick={resetForm}
                                 className="px-4 py-2 text-slate-600 border border-slate-200 rounded-lg text-sm hover:bg-slate-50"
                             >
                                 Cancel
@@ -174,16 +205,28 @@ export default function ClauseLibrary() {
                                             </span>
                                         )}
                                     </div>
-                                    <button
-                                        onClick={() => {
-                                            if (confirm('Delete this clause?')) {
-                                                deleteMutation.mutate(clause.id);
-                                            }
-                                        }}
-                                        className="text-slate-400 hover:text-red-500 text-sm transition-colors"
-                                    >
-                                        Delete
-                                    </button>
+                                    <div className="flex items-center gap-3">
+                                        <button
+                                            onClick={() => handleEdit(clause)}
+                                            className="text-slate-400 hover:text-slate-700 text-sm transition-colors"
+                                        >
+                                            Edit
+                                        </button>
+                                        {confirmDeleteId === clause.id ? (
+                                            <span className="inline-flex items-center gap-1.5">
+                                                <span className="text-[12px] text-slate-500">Delete?</span>
+                                                <button onClick={() => { deleteMutation.mutate(clause.id); setConfirmDeleteId(null); }} className="text-[12px] font-semibold text-red-600 bg-red-50 px-2 py-0.5 rounded hover:bg-red-100 transition-colors">Yes</button>
+                                                <button onClick={() => setConfirmDeleteId(null)} className="text-[12px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded hover:bg-slate-200 transition-colors">No</button>
+                                            </span>
+                                        ) : (
+                                            <button
+                                                onClick={() => setConfirmDeleteId(clause.id)}
+                                                className="text-slate-400 hover:text-red-500 text-sm transition-colors"
+                                            >
+                                                Delete
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
                                 <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">
                                     {clause.approved_text.length > 300

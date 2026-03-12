@@ -4,6 +4,16 @@ import { useState } from 'react';
 import { listPlaybooks, createPlaybook, deletePlaybook, togglePlaybookPublish, isAdmin, type Playbook } from '@/api/client';
 import AppHeader from '@/components/AppHeader';
 
+function InlineConfirm({ message, onConfirm, onCancel }: { message: string; onConfirm: () => void; onCancel: () => void }) {
+    return (
+        <span className="inline-flex items-center gap-1.5 ml-2">
+            <span className="text-[12px] text-slate-500">{message}</span>
+            <button onClick={onConfirm} className="text-[12px] font-semibold text-red-600 bg-red-50 px-2 py-0.5 rounded hover:bg-red-100 transition-colors">Yes</button>
+            <button onClick={onCancel} className="text-[12px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded hover:bg-slate-200 transition-colors">No</button>
+        </span>
+    );
+}
+
 const categoryStyles: Record<string, string> = {
     saas: 'bg-blue-50 text-blue-600',
     nda: 'bg-purple-50 text-purple-600',
@@ -20,6 +30,7 @@ export default function Playbooks() {
     const [newName, setNewName] = useState('');
     const [newDescription, setNewDescription] = useState('');
     const admin = isAdmin();
+    const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
     const { data: playbooks, isLoading, error } = useQuery({
         queryKey: ['playbooks'],
@@ -213,16 +224,20 @@ export default function Playbooks() {
                                                         >
                                                             Edit
                                                         </Link>
-                                                        <button
-                                                            onClick={() => {
-                                                                if (confirm('Delete this playbook?')) {
-                                                                    deleteMutation.mutate(playbook.id);
-                                                                }
-                                                            }}
-                                                            className="text-[13px] font-semibold text-red-600 bg-transparent border-none cursor-pointer hover:text-red-700"
-                                                        >
-                                                            Delete
-                                                        </button>
+                                                        {confirmDeleteId === playbook.id ? (
+                                                            <InlineConfirm
+                                                                message="Delete?"
+                                                                onConfirm={() => { deleteMutation.mutate(playbook.id); setConfirmDeleteId(null); }}
+                                                                onCancel={() => setConfirmDeleteId(null)}
+                                                            />
+                                                        ) : (
+                                                            <button
+                                                                onClick={() => setConfirmDeleteId(playbook.id)}
+                                                                className="text-[13px] font-semibold text-red-600 bg-transparent border-none cursor-pointer hover:text-red-700"
+                                                            >
+                                                                Delete
+                                                            </button>
+                                                        )}
                                                     </>
                                                 ) : (
                                                     <span className="text-[13px] text-slate-400">View only</span>

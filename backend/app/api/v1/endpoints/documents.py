@@ -21,13 +21,13 @@ import httpx
 import zipfile
 from typing import List, Optional, Literal, Dict
 from uuid import UUID, uuid4
-from fastapi import APIRouter, Depends, HTTPException, status, Request, UploadFile, File, Form, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, UploadFile, File, Form, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
-from app.db.session import get_db
+from app.db.session import get_db, AsyncSessionLocal
 from app.models.user import User
 from app.models.document import Document, DocumentRisk, DocumentVersion, DocumentComparison, DocumentStatus
 from app.models.document import RiskLevel as DBRiskLevel
@@ -35,6 +35,7 @@ from app.models.audit_log import log_audit_event
 from app.models.playbook import Playbook
 from app.api.v1.endpoints.auth import get_current_user, limiter
 from app.api.v1.endpoints.billing import check_and_increment_quota
+from app.core.permissions import require_permission
 from app.services.rule_engine import RuleEngine, RuleMatch
 from app.services.ai_service import AIService
 from app.services.cache_service import get_cache
@@ -211,37 +212,59 @@ class DocumentListItem(BaseModel):
         from_attributes = True
 
 
-@router.get("/list", response_model=List[DocumentListItem])
+class DocumentListResponse(BaseModel):
+    items: List[DocumentListItem]
+    total: int
+
+
+@router.get("/list", response_model=DocumentListResponse)
 async def list_documents(
-    limit: int = 20,
-    offset: int = 0,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """List user's scanned documents (metadata only, ZDR-safe)."""
+    # Set RLS context for tenant isolation
+    from app.middleware.tenant_context import set_tenant_context
+    await set_tenant_context(
+        db=db,
+        user_id=str(current_user.id),
+        organization_id=str(current_user.organization_id) if current_user.organization_id else None,
+    )
+
+    # Total count
+    count_result = await db.execute(
+        select(func.count(Document.id)).where(Document.user_id == current_user.id)
+    )
+    total = count_result.scalar() or 0
+
     query = (
         select(Document)
         .where(Document.user_id == current_user.id)
         .order_by(Document.created_at.desc())
         .offset(offset)
-        .limit(min(limit, 100))
+        .limit(limit)
     )
     result = await db.execute(query)
     docs = result.scalars().all()
 
-    return [
-        DocumentListItem(
-            id=str(d.id),
-            filename=d.filename,
-            status=d.status.value if hasattr(d.status, 'value') else str(d.status),
-            total_risks=d.total_risks or 0,
-            risk_summary=d.risk_summary,
-            created_at=d.created_at.isoformat() if d.created_at else "",
-            version_number=d.version_number or 1,
-            content_hash=d.content_hash,
-        )
-        for d in docs
-    ]
+    return DocumentListResponse(
+        items=[
+            DocumentListItem(
+                id=str(d.id),
+                filename=d.filename,
+                status=d.status.value if hasattr(d.status, 'value') else str(d.status),
+                total_risks=d.total_risks or 0,
+                risk_summary=d.risk_summary,
+                created_at=d.created_at.isoformat() if d.created_at else "",
+                version_number=d.version_number or 1,
+                content_hash=d.content_hash,
+            )
+            for d in docs
+        ],
+        total=total,
+    )
 
 
 # ============================================================================
@@ -259,19 +282,35 @@ async def analyze_document(
 ):
     """
     Analyze document text for risks using Rule Engine + AI.
-    
+
+    DEPRECATED: Use /analyze-full for 5-stage pipeline analysis with
+    hallucination verification and confidence scoring.
+
+    This endpoint is kept for backward compatibility with the Word Add-in.
+
     ZERO DATA RETENTION (ZDR) MODE:
     - Document text is processed in RAM only, NEVER stored
     - Only metadata (filename, risk count) is stored for audit
-    
+
     Process:
     1. RuleEngine scans text with regex patterns (from playbook or defaults)
     2. AIService enriches matches (parallel with asyncio.gather)
     3. Audit log created (ZDR: no text stored)
     """
+    # Contract size limit (~100 pages)
+    MAX_CONTRACT_SIZE = 500_000  # 500KB
+    if len(request.text) > MAX_CONTRACT_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Document too large ({len(request.text):,} chars). Maximum is {MAX_CONTRACT_SIZE:,} characters (~100 pages). Try scanning sections individually.",
+        )
+
     # Get client info for audit
     client_ip = http_request.client.host if http_request.client else None
     user_agent = http_request.headers.get("user-agent")
+
+    # Track analysis start time for processing_duration_ms
+    analysis_start = time.monotonic()
 
     # Initialize services
     ai_service = AIService()
@@ -308,12 +347,14 @@ async def analyze_document(
     
     # Create document record (with org + version tracking)
     content_hash = Document.compute_content_hash(request.text)
+    word_count = len(request.text.split())
     document = Document(
         user_id=current_user.id,
         organization_id=current_user.organization_id,
         filename=request.filename,
         status=DocumentStatus.PROCESSING,
         content_hash=content_hash,
+        word_count=word_count,
     )
     db.add(document)
     await db.flush()
@@ -377,6 +418,7 @@ async def analyze_document(
             document.total_risks = len(enriched_matches)
             document.risk_summary = risk_summary
             document.status = DocumentStatus.COMPLETED
+            document.processing_duration_ms = int((time.monotonic() - analysis_start) * 1000)
             # NOTE: In ZDR mode, no clause_text is stored in DocumentRisk
 
             # Create audit log entry (no text, just metadata)
@@ -434,7 +476,8 @@ async def analyze_document(
             document.total_risks = len(enriched_matches)
             document.risk_summary = risk_summary
             document.status = DocumentStatus.COMPLETED
-            
+            document.processing_duration_ms = int((time.monotonic() - analysis_start) * 1000)
+
             await db.commit()
             
             for risk, _ in db_risks:
@@ -637,13 +680,32 @@ async def analyze_full_ai(
     Unlike /analyze, this does NOT use rule-based regex matching.
     Gemini performs holistic structural analysis + surgical redlining.
     """
+    # Contract size limit (~100 pages)
+    MAX_CONTRACT_SIZE = 500_000  # 500KB
+    if len(request.text) > MAX_CONTRACT_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Document too large ({len(request.text):,} chars). Maximum is {MAX_CONTRACT_SIZE:,} characters (~100 pages). Try scanning sections individually.",
+        )
+
+    # Set RLS context for tenant isolation
+    from app.middleware.tenant_context import set_tenant_context
+    await set_tenant_context(
+        db=db,
+        user_id=str(current_user.id),
+        organization_id=str(current_user.organization_id) if current_user.organization_id else None,
+    )
+
     # Get client info for audit
     client_ip = http_request.client.host if http_request.client else None
-    
+
+    # Track analysis start time for processing_duration_ms
+    analysis_start_full = time.monotonic()
+
     # Load playbook rules if specified
     playbook_rules = []
     playbook_name = "Default"
-    
+
     if request.playbook_id:
         try:
             playbook_uuid = UUID(request.playbook_id)
@@ -716,8 +778,27 @@ async def analyze_full_ai(
             risk_summary=risk_summary,
             content_hash=content_hash,
             processed_at=datetime.now(timezone.utc),
+            word_count=len(request.text.split()),
+            processing_duration_ms=int((time.monotonic() - analysis_start_full) * 1000),
         )
         db.add(doc)
+        await db.flush()
+
+        # Auto-create version snapshot (Phase 2.1)
+        version = DocumentVersion(
+            document_id=doc.id,
+            version_number=1,
+            content_hash=content_hash,
+            risk_summary=risk_summary,
+            total_risks=len(pipeline_result.redlines),
+            version_metadata={
+                "playbook": playbook_name,
+                "jurisdiction": pipeline_result.jurisdiction_code,
+                "pipeline_partial": pipeline_result.partial,
+            },
+            created_by=current_user.id,
+        )
+        db.add(version)
 
         # Log audit event (same transaction — single commit for both)
         await log_audit_event(
@@ -759,13 +840,8 @@ async def analyze_full_ai(
             for r in pipeline_result.redlines
         ]
 
-        # Get jurisdiction info from the pipeline's stage 3 (which calls gemini_analyzer)
-        jurisdiction_code = None
-        jurisdiction_name = None
-        # Extract from the analyzer's last result metadata if available
-        if hasattr(gemini_analyzer, '_last_jurisdiction_code'):
-            jurisdiction_code = gemini_analyzer._last_jurisdiction_code
-            jurisdiction_name = gemini_analyzer._last_jurisdiction_name
+        # Get jurisdiction info from the pipeline result (set during scope analysis)
+        jurisdiction_code = pipeline_result.jurisdiction_code
 
         return AIAnalysisResponse(
             document_id=doc_id,
@@ -777,6 +853,8 @@ async def analyze_full_ai(
             tokens_used=pipeline_result.total_tokens_used,
             hallucination_stats=pipeline_result.hallucination_stats or None,
             pipeline_partial=pipeline_result.partial,
+            jurisdiction=jurisdiction_code,
+            jurisdiction_name=getattr(pipeline_result, 'jurisdiction_name', None),
         )
         
     except HTTPException:
@@ -847,6 +925,11 @@ async def analyze_clause(
             playbook = result.scalar_one_or_none()
 
             if playbook:
+                # Access control check
+                if playbook.organization_id:
+                    if playbook.organization_id != current_user.organization_id and not playbook.is_public:
+                        raise HTTPException(status_code=403, detail={"message": "Access denied to this playbook.", "error_code": "forbidden"})
+
                 playbook_name = playbook.name
                 playbook_rules = [
                     {
@@ -971,14 +1054,17 @@ class BatchStatusResponse(BaseModel):
     status: Literal["processing", "completed", "partial_failure"]
 
 
-# Simple in-memory batch tracking (production should use Redis)
+# WARNING: In-memory batch tracking — state is lost on server restart or redeploy.
+# This is acceptable for short-lived batch jobs (results polled within minutes),
+# but a production-grade solution should use Redis or a database-backed store.
+# Stale entries older than 1 hour are cleaned up on each new batch request.
 _batch_store: Dict[str, dict] = {}
 
 
 @router.post("/batch-analyze", response_model=BatchAnalyzeResponse)
 @limiter.limit("5/minute")
 async def batch_analyze(
-    http_request: Request,
+    request: Request,
     files: List[UploadFile] = File(...),
     playbook_id: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
@@ -989,7 +1075,18 @@ async def batch_analyze(
 
     Max 10 files per batch. Only .docx files are accepted.
     Returns immediately with a batch_id to poll for status.
+    Charges 1 quota unit per valid file (not per batch).
     """
+    # Check quota upfront for all files (charge per valid file count after validation)
+    # We'll charge after counting valid files below
+
+    # Cleanup stale batch entries older than 1 hour
+    now = datetime.now(timezone.utc)
+    stale = [k for k, v in _batch_store.items()
+             if 'completed_at' in v and (now - datetime.fromisoformat(v['completed_at'])).total_seconds() > 3600]
+    for k in stale:
+        del _batch_store[k]
+
     if len(files) > 10:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1024,6 +1121,16 @@ async def batch_analyze(
         # Read file and extract text from .docx
         try:
             raw_bytes = await upload_file.read()
+            if len(raw_bytes) > 20 * 1024 * 1024:  # 20MB
+                file_statuses.append({
+                    "filename": filename,
+                    "status": "error",
+                    "document_id": None,
+                    "risk_summary": None,
+                    "error": "File exceeds 20MB limit.",
+                })
+                file_contents.append({"filename": filename, "text": None})
+                continue
             with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
                 if "word/document.xml" not in zf.namelist():
                     raise ValueError("Invalid .docx: missing word/document.xml")
@@ -1057,9 +1164,36 @@ async def batch_analyze(
                 "status": "error",
                 "document_id": None,
                 "risk_summary": None,
-                "error": f"Failed to read .docx: {str(e)}",
+                "error": "Failed to read .docx file",
             })
             file_contents.append({"filename": filename, "text": None})
+
+    # Charge quota per valid file (H5 fix: was only charging 1 for entire batch)
+    valid_file_count = sum(1 for fc in file_contents if fc["text"] is not None)
+    if valid_file_count > 0:
+        from app.api.v1.endpoints.billing import get_plan_info, _get_user_scan_count, _increment_usage, get_user_subscription
+        subscription = await get_user_subscription(current_user, db)
+        plan = subscription.plan.value if subscription else current_user.subscription_tier.value
+        plan_info = get_plan_info(plan)
+        used = await _get_user_scan_count(current_user, db)
+        limit = plan_info["scans"]
+
+        if limit > 0 and used + valid_file_count > limit:
+            overage_price = plan_info.get("overage_price_inr", 0)
+            if overage_price <= 0 or plan == "free":
+                raise HTTPException(
+                    status_code=402,
+                    detail={
+                        "message": f"Insufficient quota. Need {valid_file_count} scans but only {max(0, limit - used)} remaining.",
+                        "error_code": "quota_exceeded",
+                        "used": used,
+                        "limit": limit,
+                        "needed": valid_file_count,
+                    },
+                )
+
+        for _ in range(valid_file_count):
+            await _increment_usage(current_user, db)
 
     # Store batch info
     _batch_store[batch_id] = {
@@ -1069,9 +1203,19 @@ async def batch_analyze(
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
+    # Audit log
+    await log_audit_event(
+        db=db,
+        user=current_user,
+        action="batch_analyze",
+        resource_type="document",
+        details=json.dumps({"batch_id": batch_id, "file_count": len(files)}),
+    )
+    await db.commit()
+
     # Launch background processing
     asyncio.create_task(
-        _process_batch(batch_id, file_contents, playbook_id, str(current_user.id), db)
+        _process_batch(batch_id, file_contents, playbook_id, str(current_user.id))
     )
 
     logger.info(f"Batch {batch_id} created with {len(files)} files for user {current_user.id}")
@@ -1088,7 +1232,6 @@ async def _process_batch(
     file_contents: List[dict],
     playbook_id: Optional[str],
     user_id: str,
-    db: AsyncSession,
 ):
     """Background task to process all files in a batch concurrently."""
     semaphore = asyncio.Semaphore(3)  # Max 3 concurrent analyses
@@ -1098,18 +1241,19 @@ async def _process_batch(
     playbook_name = None
     if playbook_id:
         try:
-            result = await db.execute(
-                select(Playbook)
-                .options(selectinload(Playbook.rules_list))
-                .where(Playbook.id == playbook_id)
-            )
-            playbook = result.scalar_one_or_none()
-            if playbook:
-                playbook_name = playbook.name
-                playbook_rules = [
-                    {"name": r.name, "description": r.description, "severity": r.severity}
-                    for r in (playbook.rules_list or [])
-                ]
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    select(Playbook)
+                    .options(selectinload(Playbook.rules_list))
+                    .where(Playbook.id == UUID(playbook_id))
+                )
+                playbook = result.scalar_one_or_none()
+                if playbook:
+                    playbook_name = playbook.name
+                    playbook_rules = [
+                        {"name": r.clause_type, "description": r.primary_position, "severity": r.risk_level.value}
+                        for r in (playbook.rules_list or [])
+                    ]
         except Exception as e:
             logger.warning(f"Batch {batch_id}: failed to load playbook {playbook_id}: {e}")
 
@@ -1130,14 +1274,16 @@ async def _process_batch(
             batch["files"][idx]["status"] = "processing"
 
             try:
+                file_start = time.monotonic()
                 pipeline_result: PipelineResult = await asyncio.wait_for(
                     analysis_pipeline.run(
                         contract_text=file_info["text"],
                         playbook_rules=playbook_rules,
-                        playbook_name=playbook_name,
+                        playbook_name=playbook_name or "Default",
                     ),
                     timeout=120.0,
                 )
+                file_duration_ms = int((time.monotonic() - file_start) * 1000)
 
                 risk_summary = {
                     "red": sum(1 for r in pipeline_result.redlines if r.risk_level == "RED"),
@@ -1145,7 +1291,37 @@ async def _process_batch(
                     "total": len(pipeline_result.redlines),
                 }
 
-                doc_id = str(uuid4())
+                # Persist batch file result to database so analytics fields are populated
+                try:
+                    async with AsyncSessionLocal() as db_session:
+                        content_hash = Document.compute_content_hash(file_info["text"])
+                        batch_doc = Document(
+                            user_id=UUID(user_id),
+                            filename=file_info["filename"],
+                            status=DocumentStatus.COMPLETED,
+                            total_risks=len(pipeline_result.redlines),
+                            risk_summary=risk_summary,
+                            content_hash=content_hash,
+                            word_count=len(file_info["text"].split()),
+                            processing_duration_ms=file_duration_ms,
+                            processed_at=datetime.now(timezone.utc),
+                        )
+                        db_session.add(batch_doc)
+                        # Audit log for individual batch file result
+                        await log_audit_event(
+                            db=db_session, user=None, action="batch_file_analyzed",
+                            resource_type="document", resource_name=file_info["filename"],
+                            status="success", risk_count=len(pipeline_result.redlines),
+                            user_email="batch", organization_id=None,
+                            details=json.dumps({"batch_id": batch_id, "file_index": idx}),
+                        )
+                        await db_session.commit()
+                        await db_session.refresh(batch_doc)
+                        doc_id = str(batch_doc.id)
+                except Exception as db_err:
+                    logger.warning(f"Batch {batch_id}: failed to persist doc for '{file_info['filename']}': {db_err}")
+                    doc_id = str(uuid4())  # Fallback to ephemeral ID
+
                 batch["files"][idx]["status"] = "completed"
                 batch["files"][idx]["document_id"] = doc_id
                 batch["files"][idx]["risk_summary"] = risk_summary
@@ -1162,8 +1338,8 @@ async def _process_batch(
 
             except Exception as e:
                 batch["files"][idx]["status"] = "error"
-                batch["files"][idx]["error"] = f"Analysis failed: {str(e)}"
-                logger.error(f"Batch {batch_id} file '{file_info['filename']}': error - {e}")
+                batch["files"][idx]["error"] = "Analysis failed"
+                logger.error(f"Batch {batch_id} file '{file_info['filename']}': error - {e}", exc_info=True)
 
     # Run all file analyses concurrently (bounded by semaphore)
     tasks = [
@@ -1184,6 +1360,7 @@ async def _process_batch(
         else:
             batch["overall_status"] = "completed"
 
+        batch["completed_at"] = datetime.now(timezone.utc).isoformat()
         logger.info(f"Batch {batch_id} finished: {batch['overall_status']}")
 
 
@@ -2217,7 +2394,7 @@ async def download_installer():
 async def export_risk_report(
     request: ExportReportRequest,
     http_request: Request,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("document.export")),
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -2250,6 +2427,61 @@ async def export_risk_report(
         content=buffer.getvalue(),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'}
+    )
+
+
+# ============================================================================
+# Excel/PDF/CSV Export Endpoints (Phase 7)
+# ============================================================================
+
+class ExportIssuesRequest(BaseModel):
+    """Request body for exporting issues to Excel, CSV, or PDF."""
+    filename: str = "contract"
+    issues: List[dict] = Field(default_factory=list)
+    summary: Optional[dict] = None
+    format: Literal["xlsx", "csv", "pdf"] = "xlsx"
+
+
+@router.post("/export-issues")
+async def export_issues(
+    request: ExportIssuesRequest,
+    http_request: Request,
+    current_user: User = Depends(require_permission("document.export")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export contract analysis issues to Excel, CSV, or PDF format."""
+    safe_name = re.sub(r'[^\w\-.]', '_', request.filename or 'issues')
+
+    if request.format == "xlsx":
+        from app.services.issues_exporter import export_issues_to_xlsx
+        content = export_issues_to_xlsx(request.issues, request.filename)
+        media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ext = "xlsx"
+    elif request.format == "csv":
+        from app.services.issues_exporter import export_issues_to_csv
+        content = export_issues_to_csv(request.issues, request.filename)
+        media_type = "text/csv"
+        ext = "csv"
+    elif request.format == "pdf":
+        from app.services.pdf_report_generator import generate_pdf_report
+        content = generate_pdf_report(request.issues, request.filename, request.summary)
+        media_type = "application/pdf"
+        ext = "pdf"
+    else:
+        raise HTTPException(status_code=400, detail=f"Unsupported format: {request.format}")
+
+    await log_audit_event(
+        db=db, user=current_user, action=f"issues_exported_{ext}",
+        resource_type="document", resource_name=request.filename,
+        ip_address=http_request.client.host if http_request.client else None,
+        status="success",
+    )
+    await db.commit()
+
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="{safe_name}-issues.{ext}"'},
     )
 
 
@@ -2326,7 +2558,7 @@ class CreateVersionRequest(BaseModel):
 async def create_document_version(
     document_id: UUID,
     version_data: Optional[CreateVersionRequest] = None,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_permission("document.write")),
     db: AsyncSession = Depends(get_db),
 ):
     """Create an explicit version snapshot of a document's current state."""
@@ -2433,7 +2665,7 @@ async def list_document_versions(
             content_hash=v.content_hash,
             risk_summary=v.risk_summary,
             total_risks=v.total_risks,
-            metadata=v.metadata,
+            metadata=v.version_metadata,
             created_at=v.created_at.isoformat() if v.created_at else "",
         )
         for v in versions

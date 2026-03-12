@@ -79,6 +79,12 @@ export default function Login() {
                             />
                         </div>
 
+                        <div className="flex justify-end -mt-2">
+                            <Link to="/forgot-password" className="text-[13px] font-medium" style={{ color: '#C0392B' }}>
+                                Forgot your password?
+                            </Link>
+                        </div>
+
                         {error && (
                             <div className="p-3 rounded-lg text-sm" style={{ background: '#FDF2F1', color: '#C0392B' }}>
                                 {error}

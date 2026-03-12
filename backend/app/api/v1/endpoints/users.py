@@ -2,9 +2,12 @@
 User management endpoints.
 """
 
+import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from datetime import datetime, timezone
@@ -13,7 +16,7 @@ from app.db.session import get_db
 from app.models.user import User, UserRole
 from app.models.document import Document, DocumentStatus, UsageLog, UsageAction
 from app.api.v1.endpoints.auth import get_current_user, UserResponse
-from app.api.dependencies import require_admin
+from app.api.dependencies import require_permission
 from app.core.config import settings
 
 
@@ -64,13 +67,15 @@ async def get_usage_stats(
     )
     redlines_used = result.scalar() or 0
     
-    # Determine limit based on tier
-    if current_user.subscription_tier.value == "free":
-        scans_limit = settings.FREE_TIER_SCANS
-    elif current_user.subscription_tier.value == "pro":
-        scans_limit = settings.PRO_TIER_SCANS
-    else:
-        scans_limit = settings.ENTERPRISE_INCLUDED_SCANS
+    # Determine limit based on tier (all 5 tiers)
+    tier_limits = {
+        "free": settings.FREE_TIER_SCANS,
+        "starter": settings.STARTER_TIER_SCANS,
+        "pro": settings.PRO_TIER_SCANS,
+        "business": settings.BUSINESS_TIER_SCANS,
+        "enterprise": settings.ENTERPRISE_INCLUDED_SCANS,
+    }
+    scans_limit = tier_limits.get(current_user.subscription_tier.value, settings.FREE_TIER_SCANS)
     
     return UsageStats(
         scans_used=scans_used,
@@ -156,10 +161,10 @@ async def get_dashboard_stats(
 
 @router.get("/org/stats", response_model=DashboardStats)
 async def get_org_stats(
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_permission("analytics.read")),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get organization-wide dashboard statistics. Requires ADMIN role."""
+    """Get organization-wide dashboard statistics."""
     if not current_user.organization_id:
         return DashboardStats(
             documents_analyzed=0, total_risks_detected=0, redlines_applied=0,
@@ -215,3 +220,26 @@ async def get_org_stats(
         yellow_risks=yellow,
         green_risks=green,
     )
+
+
+@router.delete("/me")
+async def delete_account(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Delete current user's account (GDPR compliance).
+
+    Performs a soft delete: anonymizes PII and deactivates the account.
+    The user record is retained for audit trail integrity.
+    """
+    logger.info("Account deletion requested for user id=%s", str(current_user.id)[:8])
+
+    # Soft delete — anonymize PII and deactivate
+    current_user.email = f"deleted_{current_user.id}@deleted.local"
+    current_user.name = "Deleted User"
+    current_user.is_active = False
+
+    await db.commit()
+
+    return {"message": "Account deleted successfully"}

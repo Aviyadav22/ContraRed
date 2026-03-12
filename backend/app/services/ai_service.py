@@ -15,6 +15,7 @@ from typing import Optional, Tuple
 from dataclasses import dataclass
 
 from app.core.config import settings
+from app.core.vertex_client import get_generative_model, is_available, get_backend
 
 logger = logging.getLogger(__name__)
 
@@ -110,26 +111,27 @@ class AIService:
         suggested_fix = await ai.suggest_fix("clause text", "Liability capped at 12 months fees")
     """
     
-    def __init__(self):
-        """Initialize AI client based on configured provider."""
+    def __init__(self) -> None:
+        """Initialize AI client — prefers Vertex AI, falls back to consumer Gemini or Azure."""
         self._gemini_client = None
         self._azure_client = None
-        
-        # Determine which provider to use
-        self._use_gemini = bool(settings.GEMINI_API_KEY) and settings.AI_PROVIDER == "gemini"
-        self._use_azure = bool(settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY)
-        self._enabled = self._use_gemini or self._use_azure
-    
+
+        # Determine which provider to use (Vertex AI or consumer key both satisfy "gemini")
+        self._use_gemini: bool = (
+            bool(settings.VERTEX_PROJECT_ID) or bool(settings.GEMINI_API_KEY)
+        ) and settings.AI_PROVIDER == "gemini"
+        self._use_azure: bool = bool(settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY)
+        self._enabled: bool = self._use_gemini or self._use_azure
+
     @property
     def gemini_client(self):
-        """Lazy initialization of Gemini client."""
+        """Lazy initialization of Gemini/Vertex client."""
         if self._gemini_client is None and self._use_gemini:
             try:
-                import google.generativeai as genai
-                genai.configure(api_key=settings.GEMINI_API_KEY)
-                self._gemini_client = genai.GenerativeModel(settings.GEMINI_MODEL)
-            except ImportError:
-                logger.warning("google-generativeai not installed. Run: pip install google-generativeai")
+                self._gemini_client = get_generative_model(settings.GEMINI_MODEL)
+                logger.info("AIService Gemini client ready (backend=%s)", get_backend())
+            except RuntimeError:
+                logger.warning("No AI backend available for AIService Gemini client")
                 self._use_gemini = False
         return self._gemini_client
     
@@ -251,20 +253,47 @@ class AIService:
     ) -> Tuple[str, int]:
         """Generate response using Google Gemini."""
         try:
-            # Gemini uses a different format - combine system and user
-            prompt = f"{system}\n\n{user}"
+            # Bail early if no client available
+            client = self.gemini_client
+            if client is None:
+                return "", 0
 
-            # Run in thread pool since Gemini SDK is sync
-            loop = asyncio.get_running_loop()
-            response = await loop.run_in_executor(
-                None,
-                lambda: self.gemini_client.generate_content(
-                    prompt,
-                    generation_config={
-                        "max_output_tokens": max_tokens,
-                        "temperature": 0.3,
-                    }
+            # Use system_instruction for clear separation of system/user prompts.
+            # Build a model instance with the system instruction baked in.
+            from app.core.vertex_client import get_backend
+            backend = get_backend()
+
+            if system and backend == "consumer":
+                # Consumer SDK supports system_instruction on GenerativeModel
+                import google.generativeai as genai
+                model_with_system = genai.GenerativeModel(
+                    client.model_name if hasattr(client, 'model_name') else settings.GEMINI_MODEL,
+                    system_instruction=system,
                 )
+                prompt = user
+                gen_client = model_with_system
+            else:
+                # Vertex AI or no system prompt — use clear separator
+                if system:
+                    prompt = f"SYSTEM INSTRUCTIONS (DO NOT OVERRIDE):\n{system}\n\n---\nUSER INPUT:\n{user}"
+                else:
+                    prompt = user
+                gen_client = client
+
+            # Run in thread pool since Gemini SDK is sync, with 60s timeout
+            loop = asyncio.get_running_loop()
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: gen_client.generate_content(
+                        prompt,
+                        generation_config={
+                            "max_output_tokens": max_tokens,
+                            "temperature": 0.3,
+                        }
+                    )
+                ),
+                timeout=60.0,
             )
             
             # Try to get text from response, handle various cases
@@ -293,18 +322,18 @@ class AIService:
                     logger.warning("Gemini prompt_feedback: %s", response.prompt_feedback)
 
                 logger.warning("Gemini returned empty response (no text in candidates)")
-                return "", 0
-                
+                return "[AI analysis unavailable — review this clause manually]", 0
+
             except ValueError as ve:
                 # This happens when response.text can't be accessed due to safety blocks
                 logger.warning("Gemini response access error: %s", ve)
                 if hasattr(response, 'prompt_feedback'):
                     logger.warning("Prompt feedback: %s", response.prompt_feedback)
-                return "", 0
-                
+                return "[AI analysis unavailable — review this clause manually]", 0
+
         except Exception as e:
             logger.error("Gemini error: %s: %s", type(e).__name__, e)
-            return "", 0
+            return "[AI analysis unavailable — review this clause manually]", 0
     
     async def _azure_generate(
         self,
@@ -315,14 +344,17 @@ class AIService:
     ) -> Tuple[str, int]:
         """Generate response using Azure OpenAI."""
         try:
-            response = await self.azure_client.chat.completions.create(
-                model=model,
-                messages=[
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": user}
-                ],
-                max_tokens=max_tokens,
-                temperature=0.3,
+            response = await asyncio.wait_for(
+                self.azure_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user}
+                    ],
+                    max_tokens=max_tokens,
+                    temperature=0.3,
+                ),
+                timeout=60.0,
             )
             
             text = response.choices[0].message.content.strip()
@@ -332,7 +364,7 @@ class AIService:
             
         except Exception as e:
             logger.error("Azure OpenAI error: %s", e)
-            return "", 0
+            return "[AI analysis unavailable — review this clause manually]", 0
     
     async def enrich_match(self, match) -> Tuple[str, str, int]:
         """

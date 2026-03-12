@@ -1,22 +1,28 @@
 """
 Playbook management endpoints.
-Full CRUD for playbooks and rules.
+Full CRUD for playbooks, rules, tiers, conditions, dependencies, versions, marketplace.
 """
 
-from typing import List, Optional
+from typing import List, Optional, Any
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, select, or_
+from sqlalchemy import func, select, or_, delete
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
 from app.models.user import User
-from app.models.playbook import Playbook, PlaybookRule, PlaybookCategory, RiskLevel
+from app.models.playbook import (
+    Playbook, PlaybookRule, PlaybookCategory, RiskLevel,
+    PlaybookRuleTier, PlaybookCondition, PlaybookRuleOverride,
+    PlaybookRuleDependency, PlaybookVersion,
+    PlaybookMarketplace, PlaybookRating,
+)
 from app.api.v1.endpoints.auth import get_current_user
-from app.api.dependencies import require_admin
+from app.api.dependencies import require_permission
 from app.models.audit_log import log_audit_event
+from app.services.playbook_versioning import playbook_versioning_service
 
 
 router = APIRouter()
@@ -27,8 +33,8 @@ router = APIRouter()
 # ============================================================================
 
 class PlaybookCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=2000)
     category: str = "custom"
     is_public: bool = False
 
@@ -162,7 +168,7 @@ async def list_playbooks(
 @router.post("/", response_model=PlaybookResponse, status_code=status.HTTP_201_CREATED)
 async def create_playbook(
     playbook_data: PlaybookCreate,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_permission("playbook.admin")),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new playbook. Requires ADMIN role."""
@@ -202,6 +208,324 @@ async def create_playbook(
         rules_count=0,
     )
 
+
+# ============================================================================
+# Playbook Templates (Phase 5 — pre-built templates)
+# ============================================================================
+
+class TemplateListItem(BaseModel):
+    id: str
+    name: str
+    description: str
+    category: str
+    jurisdiction: str
+    rule_count: int
+
+
+@router.get("/templates/browse", response_model=List[TemplateListItem])
+async def browse_templates(
+    category: Optional[str] = None,
+    jurisdiction: Optional[str] = None,
+):
+    """List available pre-built playbook templates."""
+    from app.services.playbook_templates import list_templates, get_templates_by_category, get_templates_by_jurisdiction
+
+    if category:
+        templates = get_templates_by_category(category)
+    elif jurisdiction:
+        templates = get_templates_by_jurisdiction(jurisdiction)
+    else:
+        templates = list_templates()
+
+    return [
+        TemplateListItem(
+            id=t.id, name=t.name, description=t.description,
+            category=t.category, jurisdiction=t.jurisdiction,
+            rule_count=len(t.rules),
+        )
+        for t in templates
+    ]
+
+
+@router.post("/templates/{template_id}/create", response_model=PlaybookResponse, status_code=status.HTTP_201_CREATED)
+async def create_from_template(
+    template_id: str,
+    name: Optional[str] = None,
+    current_user: User = Depends(require_permission("playbook.admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a playbook from a pre-built template."""
+    from app.services.playbook_templates import create_playbook_from_template
+
+    result = await create_playbook_from_template(
+        template_id=template_id,
+        org_id=current_user.organization_id,
+        user_id=current_user.id,
+        db=db,
+        custom_name=name,
+    )
+    await db.commit()
+    return PlaybookResponse(
+        id=result["playbook_id"],
+        name=name or template_id,
+        description=f"Created from template: {template_id}",
+        category="custom",
+        is_public=False,
+        created_by=str(current_user.id),
+        version=1,
+        rules_count=result["rule_count"],
+    )
+
+
+# ============================================================================
+# Marketplace routes (MUST be registered before /{playbook_id} to avoid shadowing)
+# ============================================================================
+
+class MarketplaceListItem(BaseModel):
+    id: str
+    playbook_id: str
+    playbook_name: str
+    category: str
+    description: Optional[str]
+    is_verified: bool
+    download_count: int
+    avg_rating: float
+    rating_count: int
+    tags: List[str]
+
+
+class MarketplacePublishRequest(BaseModel):
+    tags: List[str] = Field(default_factory=list)
+
+
+class MarketplaceBrowseResponse(BaseModel):
+    items: List[MarketplaceListItem]
+    total: int
+
+
+class RatingCreate(BaseModel):
+    rating: int = Field(..., ge=1, le=5)
+    review: Optional[str] = None
+
+
+@router.get("/marketplace/browse", response_model=MarketplaceBrowseResponse)
+async def browse_marketplace(
+    category: Optional[str] = None,
+    skip: int = 0,
+    limit: int = Query(20, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Browse community playbooks in the marketplace."""
+    base_query = (
+        select(PlaybookMarketplace)
+        .join(Playbook, PlaybookMarketplace.playbook_id == Playbook.id)
+    )
+
+    # Filter by category in SQL instead of Python
+    if category:
+        try:
+            cat_enum = PlaybookCategory(category)
+            base_query = base_query.where(Playbook.category == cat_enum)
+        except ValueError:
+            # Invalid category value -- return empty results
+            return MarketplaceBrowseResponse(items=[], total=0)
+
+    # Total count
+    count_query = select(func.count()).select_from(base_query.subquery())
+    total = (await db.execute(count_query)).scalar() or 0
+
+    # Paginated results
+    data_query = base_query.options(selectinload(PlaybookMarketplace.playbook)).offset(skip).limit(limit)
+    result = await db.execute(data_query)
+    items = result.scalars().all()
+
+    return MarketplaceBrowseResponse(
+        items=[
+            MarketplaceListItem(
+                id=str(item.id), playbook_id=str(item.playbook_id),
+                playbook_name=item.playbook.name, category=item.playbook.category.value,
+                description=item.playbook.description, is_verified=item.is_verified,
+                download_count=item.download_count,
+                avg_rating=float(item.avg_rating or 0),
+                rating_count=item.rating_count,
+                tags=item.tags if isinstance(item.tags, list) else [],
+            )
+            for item in items
+        ],
+        total=total,
+    )
+
+
+@router.post("/marketplace/{marketplace_id}/fork", response_model=PlaybookResponse)
+async def fork_playbook(
+    marketplace_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Fork a marketplace playbook into your organization."""
+    # Get marketplace entry with playbook and rules
+    mp_result = await db.execute(
+        select(PlaybookMarketplace)
+        .options(
+            selectinload(PlaybookMarketplace.playbook)
+            .selectinload(Playbook.rules_list)
+            .selectinload(PlaybookRule.tiers)
+        )
+        .where(PlaybookMarketplace.id == marketplace_id)
+    )
+    mp = mp_result.scalar_one_or_none()
+    if not mp:
+        raise HTTPException(status_code=404, detail="Marketplace entry not found")
+
+    source = mp.playbook
+
+    # Create new playbook (fork)
+    new_pb = Playbook(
+        name=f"{source.name} (Fork)",
+        description=source.description,
+        category=source.category,
+        created_by=current_user.id,
+        organization_id=current_user.organization_id,
+    )
+    db.add(new_pb)
+    await db.flush()
+
+    # Copy rules and tiers
+    for rule in (source.rules_list or []):
+        new_rule = PlaybookRule(
+            playbook_id=new_pb.id,
+            clause_type=rule.clause_type,
+            primary_position=rule.primary_position,
+            fallback_position=rule.fallback_position,
+            risk_level=rule.risk_level,
+            is_deal_breaker=rule.is_deal_breaker,
+            detection_patterns=rule.detection_patterns,
+            suggested_language=rule.suggested_language,
+            order_index=rule.order_index,
+            category=rule.category,
+            subcategory=rule.subcategory,
+            tags=rule.tags,
+        )
+        db.add(new_rule)
+        await db.flush()
+
+        for tier in (rule.tiers or []):
+            new_tier = PlaybookRuleTier(
+                rule_id=new_rule.id,
+                tier_level=tier.tier_level,
+                position_text=tier.position_text,
+                guidance_notes=tier.guidance_notes,
+                risk_level_at_tier=tier.risk_level_at_tier,
+            )
+            db.add(new_tier)
+
+    # Increment download count
+    mp.download_count = (mp.download_count or 0) + 1
+
+    await db.commit()
+    await db.refresh(new_pb)
+
+    return PlaybookResponse(
+        id=str(new_pb.id), name=new_pb.name, description=new_pb.description,
+        category=new_pb.category.value, is_public=new_pb.is_public,
+        is_default=new_pb.is_default, version=new_pb.version, rules_count=len(source.rules_list or []),
+    )
+
+
+@router.post("/marketplace/{marketplace_id}/rate", status_code=201)
+async def rate_playbook(
+    marketplace_id: UUID,
+    data: RatingCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rate a marketplace playbook."""
+    # Check marketplace entry exists
+    mp_result = await db.execute(
+        select(PlaybookMarketplace).where(PlaybookMarketplace.id == marketplace_id)
+    )
+    mp = mp_result.scalar_one_or_none()
+    if not mp:
+        raise HTTPException(status_code=404, detail="Marketplace entry not found")
+
+    # Prevent duplicate ratings from the same user
+    existing = await db.execute(
+        select(PlaybookRating).where(
+            PlaybookRating.marketplace_id == marketplace_id,
+            PlaybookRating.user_id == current_user.id,
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="You have already rated this playbook. Update your existing rating instead.",
+        )
+
+    rating = PlaybookRating(
+        marketplace_id=marketplace_id,
+        user_id=current_user.id,
+        rating=data.rating,
+        review=data.review,
+    )
+    db.add(rating)
+
+    # Update aggregate
+    total = (mp.avg_rating or 0) * (mp.rating_count or 0) + data.rating
+    mp.rating_count = (mp.rating_count or 0) + 1
+    mp.avg_rating = total / mp.rating_count
+
+    await db.commit()
+    return {"status": "ok"}
+
+
+@router.put("/marketplace/{marketplace_id}/rate")
+async def update_rating(
+    marketplace_id: UUID,
+    data: RatingCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update an existing marketplace playbook rating."""
+    # Check marketplace entry exists
+    mp_result = await db.execute(
+        select(PlaybookMarketplace).where(PlaybookMarketplace.id == marketplace_id)
+    )
+    mp = mp_result.scalar_one_or_none()
+    if not mp:
+        raise HTTPException(status_code=404, detail="Marketplace entry not found")
+
+    # Find existing rating
+    existing_result = await db.execute(
+        select(PlaybookRating).where(
+            PlaybookRating.marketplace_id == marketplace_id,
+            PlaybookRating.user_id == current_user.id,
+        )
+    )
+    existing_rating = existing_result.scalar_one_or_none()
+    if not existing_rating:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No existing rating found. Use POST to create a rating first.",
+        )
+
+    # Recalculate aggregate: subtract old, add new
+    old_total = (mp.avg_rating or 0) * (mp.rating_count or 0)
+    new_total = old_total - existing_rating.rating + data.rating
+    mp.avg_rating = new_total / mp.rating_count if mp.rating_count else data.rating
+
+    # Update rating
+    existing_rating.rating = data.rating
+    existing_rating.review = data.review
+
+    await db.commit()
+    return {"status": "ok"}
+
+
+# ============================================================================
+# Playbook detail and sub-resource routes (/{playbook_id} catch-all MUST come after
+# all specific path routes like /marketplace/... to avoid route shadowing)
+# ============================================================================
 
 @router.get("/{playbook_id}", response_model=PlaybookDetail)
 async def get_playbook(
@@ -265,7 +589,7 @@ async def get_playbook(
 async def update_playbook(
     playbook_id: UUID,
     update_data: PlaybookUpdate,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_permission("playbook.admin")),
     db: AsyncSession = Depends(get_db)
 ):
     """Update playbook metadata. Requires ADMIN role."""
@@ -323,7 +647,7 @@ async def update_playbook(
 @router.delete("/{playbook_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_playbook(
     playbook_id: UUID,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_permission("playbook.admin")),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a playbook. Requires ADMIN role."""
@@ -348,7 +672,7 @@ async def delete_playbook(
 @router.post("/{playbook_id}/publish", response_model=PlaybookResponse)
 async def toggle_publish(
     playbook_id: UUID,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_permission("playbook.admin")),
     db: AsyncSession = Depends(get_db)
 ):
     """Toggle playbook public/private status. Requires ADMIN role."""
@@ -396,7 +720,7 @@ async def toggle_publish(
 async def add_rule(
     playbook_id: UUID,
     rule_data: RuleCreate,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_permission("playbook.admin")),
     db: AsyncSession = Depends(get_db)
 ):
     """Add a rule to a playbook. Requires ADMIN role."""
@@ -459,7 +783,7 @@ async def update_rule(
     playbook_id: UUID,
     rule_id: UUID,
     update_data: RuleUpdate,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_permission("playbook.admin")),
     db: AsyncSession = Depends(get_db)
 ):
     """Update a rule in a playbook. Requires ADMIN role."""
@@ -530,7 +854,7 @@ async def update_rule(
 async def delete_rule(
     playbook_id: UUID,
     rule_id: UUID,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_permission("playbook.admin")),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a rule from a playbook. Requires ADMIN role."""
@@ -567,7 +891,7 @@ async def delete_rule(
 async def reorder_rules(
     playbook_id: UUID,
     reorder_data: ReorderRequest,
-    current_user: User = Depends(require_admin),
+    current_user: User = Depends(require_permission("playbook.admin")),
     db: AsyncSession = Depends(get_db)
 ):
     """Reorder rules within a playbook. Requires ADMIN role."""
@@ -612,3 +936,566 @@ async def reorder_rules(
         )
         for r in sorted_rules
     ]
+
+
+# ============================================================================
+# Phase 6: Tier Schemas & Endpoints
+# ============================================================================
+
+class TierCreate(BaseModel):
+    tier_level: int = Field(..., ge=1, le=4)
+    position_text: str = Field(..., min_length=1)
+    guidance_notes: Optional[str] = None
+    risk_level_at_tier: str = "yellow"
+
+
+class TierResponse(BaseModel):
+    id: str
+    tier_level: int
+    position_text: str
+    guidance_notes: Optional[str]
+    risk_level_at_tier: str
+
+    class Config:
+        from_attributes = True
+
+
+class TierUpdate(BaseModel):
+    position_text: Optional[str] = None
+    guidance_notes: Optional[str] = None
+    risk_level_at_tier: Optional[str] = None
+
+
+@router.get("/{playbook_id}/rules/{rule_id}/tiers", response_model=List[TierResponse])
+async def list_tiers(
+    playbook_id: UUID,
+    rule_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all negotiation tiers for a rule."""
+    result = await db.execute(
+        select(PlaybookRuleTier)
+        .where(PlaybookRuleTier.rule_id == rule_id)
+        .order_by(PlaybookRuleTier.tier_level)
+    )
+    tiers = result.scalars().all()
+    return [
+        TierResponse(
+            id=str(t.id), tier_level=t.tier_level, position_text=t.position_text,
+            guidance_notes=t.guidance_notes, risk_level_at_tier=t.risk_level_at_tier or "yellow",
+        )
+        for t in tiers
+    ]
+
+
+@router.put("/{playbook_id}/rules/{rule_id}/tiers", response_model=List[TierResponse])
+async def upsert_tiers(
+    playbook_id: UUID,
+    rule_id: UUID,
+    tiers_data: List[TierCreate],
+    current_user: User = Depends(require_permission("playbook.admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create or replace all tiers for a rule (bulk upsert). Requires ADMIN role."""
+    # Verify rule belongs to playbook
+    rule_result = await db.execute(
+        select(PlaybookRule).where(PlaybookRule.id == rule_id, PlaybookRule.playbook_id == playbook_id)
+    )
+    rule = rule_result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+
+    # Delete existing tiers
+    await db.execute(delete(PlaybookRuleTier).where(PlaybookRuleTier.rule_id == rule_id))
+
+    # Create new tiers
+    new_tiers = []
+    for td in tiers_data:
+        tier = PlaybookRuleTier(
+            rule_id=rule_id,
+            tier_level=td.tier_level,
+            position_text=td.position_text,
+            guidance_notes=td.guidance_notes,
+            risk_level_at_tier=td.risk_level_at_tier,
+        )
+        db.add(tier)
+        new_tiers.append(tier)
+
+    # Snapshot version
+    playbook_result = await db.execute(select(Playbook).where(Playbook.id == playbook_id))
+    playbook = playbook_result.scalar_one()
+    playbook.version += 1
+
+    await db.commit()
+    for t in new_tiers:
+        await db.refresh(t)
+
+    return [
+        TierResponse(
+            id=str(t.id), tier_level=t.tier_level, position_text=t.position_text,
+            guidance_notes=t.guidance_notes, risk_level_at_tier=t.risk_level_at_tier or "yellow",
+        )
+        for t in sorted(new_tiers, key=lambda x: x.tier_level)
+    ]
+
+
+# ============================================================================
+# Phase 6: Condition Schemas & Endpoints
+# ============================================================================
+
+class ConditionCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = Field(default=None, max_length=2000)
+    condition_type: str = Field(..., min_length=1, max_length=50)
+    operator: str = "equals"
+    condition_value: dict = Field(..., max_length=50)  # Max 50 keys in the dict
+    is_active: bool = True
+    priority: int = 0
+
+    @field_validator("condition_value")
+    @classmethod
+    def validate_condition_value_size(cls, v: dict) -> dict:
+        """Limit condition_value dict size to prevent abuse."""
+        import json
+        serialized = json.dumps(v)
+        if len(serialized) > 10000:
+            raise ValueError("condition_value is too large (max 10KB serialized)")
+        if len(v) > 50:
+            raise ValueError("condition_value has too many keys (max 50)")
+        return v
+
+
+class ConditionResponse(BaseModel):
+    id: str
+    name: str
+    description: Optional[str]
+    condition_type: str
+    operator: str
+    condition_value: dict
+    is_active: bool
+    priority: int
+    overrides_count: int = 0
+
+    class Config:
+        from_attributes = True
+
+
+class OverrideCreate(BaseModel):
+    rule_id: str
+    override_risk_level: Optional[str] = None
+    override_position_text: Optional[str] = None
+    override_is_deal_breaker: Optional[bool] = None
+    override_tier_level: Optional[int] = Field(default=None, ge=1, le=4)
+    suppress_rule: bool = False
+    notes: Optional[str] = None
+
+
+class OverrideResponse(BaseModel):
+    id: str
+    condition_id: str
+    rule_id: str
+    override_risk_level: Optional[str]
+    override_position_text: Optional[str]
+    override_is_deal_breaker: Optional[bool]
+    override_tier_level: Optional[int]
+    suppress_rule: bool
+    notes: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/{playbook_id}/conditions", response_model=List[ConditionResponse])
+async def list_conditions(
+    playbook_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all conditions for a playbook."""
+    result = await db.execute(
+        select(PlaybookCondition)
+        .options(selectinload(PlaybookCondition.rule_overrides))
+        .where(PlaybookCondition.playbook_id == playbook_id)
+        .order_by(PlaybookCondition.priority.desc())
+    )
+    conditions = result.scalars().all()
+    return [
+        ConditionResponse(
+            id=str(c.id), name=c.name, description=c.description,
+            condition_type=c.condition_type, operator=c.operator,
+            condition_value=c.condition_value, is_active=c.is_active,
+            priority=c.priority,
+            overrides_count=len(c.rule_overrides) if c.rule_overrides else 0,
+        )
+        for c in conditions
+    ]
+
+
+@router.post("/{playbook_id}/conditions", response_model=ConditionResponse, status_code=201)
+async def create_condition(
+    playbook_id: UUID,
+    data: ConditionCreate,
+    current_user: User = Depends(require_permission("playbook.admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new condition for a playbook."""
+    condition = PlaybookCondition(
+        playbook_id=playbook_id,
+        name=data.name,
+        description=data.description,
+        condition_type=data.condition_type,
+        operator=data.operator,
+        condition_value=data.condition_value,
+        is_active=data.is_active,
+        priority=data.priority,
+    )
+    db.add(condition)
+    await db.commit()
+    await db.refresh(condition)
+
+    return ConditionResponse(
+        id=str(condition.id), name=condition.name, description=condition.description,
+        condition_type=condition.condition_type, operator=condition.operator,
+        condition_value=condition.condition_value, is_active=condition.is_active,
+        priority=condition.priority, overrides_count=0,
+    )
+
+
+@router.delete("/{playbook_id}/conditions/{condition_id}", status_code=204)
+async def delete_condition(
+    playbook_id: UUID,
+    condition_id: UUID,
+    current_user: User = Depends(require_permission("playbook.admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a condition and its overrides."""
+    result = await db.execute(
+        select(PlaybookCondition).where(
+            PlaybookCondition.id == condition_id,
+            PlaybookCondition.playbook_id == playbook_id,
+        )
+    )
+    condition = result.scalar_one_or_none()
+    if not condition:
+        raise HTTPException(status_code=404, detail="Condition not found")
+    await db.delete(condition)
+    await db.commit()
+
+
+@router.post("/{playbook_id}/conditions/{condition_id}/overrides", response_model=OverrideResponse, status_code=201)
+async def add_override(
+    playbook_id: UUID,
+    condition_id: UUID,
+    data: OverrideCreate,
+    current_user: User = Depends(require_permission("playbook.admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Add a rule override to a condition."""
+    override = PlaybookRuleOverride(
+        condition_id=condition_id,
+        rule_id=UUID(data.rule_id),
+        override_risk_level=data.override_risk_level,
+        override_position_text=data.override_position_text,
+        override_is_deal_breaker=data.override_is_deal_breaker,
+        override_tier_level=data.override_tier_level,
+        suppress_rule=data.suppress_rule,
+        notes=data.notes,
+    )
+    db.add(override)
+    await db.commit()
+    await db.refresh(override)
+
+    return OverrideResponse(
+        id=str(override.id), condition_id=str(override.condition_id),
+        rule_id=str(override.rule_id), override_risk_level=override.override_risk_level,
+        override_position_text=override.override_position_text,
+        override_is_deal_breaker=override.override_is_deal_breaker,
+        override_tier_level=override.override_tier_level,
+        suppress_rule=override.suppress_rule, notes=override.notes,
+    )
+
+
+@router.delete("/{playbook_id}/conditions/{condition_id}/overrides/{override_id}", status_code=204)
+async def delete_override(
+    playbook_id: UUID,
+    condition_id: UUID,
+    override_id: UUID,
+    current_user: User = Depends(require_permission("playbook.admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a rule override."""
+    result = await db.execute(
+        select(PlaybookRuleOverride).where(PlaybookRuleOverride.id == override_id)
+    )
+    override = result.scalar_one_or_none()
+    if not override:
+        raise HTTPException(status_code=404, detail="Override not found")
+    await db.delete(override)
+    await db.commit()
+
+
+# ============================================================================
+# Phase 6: Cross-Clause Dependencies
+# ============================================================================
+
+class DependencyCreate(BaseModel):
+    source_rule_id: str
+    target_rule_id: str
+    trigger_condition: str = Field(..., min_length=1, max_length=50)
+    effect: str = Field(..., min_length=1, max_length=50)
+    effect_params: Optional[dict] = None
+    is_active: bool = True
+
+
+class DependencyResponse(BaseModel):
+    id: str
+    source_rule_id: str
+    target_rule_id: str
+    trigger_condition: str
+    effect: str
+    effect_params: Optional[dict]
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+
+
+@router.get("/{playbook_id}/dependencies", response_model=List[DependencyResponse])
+async def list_dependencies(
+    playbook_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List all cross-clause dependencies for a playbook."""
+    result = await db.execute(
+        select(PlaybookRuleDependency).where(PlaybookRuleDependency.playbook_id == playbook_id)
+    )
+    deps = result.scalars().all()
+    return [
+        DependencyResponse(
+            id=str(d.id), source_rule_id=str(d.source_rule_id),
+            target_rule_id=str(d.target_rule_id), trigger_condition=d.trigger_condition,
+            effect=d.effect, effect_params=d.effect_params, is_active=d.is_active,
+        )
+        for d in deps
+    ]
+
+
+@router.post("/{playbook_id}/dependencies", response_model=DependencyResponse, status_code=201)
+async def create_dependency(
+    playbook_id: UUID,
+    data: DependencyCreate,
+    current_user: User = Depends(require_permission("playbook.admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a cross-clause dependency."""
+    dep = PlaybookRuleDependency(
+        playbook_id=playbook_id,
+        source_rule_id=UUID(data.source_rule_id),
+        target_rule_id=UUID(data.target_rule_id),
+        trigger_condition=data.trigger_condition,
+        effect=data.effect,
+        effect_params=data.effect_params,
+        is_active=data.is_active,
+    )
+    db.add(dep)
+    await db.commit()
+    await db.refresh(dep)
+
+    return DependencyResponse(
+        id=str(dep.id), source_rule_id=str(dep.source_rule_id),
+        target_rule_id=str(dep.target_rule_id), trigger_condition=dep.trigger_condition,
+        effect=dep.effect, effect_params=dep.effect_params, is_active=dep.is_active,
+    )
+
+
+@router.delete("/{playbook_id}/dependencies/{dep_id}", status_code=204)
+async def delete_dependency(
+    playbook_id: UUID,
+    dep_id: UUID,
+    current_user: User = Depends(require_permission("playbook.admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a dependency."""
+    result = await db.execute(
+        select(PlaybookRuleDependency).where(
+            PlaybookRuleDependency.id == dep_id,
+            PlaybookRuleDependency.playbook_id == playbook_id,
+        )
+    )
+    dep = result.scalar_one_or_none()
+    if not dep:
+        raise HTTPException(status_code=404, detail="Dependency not found")
+    await db.delete(dep)
+    await db.commit()
+
+
+# ============================================================================
+# Phase 6: Version Control
+# ============================================================================
+
+class VersionResponse(BaseModel):
+    id: str
+    version_number: int
+    change_summary: Optional[str]
+    created_by: Optional[str]
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class VersionDetailResponse(VersionResponse):
+    snapshot: dict
+
+
+class DiffResponse(BaseModel):
+    rules_added: List[dict]
+    rules_removed: List[dict]
+    rules_modified: List[dict]
+    conditions_added: List[dict]
+    conditions_removed: List[dict]
+    dependencies_added: List[dict]
+    dependencies_removed: List[dict]
+
+
+@router.get("/{playbook_id}/versions", response_model=List[VersionResponse])
+async def list_versions(
+    playbook_id: UUID,
+    limit: int = Query(20, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List version history for a playbook."""
+    versions = await playbook_versioning_service.get_versions(db, playbook_id, limit)
+    return [
+        VersionResponse(
+            id=str(v["id"]), version_number=v["version_number"],
+            change_summary=v.get("change_summary"),
+            created_by=str(v["created_by"]) if v.get("created_by") else None,
+            created_at=str(v["created_at"]),
+        )
+        for v in versions
+    ]
+
+
+@router.post("/{playbook_id}/versions", response_model=VersionResponse, status_code=201)
+async def create_version_snapshot(
+    playbook_id: UUID,
+    change_summary: str = Query("Manual snapshot"),
+    current_user: User = Depends(require_permission("playbook.admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a version snapshot of the current playbook state."""
+    version = await playbook_versioning_service.create_snapshot(
+        db, playbook_id, change_summary, current_user.id
+    )
+    return VersionResponse(
+        id=str(version.id), version_number=version.version_number,
+        change_summary=version.change_summary,
+        created_by=str(version.created_by) if version.created_by else None,
+        created_at=str(version.created_at),
+    )
+
+
+@router.get("/{playbook_id}/versions/diff/{version_a_id}/{version_b_id}", response_model=DiffResponse)
+async def diff_versions(
+    playbook_id: UUID,
+    version_a_id: UUID,
+    version_b_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Compare two versions of a playbook."""
+    diff = await playbook_versioning_service.diff_versions(db, version_a_id, version_b_id)
+    return DiffResponse(**diff)
+
+
+@router.get("/{playbook_id}/versions/{version_id}", response_model=VersionDetailResponse)
+async def get_version_detail(
+    playbook_id: UUID,
+    version_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get full snapshot for a specific version."""
+    version_data = await playbook_versioning_service.get_version(db, version_id)
+    if not version_data:
+        raise HTTPException(status_code=404, detail="Version not found")
+    return VersionDetailResponse(
+        id=str(version_data["id"]), version_number=version_data["version_number"],
+        change_summary=version_data.get("change_summary"),
+        created_by=str(version_data["created_by"]) if version_data.get("created_by") else None,
+        created_at=str(version_data["created_at"]),
+        snapshot=version_data["snapshot"],
+    )
+
+
+@router.post("/{playbook_id}/versions/{version_id}/rollback", response_model=VersionResponse)
+async def rollback_to_version(
+    playbook_id: UUID,
+    version_id: UUID,
+    current_user: User = Depends(require_permission("playbook.admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Rollback a playbook to a previous version."""
+    await playbook_versioning_service.rollback(db, playbook_id, version_id, current_user.id)
+    # Return the new version created by rollback
+    versions = await playbook_versioning_service.get_versions(db, playbook_id, 1)
+    v = versions[0]
+    return VersionResponse(
+        id=str(v["id"]), version_number=v["version_number"],
+        change_summary=v.get("change_summary"),
+        created_by=str(v["created_by"]) if v.get("created_by") else None,
+        created_at=str(v["created_at"]),
+    )
+
+
+@router.post("/{playbook_id}/marketplace/publish", response_model=MarketplaceListItem)
+async def publish_to_marketplace(
+    playbook_id: UUID,
+    data: MarketplacePublishRequest,
+    current_user: User = Depends(require_permission("playbook.admin")),
+    db: AsyncSession = Depends(get_db),
+):
+    """Publish a playbook to the marketplace."""
+    # Get playbook with rules for preview
+    pb_result = await db.execute(
+        select(Playbook)
+        .options(selectinload(Playbook.rules_list))
+        .where(Playbook.id == playbook_id)
+    )
+    pb = pb_result.scalar_one_or_none()
+    if not pb:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+
+    if pb.created_by != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the creator can publish")
+
+    # Make playbook public
+    pb.is_public = True
+
+    # Preview: first 5 rules
+    preview = [
+        {"clause_type": r.clause_type, "risk_level": r.risk_level.value}
+        for r in sorted(pb.rules_list, key=lambda r: r.order_index)[:5]
+    ] if pb.rules_list else []
+
+    entry = PlaybookMarketplace(
+        playbook_id=playbook_id,
+        publisher_org_id=current_user.organization_id,
+        tags=data.tags,
+        preview_rules=preview,
+    )
+    db.add(entry)
+    await db.commit()
+    await db.refresh(entry)
+
+    return MarketplaceListItem(
+        id=str(entry.id), playbook_id=str(entry.playbook_id),
+        playbook_name=pb.name, category=pb.category.value,
+        description=pb.description, is_verified=False,
+        download_count=0, avg_rating=0.0, rating_count=0,
+        tags=data.tags,
+    )

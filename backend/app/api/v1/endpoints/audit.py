@@ -76,7 +76,8 @@ async def list_audit_logs(
     if action:
         query = query.where(AuditLog.action == action)
     if user_email:
-        query = query.where(AuditLog.user_email.ilike(f"%{user_email}%"))
+        escaped = user_email.replace("%", "\\%").replace("_", "\\_")
+        query = query.where(AuditLog.user_email.ilike(f"%{escaped}%"))
     if date_from:
         try:
             dt = datetime.fromisoformat(date_from)
@@ -120,4 +121,105 @@ async def list_audit_logs(
         total=total,
         page=page,
         page_size=page_size,
+    )
+
+
+# ============================================================================
+# Hash Chain Verification (Phase 2.4)
+# ============================================================================
+
+class ChainVerificationResult(BaseModel):
+    valid: bool
+    total_entries: int
+    verified_entries: int
+    first_broken_at: Optional[int] = None
+    message: str
+
+
+@router.get("/verify", response_model=ChainVerificationResult)
+async def verify_audit_chain(
+    limit: int = Query(1000, ge=1, le=10000),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Verify the integrity of the audit log hash chain.
+
+    Walks the chain from the beginning and verifies each entry's hash
+    matches the computed hash from its fields + previous entry's hash.
+
+    Only accessible to ADMIN+ roles.
+    """
+    import hashlib
+
+    user_level = ROLE_HIERARCHY.get(current_user.role, 0)
+    if user_level < ROLE_HIERARCHY[UserRole.ADMIN]:
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required to verify audit chain",
+        )
+
+    # Load entries ordered by sequence
+    query = (
+        select(AuditLog)
+        .where(AuditLog.sequence_number.isnot(None))
+        .order_by(AuditLog.sequence_number.asc())
+        .limit(limit)
+    )
+    result = await db.execute(query)
+    entries = result.scalars().all()
+
+    if not entries:
+        return ChainVerificationResult(
+            valid=True,
+            total_entries=0,
+            verified_entries=0,
+            message="No hash-chained entries found. Chain verification not applicable to legacy entries.",
+        )
+
+    verified = 0
+    expected_prev = "GENESIS"
+
+    for entry in entries:
+        if not entry.entry_hash:
+            continue
+
+        # Verify previous_hash linkage
+        if entry.previous_hash != expected_prev:
+            return ChainVerificationResult(
+                valid=False,
+                total_entries=len(entries),
+                verified_entries=verified,
+                first_broken_at=entry.sequence_number,
+                message=f"Chain broken at sequence {entry.sequence_number}: "
+                        f"expected previous_hash={expected_prev[:16]}..., "
+                        f"got {(entry.previous_hash or 'None')[:16]}...",
+            )
+
+        # Recompute hash and verify
+        hash_input = (
+            f"{entry.sequence_number}|{entry.action}|{entry.user_id}"
+            f"|{entry.timestamp.isoformat() if entry.timestamp else ''}|{entry.previous_hash}"
+        )
+        computed = hashlib.sha256(hash_input.encode("utf-8")).hexdigest()
+
+        if computed != entry.entry_hash:
+            return ChainVerificationResult(
+                valid=False,
+                total_entries=len(entries),
+                verified_entries=verified,
+                first_broken_at=entry.sequence_number,
+                message=f"Hash mismatch at sequence {entry.sequence_number}: "
+                        f"entry may have been tampered with.",
+            )
+
+        expected_prev = entry.entry_hash
+        verified += 1
+
+    return ChainVerificationResult(
+        valid=True,
+        total_entries=len(entries),
+        verified_entries=verified,
+        message=f"All {verified} entries verified. Audit chain integrity confirmed.",
     )
