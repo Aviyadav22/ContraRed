@@ -274,8 +274,8 @@ async def list_documents(
 @router.post("/analyze", response_model=AnalysisResult)
 @limiter.limit("20/minute")
 async def analyze_document(
-    request: AnalyzeRequest,
-    http_request: Request,
+    request: Request,
+    body: AnalyzeRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _quota=Depends(check_and_increment_quota),
@@ -299,15 +299,15 @@ async def analyze_document(
     """
     # Contract size limit (~100 pages)
     MAX_CONTRACT_SIZE = 500_000  # 500KB
-    if len(request.text) > MAX_CONTRACT_SIZE:
+    if len(body.text) > MAX_CONTRACT_SIZE:
         raise HTTPException(
             status_code=413,
-            detail=f"Document too large ({len(request.text):,} chars). Maximum is {MAX_CONTRACT_SIZE:,} characters (~100 pages). Try scanning sections individually.",
+            detail=f"Document too large ({len(body.text):,} chars). Maximum is {MAX_CONTRACT_SIZE:,} characters (~100 pages). Try scanning sections individually.",
         )
 
     # Get client info for audit
-    client_ip = http_request.client.host if http_request.client else None
-    user_agent = http_request.headers.get("user-agent")
+    client_ip = request.client.host if request.client else None
+    user_agent = request.headers.get("user-agent")
 
     # Track analysis start time for processing_duration_ms
     analysis_start = time.monotonic()
@@ -317,9 +317,9 @@ async def analyze_document(
     cache = await get_cache()
 
     # Load playbook rules if specified, otherwise use defaults
-    if request.playbook_id:
+    if body.playbook_id:
         try:
-            playbook_uuid = UUID(request.playbook_id)
+            playbook_uuid = UUID(body.playbook_id)
             result = await db.execute(
                 select(Playbook)
                 .options(selectinload(Playbook.rules_list))
@@ -346,12 +346,12 @@ async def analyze_document(
         rule_engine = RuleEngine()  # Use default rules
     
     # Create document record (with org + version tracking)
-    content_hash = Document.compute_content_hash(request.text)
-    word_count = len(request.text.split())
+    content_hash = Document.compute_content_hash(body.text)
+    word_count = len(body.text.split())
     document = Document(
         user_id=current_user.id,
         organization_id=current_user.organization_id,
-        filename=request.filename,
+        filename=body.filename,
         status=DocumentStatus.PROCESSING,
         content_hash=content_hash,
         word_count=word_count,
@@ -361,7 +361,7 @@ async def analyze_document(
     
     try:
         # Step 1: Rule-based detection
-        matches = rule_engine.evaluate(request.text)
+        matches = rule_engine.evaluate(body.text)
         
         # Step 2: AI enrichment in PARALLEL (critical for performance)
         token_counts = []
@@ -427,7 +427,7 @@ async def analyze_document(
                 user=current_user,
                 action="analyze",
                 resource_type="document",
-                resource_name=request.filename,
+                resource_name=body.filename,
                 ip_address=client_ip,
                 user_agent=user_agent,
                 status="success",
@@ -543,8 +543,8 @@ class JobStatusResponse(BaseModel):
 @router.post("/analyze-async", response_model=AsyncAnalyzeResponse, status_code=202)
 @limiter.limit("20/minute")
 async def analyze_async(
-    request: AIAnalyzeRequest,
-    http_request: Request,
+    request: Request,
+    body: AIAnalyzeRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _quota=Depends(check_and_increment_quota),
@@ -555,13 +555,13 @@ async def analyze_async(
     """
     from app.workers.tasks import task_queue, AnalysisJob, JobStatus
 
-    content_hash = Document.compute_content_hash(request.text)
+    content_hash = Document.compute_content_hash(body.text)
 
     # Create document record
     playbook_uuid = None
-    if request.playbook_id:
+    if body.playbook_id:
         try:
-            playbook_uuid = UUID(request.playbook_id)
+            playbook_uuid = UUID(body.playbook_id)
         except ValueError:
             pass
 
@@ -569,7 +569,7 @@ async def analyze_async(
         user_id=current_user.id,
         organization_id=current_user.organization_id,
         playbook_id=playbook_uuid,
-        filename=request.filename or "untitled.docx",
+        filename=body.filename or "untitled.docx",
         status=DocumentStatus.PROCESSING,
         content_hash=content_hash,
     )
@@ -580,7 +580,7 @@ async def analyze_async(
     # Load playbook rules
     playbook_rules = []
     playbook_name = "Default"
-    if request.playbook_id:
+    if body.playbook_id:
         try:
             result = await db.execute(
                 select(Playbook)
@@ -612,8 +612,8 @@ async def analyze_async(
         document_id=doc_id,
         user_id=str(current_user.id),
         organization_id=str(current_user.organization_id) if current_user.organization_id else None,
-        contract_text=request.text,
-        playbook_id=request.playbook_id,
+        contract_text=body.text,
+        playbook_id=body.playbook_id,
         playbook_name=playbook_name,
         playbook_rules=playbook_rules,
     )
@@ -665,8 +665,8 @@ async def get_job_status(
 @router.post("/analyze-full", response_model=AIAnalysisResponse)
 @limiter.limit("20/minute")
 async def analyze_full_ai(
-    request: AIAnalyzeRequest,
-    http_request: Request,
+    request: Request,
+    body: AIAnalyzeRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _quota=Depends(check_and_increment_quota),
@@ -682,10 +682,10 @@ async def analyze_full_ai(
     """
     # Contract size limit (~100 pages)
     MAX_CONTRACT_SIZE = 500_000  # 500KB
-    if len(request.text) > MAX_CONTRACT_SIZE:
+    if len(body.text) > MAX_CONTRACT_SIZE:
         raise HTTPException(
             status_code=413,
-            detail=f"Document too large ({len(request.text):,} chars). Maximum is {MAX_CONTRACT_SIZE:,} characters (~100 pages). Try scanning sections individually.",
+            detail=f"Document too large ({len(body.text):,} chars). Maximum is {MAX_CONTRACT_SIZE:,} characters (~100 pages). Try scanning sections individually.",
         )
 
     # Set RLS context for tenant isolation
@@ -697,7 +697,7 @@ async def analyze_full_ai(
     )
 
     # Get client info for audit
-    client_ip = http_request.client.host if http_request.client else None
+    client_ip = request.client.host if request.client else None
 
     # Track analysis start time for processing_duration_ms
     analysis_start_full = time.monotonic()
@@ -706,9 +706,9 @@ async def analyze_full_ai(
     playbook_rules = []
     playbook_name = "Default"
 
-    if request.playbook_id:
+    if body.playbook_id:
         try:
-            playbook_uuid = UUID(request.playbook_id)
+            playbook_uuid = UUID(body.playbook_id)
             result = await db.execute(
                 select(Playbook)
                 .options(selectinload(Playbook.rules_list))
@@ -731,7 +731,7 @@ async def analyze_full_ai(
                 ]
         except Exception as e:
             logger.error("Error loading playbook: %s", e)
-    
+
     try:
         # Sanitize playbook name before passing to AI
         playbook_name = _sanitize_for_prompt(playbook_name, max_length=200)
@@ -742,7 +742,7 @@ async def analyze_full_ai(
         try:
             pipeline_result: PipelineResult = await asyncio.wait_for(
                 analysis_pipeline.run(
-                    contract_text=request.text,
+                    contract_text=body.text,
                     playbook_rules=playbook_rules,
                     playbook_name=playbook_name,
                 ),
@@ -761,24 +761,24 @@ async def analyze_full_ai(
 
         # Persist document metadata (ZDR-safe: no contract text stored)
         playbook_uuid = None
-        if request.playbook_id:
+        if body.playbook_id:
             try:
-                playbook_uuid = UUID(request.playbook_id)
+                playbook_uuid = UUID(body.playbook_id)
             except ValueError:
                 pass
 
-        content_hash = Document.compute_content_hash(request.text)
+        content_hash = Document.compute_content_hash(body.text)
         doc = Document(
             user_id=current_user.id,
             organization_id=current_user.organization_id,
             playbook_id=playbook_uuid,
-            filename=request.filename or "untitled.docx",
+            filename=body.filename or "untitled.docx",
             status=DocumentStatus.COMPLETED,
             total_risks=len(pipeline_result.redlines),
             risk_summary=risk_summary,
             content_hash=content_hash,
             processed_at=datetime.now(timezone.utc),
-            word_count=len(request.text.split()),
+            word_count=len(body.text.split()),
             processing_duration_ms=int((time.monotonic() - analysis_start_full) * 1000),
         )
         db.add(doc)
@@ -806,7 +806,7 @@ async def analyze_full_ai(
             user=current_user,
             action="ai_full_analysis",
             resource_type="contract",
-            resource_name=request.filename or "untitled.docx",
+            resource_name=body.filename or "untitled.docx",
             ip_address=client_ip,
             risk_count=len(pipeline_result.redlines),
             details=json.dumps({
@@ -845,7 +845,7 @@ async def analyze_full_ai(
 
         return AIAnalysisResponse(
             document_id=doc_id,
-            filename=request.filename or "untitled.docx",
+            filename=body.filename or "untitled.docx",
             executive_summary=pipeline_result.executive_summary,
             redlines=redline_items,
             total_risks=len(redline_items),
@@ -895,8 +895,8 @@ async def analyze_full_ai(
 @router.post("/analyze-clause", response_model=ClauseAnalyzeResponse)
 @limiter.limit("30/minute")
 async def analyze_clause(
-    request: ClauseAnalyzeRequest,
-    http_request: Request,
+    request: Request,
+    body: ClauseAnalyzeRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _quota=Depends(check_and_increment_quota),
@@ -908,15 +908,15 @@ async def analyze_clause(
     selection scanning from the Word Add-in.
     """
     start_time = time.perf_counter()
-    client_ip = http_request.client.host if http_request.client else None
+    client_ip = request.client.host if request.client else None
 
     # Load playbook rules if specified
     playbook_rules = []
     playbook_name = "Default"
 
-    if request.playbook_id:
+    if body.playbook_id:
         try:
-            playbook_uuid = UUID(request.playbook_id)
+            playbook_uuid = UUID(body.playbook_id)
             result = await db.execute(
                 select(Playbook)
                 .options(selectinload(Playbook.rules_list))
@@ -948,10 +948,10 @@ async def analyze_clause(
     try:
         ai_result = await asyncio.wait_for(
             gemini_analyzer.analyze_clause(
-                clause_text=request.clause_text,
+                clause_text=body.clause_text,
                 playbook_rules=playbook_rules,
                 playbook_name=playbook_name,
-                jurisdiction=request.jurisdiction,
+                jurisdiction=body.jurisdiction,
             ),
             timeout=30.0,
         )
@@ -977,7 +977,7 @@ async def analyze_clause(
             user=current_user,
             action="clause_analyzed",
             resource_type="clause",
-            resource_name=request.document_id or "inline-selection",
+            resource_name=body.document_id or "inline-selection",
             ip_address=client_ip,
             risk_count=len(redline_items),
             details=json.dumps({
@@ -1433,8 +1433,8 @@ class GenerateClauseResponse(BaseModel):
 @router.post("/generate-clause", response_model=GenerateClauseResponse)
 @limiter.limit("30/minute")
 async def generate_clause(
-    http_request: Request,
-    request: GenerateClauseRequest,
+    request: Request,
+    body: GenerateClauseRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1449,11 +1449,11 @@ async def generate_clause(
     try:
         # Load playbook rules if provided (with authorization check)
         playbook_rules = None
-        if request.playbook_id:
+        if body.playbook_id:
             result = await db.execute(
                 select(Playbook)
                 .options(selectinload(Playbook.rules_list))
-                .where(Playbook.id == request.playbook_id)
+                .where(Playbook.id == body.playbook_id)
                 .where(
                     (Playbook.is_public == True) |
                     (Playbook.organization_id == current_user.organization_id) |
@@ -1476,8 +1476,8 @@ async def generate_clause(
         try:
             generated = await asyncio.wait_for(
                 gemini_analyzer.generate_clause(
-                    clause_type=request.clause_type,
-                    contract_context=request.contract_context or "",
+                    clause_type=body.clause_type,
+                    contract_context=body.contract_context or "",
                     playbook_rules=playbook_rules,
                 ),
                 timeout=120.0,
@@ -1494,7 +1494,7 @@ async def generate_clause(
             user=current_user,
             action="clause_generation",
             resource_type="clause",
-            details=json.dumps({"clause_type": request.clause_type, "playbook_id": str(request.playbook_id) if request.playbook_id else None}),
+            details=json.dumps({"clause_type": body.clause_type, "playbook_id": str(body.playbook_id) if body.playbook_id else None}),
         )
         await db.commit()
 
@@ -1540,8 +1540,8 @@ class GenerateFixResponse(BaseModel):
 @router.post("/generate-fix", response_model=GenerateFixResponse)
 @limiter.limit("30/minute")
 async def generate_fix(
-    http_request: Request,
-    request: GenerateFixRequest,
+    request: Request,
+    body: GenerateFixRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1555,11 +1555,11 @@ async def generate_fix(
     try:
         # Load playbook rules if provided (with authorization check)
         playbook_rules = None
-        if request.playbook_id:
+        if body.playbook_id:
             result = await db.execute(
                 select(Playbook)
                 .options(selectinload(Playbook.rules_list))
-                .where(Playbook.id == request.playbook_id)
+                .where(Playbook.id == body.playbook_id)
                 .where(
                     (Playbook.is_public == True) |
                     (Playbook.organization_id == current_user.organization_id) |
@@ -1582,11 +1582,11 @@ async def generate_fix(
         try:
             generated = await asyncio.wait_for(
                 gemini_analyzer.generate_fix(
-                    original_text=request.original_text,
-                    recommendation=request.recommendation,
-                    rule_name=request.rule_name,
-                    redline_type=request.redline_type,
-                    surrounding_context=request.surrounding_context or "",
+                    original_text=body.original_text,
+                    recommendation=body.recommendation,
+                    rule_name=body.rule_name,
+                    redline_type=body.redline_type,
+                    surrounding_context=body.surrounding_context or "",
                     playbook_rules=playbook_rules,
                 ),
                 timeout=120.0,
@@ -1603,7 +1603,7 @@ async def generate_fix(
             user=current_user,
             action="fix_generation",
             resource_type="clause",
-            details=json.dumps({"rule_name": request.rule_name, "redline_type": request.redline_type}),
+            details=json.dumps({"rule_name": body.rule_name, "redline_type": body.redline_type}),
         )
         await db.commit()
 
@@ -1656,8 +1656,8 @@ class ResearchClauseResponse(BaseModel):
 @router.post("/research-clause", response_model=ResearchClauseResponse)
 @limiter.limit("30/minute")
 async def research_clause(
-    http_request: Request,
-    request: ResearchClauseRequest,
+    request: Request,
+    body: ResearchClauseRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1671,8 +1671,8 @@ async def research_clause(
         try:
             result = await asyncio.wait_for(
                 gemini_analyzer.research_clause(
-                    clause_text=request.clause_text,
-                    clause_type=request.clause_type or "",
+                    clause_text=body.clause_text,
+                    clause_type=body.clause_type or "",
                 ),
                 timeout=120.0,
             )
@@ -1688,7 +1688,7 @@ async def research_clause(
             user=current_user,
             action="clause_research",
             resource_type="clause",
-            details=json.dumps({"clause_type": request.clause_type, "cases_found": len(result.get("cases", []))}),
+            details=json.dumps({"clause_type": body.clause_type, "cases_found": len(result.get("cases", []))}),
         )
         await db.commit()
 
@@ -1756,8 +1756,8 @@ class CompareResponse(BaseModel):
 @router.post("/compare", response_model=CompareResponse)
 @limiter.limit("30/minute")
 async def compare_contracts(
-    http_request: Request,
-    request: CompareRequest,
+    request: Request,
+    body: CompareRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1772,11 +1772,11 @@ async def compare_contracts(
     try:
         # Load playbook rules if provided (with authorization check)
         playbook_rules = None
-        if request.playbook_id:
+        if body.playbook_id:
             result = await db.execute(
                 select(Playbook)
                 .options(selectinload(Playbook.rules_list))
-                .where(Playbook.id == request.playbook_id)
+                .where(Playbook.id == body.playbook_id)
                 .where(
                     (Playbook.is_public == True) |
                     (Playbook.organization_id == current_user.organization_id) |
@@ -1796,8 +1796,8 @@ async def compare_contracts(
                 ]
 
         diff = await compute_diff_with_ai(
-            text_a=request.text_a,
-            text_b=request.text_b,
+            text_a=body.text_a,
+            text_b=body.text_b,
             playbook_rules=playbook_rules,
         )
 
@@ -1807,7 +1807,7 @@ async def compare_contracts(
             user=current_user,
             action="contract_comparison",
             resource_type="document",
-            details=json.dumps({"total_changes": diff.total_changes, "playbook_id": str(request.playbook_id) if request.playbook_id else None}),
+            details=json.dumps({"total_changes": diff.total_changes, "playbook_id": str(body.playbook_id) if body.playbook_id else None}),
         )
         await db.commit()
 
@@ -2052,8 +2052,8 @@ async def analyze_file(
 @router.post("/summarize", response_model=SummaryResponse)
 @limiter.limit("30/minute")
 async def summarize_contract(
-    request: SummaryRequest,
-    http_request: Request,
+    request: Request,
+    body: SummaryRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -2069,7 +2069,7 @@ async def summarize_contract(
     # We just need the contract text which is passed in the request
     document = None
     try:
-        doc_uuid = UUID(request.document_id)
+        doc_uuid = UUID(body.document_id)
         doc_result = await db.execute(
             select(Document)
             .where(Document.id == doc_uuid)
@@ -2079,14 +2079,14 @@ async def summarize_contract(
     except (ValueError, Exception):
         # Invalid UUID or other error - continue without document
         pass
-    
+
     # Don't require document to exist - we can generate summary from text alone
-    
+
     # Get playbook name if specified
     playbook_name = "Default Rules"
-    if request.playbook_id:
+    if body.playbook_id:
         try:
-            pb_uuid = UUID(request.playbook_id)
+            pb_uuid = UUID(body.playbook_id)
             pb_result = await db.execute(select(Playbook).where(Playbook.id == pb_uuid))
             playbook = pb_result.scalar_one_or_none()
             if playbook:
@@ -2098,7 +2098,7 @@ async def summarize_contract(
     db_risks = []
     if document:
         try:
-            doc_uuid = UUID(request.document_id)
+            doc_uuid = UUID(body.document_id)
             risks_result = await db.execute(
                 select(DocumentRisk).where(DocumentRisk.document_id == doc_uuid)
             )
@@ -2111,7 +2111,7 @@ async def summarize_contract(
     if not db_risks:
         # ZDR mode - re-run rule engine to get risk matches
         rule_engine = RuleEngine()
-        matches = rule_engine.evaluate(request.contract_text)
+        matches = rule_engine.evaluate(body.contract_text)
     else:
         # Use persisted risks
         matches = [
@@ -2128,7 +2128,7 @@ async def summarize_contract(
     
     # Generate AI summary
     summary_text, tokens = await ai_service.summarize_contract(
-        contract_text=request.contract_text,
+        contract_text=body.contract_text,
         risks_found=matches,
         playbook_name=playbook_name
     )
@@ -2155,16 +2155,16 @@ async def summarize_contract(
         key_concerns = ["Review detected risks before signing"]
     
     # Audit log for summary generation
-    client_ip = http_request.client.host if http_request.client else None
+    client_ip = request.client.host if request.client else None
     await log_audit_event(
         db=db, user=current_user, action="summary_generated",
-        resource_type="document", resource_name=request.document_id,
+        resource_type="document", resource_name=body.document_id,
         ip_address=client_ip, status="success",
     )
     await db.commit()
 
     return SummaryResponse(
-        document_id=request.document_id,
+        document_id=body.document_id,
         summary=summary_text,
         risk_level=risk_level,
         key_concerns=key_concerns[:5],  # Max 5 concerns
