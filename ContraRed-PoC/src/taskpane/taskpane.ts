@@ -633,8 +633,7 @@ async function applyTemplate(templateId: string, pairedPlaybookId?: string): Pro
   const picker = document.getElementById('templatePicker');
   if (picker) picker.style.display = 'none';
 
-  const confirmed = confirm('This will replace your entire document with the template. Continue?');
-  if (!confirmed) return;
+  // Office webview doesn't support window.confirm() — proceed directly
 
   try {
     const data = await api.downloadTemplate(templateId);
@@ -2135,11 +2134,7 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, 
     return;
   }
 
-  // Fix #9: Confirmation before applying
-  const origPreview = redline.original_text.length > 100 ? redline.original_text.substring(0, 100) + '...' : redline.original_text;
-  const fixPreview = textToApply.length > 100 ? textToApply.substring(0, 100) + '...' : textToApply;
-  const proceed = confirm(`Apply this change?\n\nOriginal: "${origPreview}"\n\nReplacement: "${fixPreview}"`);
-  if (!proceed) return;
+  // Office webview doesn't support window.confirm() — proceed directly
 
   try {
     // Fetch OOXML BEFORE entering Word.run to avoid context timeout
@@ -2159,8 +2154,7 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, 
         await context.sync();
       } catch (trackErr) {
         log.warn('Could not enable ChangeTrackingMode:', trackErr);
-        const proceedWithout = confirm('Track Changes could not be enabled. Changes will be applied directly without revision marks. Continue anyway?');
-        if (!proceedWithout) return;
+        // Office webview doesn't support window.confirm() — proceed without track changes
       }
 
       const result = await findTextInDocument(redline.original_text, context);
