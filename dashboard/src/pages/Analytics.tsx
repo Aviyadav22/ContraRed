@@ -14,10 +14,6 @@ import {
     listAnalyticsReports,
     getStoredTokens,
     type RiskBreakdownItem,
-    type ROIData,
-    type PortfolioRisk,
-    type TeamPerformanceItem,
-    type GeneratedReport,
 } from '@/api/client';
 import AppHeader from '@/components/AppHeader';
 

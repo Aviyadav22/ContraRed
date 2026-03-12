@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { getExecutiveDashboard, type ExecutiveDashboard } from '@/api/client';
+import { getExecutiveDashboard } from '@/api/client';
 import AppHeader from '@/components/AppHeader';
 
 function formatCurrency(value: number, currency: string = 'INR'): string {
