@@ -1605,10 +1605,9 @@
 <body>
     <div class="container">
         <!-- Header -->
-        <header class="header">
-            <div class="logo">
-                <img src="../assets/logo.png" alt="ContraRed" style="height: 22px; object-fit: contain;" />
-            </div>
+        <header class="header" style="margin-bottom: var(--space-3); padding-bottom: var(--space-2);">
+            <span style="font-size: 15px; font-weight: 700; letter-spacing: -0.3px; color: var(--text-primary);">Contra<span style="color: #C0392B;">Red</span></span>
+            <a href="https://contrared.netlify.app" target="_blank" class="btn btn-ghost btn-sm" style="text-decoration: none; font-size: 11px; padding: 4px 10px;">Dashboard</a>
         </header>
 
         <!-- ================================================================ -->
@@ -1641,9 +1640,9 @@
 
                 <div style="text-align: center; margin-top: 12px; font-size: 12px; color: #8B8680;">
                     Don't have an account?
-                    <a href="https://contrared-dashboard.netlify.app/register" target="_blank" style="color: #C0392B; text-decoration: underline;">Sign up</a>
+                    <a href="https://contrared.netlify.app/register" target="_blank" style="color: #C0392B; text-decoration: underline;">Sign up</a>
                     <br/>
-                    <a href="https://contrared-dashboard.netlify.app/forgot-password" target="_blank" style="color: #8B8680; text-decoration: underline; font-size: 11px;">Forgot password?</a>
+                    <a href="https://contrared.netlify.app/forgot-password" target="_blank" style="color: #8B8680; text-decoration: underline; font-size: 11px;">Forgot password?</a>
                 </div>
             </section>
         </div>
@@ -1670,7 +1669,7 @@
                     <button id="addPlaybookBtn" class="btn btn-secondary btn-sm" style="flex: 1;">
                         + New Playbook
                     </button>
-                    <a id="dashboardLink" href="https://contrared-dashboard.netlify.app/dashboard"
+                    <a id="dashboardLink" href="https://contrared.netlify.app/dashboard"
                        target="_blank" class="btn btn-ghost btn-sm"
                        style="flex: 1; text-decoration: none; text-align: center;">
                         Dashboard
@@ -1720,7 +1719,7 @@
                         <select id="playbookSelect" class="form-input" style="flex: 1; margin: 0;">
                             <option value="">Default Rules</option>
                         </select>
-                        <button id="templateBtn" class="btn-icon" title="Start from Template">
+                        <button id="templateBtn" class="btn-icon" title="Start from Template" style="display: none;">
                             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="15" height="15">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                     d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />

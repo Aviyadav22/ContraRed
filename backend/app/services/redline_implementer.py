@@ -11,7 +11,9 @@ Key features:
 - Track Changes OOXML generation for lawyer review
 """
 
-from typing import Optional, Tuple
+import re
+from difflib import SequenceMatcher
+from typing import List, Optional, Tuple
 from dataclasses import dataclass
 
 from rapidfuzz import fuzz, process
@@ -241,44 +243,47 @@ class RedlineImplementer:
             match_method="none"
         )
     
-    def generate_track_changes_ooxml(
-        self,
-        original: str,
-        replacement: str,
-        author: str = "ContraRed AI"
-    ) -> str:
+    @staticmethod
+    def _escape_xml(text: str) -> str:
+        """Escape XML special characters."""
+        return (text
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&apos;"))
+
+    @staticmethod
+    def _compute_word_ops(original: str, replacement: str) -> List[Tuple[str, str]]:
         """
-        Generate Word-compatible Track Changes XML.
-        
-        Creates OOXML that shows:
-        - Original text with strikethrough (red)
-        - Replacement text with underline (green)
-        
-        Args:
-            original: Original clause text
-            replacement: Suggested replacement text
-            author: Author name for track changes
-            
-        Returns:
-            OOXML package string
+        Compute word-level diff ops between original and replacement text.
+
+        Returns list of (op_type, text) where op_type is 'keep', 'del', or 'ins'.
+        Splits on whitespace boundaries, preserving whitespace tokens.
         """
-        from datetime import datetime, timezone
-        
-        # Escape XML special characters
-        def escape_xml(text: str) -> str:
-            return (text
-                .replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-                .replace('"', "&quot;")
-                .replace("'", "&apos;"))
-        
-        original_escaped = escape_xml(original)
-        replacement_escaped = escape_xml(replacement)
-        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        
-        # Generate proper Track Changes OOXML
-        ooxml = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+        # Split preserving whitespace (matches frontend wordDiff behavior)
+        orig_tokens = [t for t in re.split(r'(\s+)', original) if t]
+        repl_tokens = [t for t in re.split(r'(\s+)', replacement) if t]
+
+        matcher = SequenceMatcher(None, orig_tokens, repl_tokens)
+        ops: List[Tuple[str, str]] = []
+
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == 'equal':
+                ops.append(('keep', ''.join(orig_tokens[i1:i2])))
+            elif tag == 'delete':
+                ops.append(('del', ''.join(orig_tokens[i1:i2])))
+            elif tag == 'insert':
+                ops.append(('ins', ''.join(repl_tokens[j1:j2])))
+            elif tag == 'replace':
+                ops.append(('del', ''.join(orig_tokens[i1:i2])))
+                ops.append(('ins', ''.join(repl_tokens[j1:j2])))
+
+        return ops
+
+    def _wrap_ooxml_package(self, body_content: str) -> str:
+        """Wrap paragraph content in a complete OOXML package."""
+        return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <pkg:package xmlns:pkg="http://schemas.microsoft.com/office/2006/xmlPackage">
   <pkg:part pkg:name="/_rels/.rels" pkg:contentType="application/vnd.openxmlformats-package.relationships+xml">
     <pkg:xmlData>
@@ -292,35 +297,90 @@ class RedlineImplementer:
       <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
         <w:body>
           <w:p>
-            <!-- Deleted text (strikethrough, red) -->
-            <w:del w:id="1" w:author="{author}" w:date="{timestamp}">
-              <w:r>
-                <w:rPr>
-                  <w:strike/>
-                  <w:color w:val="DC2626"/>
-                </w:rPr>
-                <w:delText>{original_escaped}</w:delText>
-              </w:r>
-            </w:del>
-            <w:r><w:t xml:space="preserve"> </w:t></w:r>
-            <!-- Inserted text (underline, green) -->
-            <w:ins w:id="2" w:author="{author}" w:date="{timestamp}">
-              <w:r>
-                <w:rPr>
-                  <w:u w:val="single"/>
-                  <w:color w:val="16A34A"/>
-                </w:rPr>
-                <w:t>{replacement_escaped}</w:t>
-              </w:r>
-            </w:ins>
+{body_content}
           </w:p>
         </w:body>
       </w:document>
     </pkg:xmlData>
   </pkg:part>
 </pkg:package>'''
-        
-        return ooxml
+
+    def generate_track_changes_ooxml(
+        self,
+        original: str,
+        replacement: str,
+        author: str = "ContraRed AI"
+    ) -> str:
+        """
+        Generate Word-compatible Track Changes XML with surgical word-level diffs.
+
+        Instead of striking through the entire clause and inserting the entire
+        replacement, this computes a word-level diff and only marks changed
+        words as deleted/inserted. Unchanged words appear as normal text.
+
+        Falls back to bulk replacement if texts are too different (< 15% overlap).
+        """
+        from datetime import datetime, timezone
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        escape = self._escape_xml
+
+        # Compute word-level diff
+        ops = self._compute_word_ops(original, replacement)
+
+        # Check overlap ratio — if too different, use bulk replace
+        kept = sum(1 for op_type, _ in ops if op_type == 'keep')
+        total = len(ops)
+        if total > 0 and kept / total < 0.15:
+            return self._generate_bulk_ooxml(original, replacement, author, timestamp, escape)
+
+        # Generate surgical OOXML runs
+        runs: List[str] = []
+        rev_id = 1
+
+        for op_type, text in ops:
+            escaped_text = escape(text)
+
+            if op_type == 'keep':
+                runs.append(
+                    f'            <w:r><w:t xml:space="preserve">{escaped_text}</w:t></w:r>'
+                )
+            elif op_type == 'del':
+                runs.append(
+                    f'            <w:del w:id="{rev_id}" w:author="{author}" w:date="{timestamp}">'
+                    f'<w:r><w:rPr><w:strike/><w:color w:val="DC2626"/></w:rPr>'
+                    f'<w:delText xml:space="preserve">{escaped_text}</w:delText></w:r></w:del>'
+                )
+                rev_id += 1
+            elif op_type == 'ins':
+                runs.append(
+                    f'            <w:ins w:id="{rev_id}" w:author="{author}" w:date="{timestamp}">'
+                    f'<w:r><w:rPr><w:u w:val="single"/><w:color w:val="16A34A"/></w:rPr>'
+                    f'<w:t xml:space="preserve">{escaped_text}</w:t></w:r></w:ins>'
+                )
+                rev_id += 1
+
+        body_content = '\n'.join(runs)
+        return self._wrap_ooxml_package(body_content)
+
+    def _generate_bulk_ooxml(
+        self,
+        original: str,
+        replacement: str,
+        author: str,
+        timestamp: str,
+        escape,
+    ) -> str:
+        """Fallback: full delete + full insert when texts are too different."""
+        body_content = (
+            f'            <w:del w:id="1" w:author="{author}" w:date="{timestamp}">'
+            f'<w:r><w:rPr><w:strike/><w:color w:val="DC2626"/></w:rPr>'
+            f'<w:delText xml:space="preserve">{escape(original)}</w:delText></w:r></w:del>\n'
+            f'            <w:ins w:id="2" w:author="{author}" w:date="{timestamp}">'
+            f'<w:r><w:rPr><w:u w:val="single"/><w:color w:val="16A34A"/></w:rPr>'
+            f'<w:t xml:space="preserve">{escape(replacement)}</w:t></w:r></w:ins>'
+        )
+        return self._wrap_ooxml_package(body_content)
 
     def generate_insert_only_ooxml(
         self,

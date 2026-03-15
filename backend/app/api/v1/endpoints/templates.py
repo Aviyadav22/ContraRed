@@ -79,8 +79,12 @@ async def list_templates(
         query = query.where(ContractTemplate.is_premium == False)
 
     query = query.order_by(ContractTemplate.name)
-    result = await db.execute(query)
-    templates = result.scalars().all()
+    try:
+        result = await db.execute(query)
+        templates = result.scalars().all()
+    except Exception as e:
+        logger.warning("Could not query templates (table may not exist): %s", e)
+        return []
 
     return [
         TemplateListItem(
