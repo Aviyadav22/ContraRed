@@ -41,6 +41,12 @@ interface AIRedlineItem {
     explanation: string;
     recommendation: string;  // Lawyer-readable guidance (not exact replacement text)
     redline_type: 'violation' | 'missing';
+    // Confidence & verification fields (from backend pipeline stages 4-5)
+    confidence?: number;           // 0.0-1.0 weighted score
+    confidence_level?: string;     // "HIGH" | "MEDIUM" | "LOW"
+    verification_status?: string;  // "exact" | "normalized" | "fuzzy_corrected"
+    is_deal_breaker?: boolean;
+    cross_references?: string[];
 }
 
 interface AIAnalysisResult {
@@ -152,49 +158,32 @@ interface DocumentListItem {
 // ============================================================================
 
 class ContraRedAPI {
-    private accessToken: string | null = null;
-    private refreshToken: string | null = null;
     private currentUser: User | null = null;
     private isRefreshing = false;
 
     constructor() {
-        // Try to load tokens from localStorage on init
-        this.loadTokens();
+        this.loadUser();
     }
 
-    private loadTokens(): void {
+    private getCsrfToken(): string {
+        const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+        return match ? decodeURIComponent(match[1]) : '';
+    }
+
+    private loadUser(): void {
         try {
-            const stored = localStorage.getItem('contrared_tokens');
-            if (stored) {
-                const tokens = JSON.parse(stored);
-                this.accessToken = tokens.access_token;
-                this.refreshToken = tokens.refresh_token;
-            }
             const userStored = localStorage.getItem('contrared_user');
             if (userStored) {
                 this.currentUser = JSON.parse(userStored);
             }
         } catch {
-            // No stored tokens — fresh session
+            // No stored user — fresh session
         }
     }
 
-    private saveTokens(tokens: AuthTokens, user?: User): void {
-        this.accessToken = tokens.access_token;
-        this.refreshToken = tokens.refresh_token;
-        localStorage.setItem('contrared_tokens', JSON.stringify(tokens));
-        if (user) {
-            this.currentUser = user;
-            localStorage.setItem('contrared_user', JSON.stringify(user));
-        }
-    }
-
-    private getStoredTokens(): AuthTokens | null {
-        try {
-            const stored = localStorage.getItem('contrared_tokens');
-            if (stored) return JSON.parse(stored);
-        } catch { /* ignore */ }
-        return null;
+    private saveUser(user: User): void {
+        this.currentUser = user;
+        localStorage.setItem('contrared_user', JSON.stringify(user));
     }
 
     private async request<T>(
@@ -207,11 +196,13 @@ class ContraRedAPI {
             ...(options.headers as Record<string, string>),
         };
 
-        if (this.accessToken) {
-            headers['Authorization'] = `Bearer ${this.accessToken}`;
+        // Add CSRF token for state-changing requests
+        const method = (options.method || 'GET').toUpperCase();
+        if (method !== 'GET' && method !== 'HEAD') {
+            const csrf = this.getCsrfToken();
+            if (csrf) headers['X-CSRF-Token'] = csrf;
         }
 
-        const method = options.method || 'GET';
         const body = options.body;
 
         // AbortController timeout: 2 minutes
@@ -223,6 +214,7 @@ class ContraRedAPI {
             response = await fetch(url, {
                 ...options,
                 headers,
+                credentials: 'include',
                 signal: controller.signal,
             });
         } catch (err) {
@@ -240,35 +232,35 @@ class ContraRedAPI {
         }
 
         if (response.status === 401 && !this.isRefreshing) {
-            // Try refresh with loop guard
+            // Try cookie-based refresh (server reads refresh_token from cookie)
             this.isRefreshing = true;
-            const tokens = this.getStoredTokens();
-            if (tokens?.refresh_token) {
-                try {
-                    const refreshResp = await fetch(`${API_BASE_URL}/auth/refresh`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ refresh_token: tokens.refresh_token }),
-                    });
-                    if (refreshResp.ok) {
-                        const newTokens = await refreshResp.json();
-                        this.accessToken = newTokens.access_token;
-                        this.refreshToken = newTokens.refresh_token;
-                        localStorage.setItem('contrared_tokens', JSON.stringify(newTokens));
-                        this.isRefreshing = false;
-                        // Retry with new token
-                        headers['Authorization'] = `Bearer ${newTokens.access_token}`;
-                        const retryResp = await fetch(url, { method, headers, body: body as BodyInit | undefined });
-                        if (retryResp.ok) {
-                            if (retryResp.status === 204) return undefined as T;
-                            return retryResp.json();
-                        }
-                    }
-                } catch {
+            try {
+                const refreshResp = await fetch(`${API_BASE_URL}/auth/refresh`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                });
+                if (refreshResp.ok) {
                     this.isRefreshing = false;
-                    this.logout();
-                    throw new Error('Session expired. Please log in again.');
+                    // Cookies updated by server, retry original request
+                    const retryHeaders: Record<string, string> = { ...headers };
+                    const newCsrf = this.getCsrfToken();
+                    if (newCsrf) retryHeaders['X-CSRF-Token'] = newCsrf;
+                    const retryResp = await fetch(url, {
+                        method,
+                        headers: retryHeaders,
+                        credentials: 'include',
+                        body: body as BodyInit | undefined,
+                    });
+                    if (retryResp.ok) {
+                        if (retryResp.status === 204) return undefined as T;
+                        return retryResp.json();
+                    }
                 }
+            } catch {
+                this.isRefreshing = false;
+                this.logout();
+                throw new Error('Session expired. Please log in again.');
             }
             this.isRefreshing = false;
             throw new Error('Session expired. Please log in again.');
@@ -307,6 +299,7 @@ class ContraRedAPI {
         const response = await fetch(`${API_BASE_URL}/auth/login`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            credentials: 'include',
             body: formData,
         });
 
@@ -316,7 +309,8 @@ class ContraRedAPI {
         }
 
         const data = await response.json();
-        this.saveTokens({ access_token: data.access_token, refresh_token: data.refresh_token }, data.user);
+        // Server sets HttpOnly cookies; only store user profile locally
+        this.saveUser(data.user);
         return data;
     }
 
@@ -325,28 +319,25 @@ class ContraRedAPI {
     }
 
     isLoggedIn(): boolean {
-        if (!this.accessToken) return false;
-        try {
-            const payload = JSON.parse(atob(this.accessToken.split('.')[1]));
-            if (payload.exp && payload.exp * 1000 < Date.now()) {
-                // Token expired
-                return false;
-            }
-            return true;
-        } catch {
-            return false;
-        }
+        // Tokens are in HttpOnly cookies (not accessible to JS).
+        // Use presence of stored user profile as login indicator.
+        // The server will validate the actual token on each request.
+        return this.currentUser !== null;
     }
 
     getUser(): User | null {
         return this.currentUser;
     }
 
-    logout(): void {
-        this.accessToken = null;
-        this.refreshToken = null;
+    async logout(): Promise<void> {
+        try {
+            await fetch(`${API_BASE_URL}/auth/logout`, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'X-CSRF-Token': this.getCsrfToken() },
+            });
+        } catch { /* best-effort server logout */ }
         this.currentUser = null;
-        localStorage.removeItem('contrared_tokens');
         localStorage.removeItem('contrared_user');
     }
 
@@ -392,10 +383,10 @@ class ContraRedAPI {
      * Sends full contract text + playbook to Gemini for holistic analysis.
      * Returns executive summary and redlines with exact-match text anchors.
      */
-    async analyzeWithAI(text: string, filename?: string, playbookId?: string): Promise<AIAnalysisResult> {
+    async analyzeWithAI(text: string, filename?: string, playbookId?: string, partySide?: string): Promise<AIAnalysisResult> {
         return this.request('/documents/analyze-full', {
             method: 'POST',
-            body: JSON.stringify({ text, filename, playbook_id: playbookId }),
+            body: JSON.stringify({ text, filename, playbook_id: playbookId, party_side: partySide || 'buyer' }),
         });
     }
 
@@ -454,7 +445,8 @@ class ContraRedAPI {
         redlineType?: string;
         surroundingContext?: string;
         playbookId?: string;
-    }): Promise<{ fix_text: string; reasoning: string }> {
+        contractText?: string;
+    }): Promise<{ fix_text: string; reasoning: string; fix_verified?: boolean; fix_warnings?: string[] }> {
         return this.request('/documents/generate-fix', {
             method: 'POST',
             body: JSON.stringify({
@@ -464,6 +456,7 @@ class ContraRedAPI {
                 redline_type: params.redlineType || 'violation',
                 surrounding_context: params.surroundingContext,
                 playbook_id: params.playbookId,
+                contract_text: params.contractText,
             }),
         });
     }

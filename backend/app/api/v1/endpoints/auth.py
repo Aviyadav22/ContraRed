@@ -14,7 +14,7 @@ import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,7 +57,7 @@ MFA_CHALLENGE_EXPIRE_MINUTES = 5
 limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter()
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
 
 
 def _get_client_ip(request: Request) -> Optional[str]:
@@ -138,21 +138,38 @@ class MFAChallengeRequest(BaseModel):
 
 # Dependency to get current user
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
+    token: Optional[str] = Depends(oauth2_scheme),
     db: AsyncSession = Depends(get_db)
 ) -> User:
-    """Extract and validate user from JWT token.
+    """Extract and validate user from JWT token (header or cookie).
 
     Checks:
-    1. Token signature + expiry (via decode_token)
-    2. Token not on Redis blacklist (via token_service)
-    3. User exists and is active
+    1. Token from Authorization header or access_token cookie
+    2. CSRF validation for cookie-based auth
+    3. Token signature + expiry (via decode_token)
+    4. Token not on Redis blacklist (via token_service)
+    5. User exists and is active
     """
+    from app.core.cookies import get_token_from_request, validate_csrf
+
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    # Resolve token: Authorization header (via oauth2_scheme) > cookie
+    if not token:
+        token = request.cookies.get("access_token")
+        if token and not validate_csrf(request):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="CSRF validation failed",
+            )
+
+    if not token:
+        raise credentials_exception
 
     token_data = decode_token(token)
     if token_data is None:
@@ -247,6 +264,7 @@ async def register(
 @limiter.limit("5/minute")
 async def login(
     request: Request,
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_db)
 ):
@@ -419,6 +437,10 @@ async def login(
         if evicted:
             logger.info("Evicted %d old sessions for user %s", len(evicted), user.email)
 
+    # Set HttpOnly auth cookies
+    from app.core.cookies import set_auth_cookies
+    set_auth_cookies(response, access_token, refresh_token)
+
     return {
         "access_token": access_token,
         "refresh_token": refresh_token,
@@ -444,12 +466,26 @@ def _user_response_dict(user: User) -> dict:
 
 
 @router.post("/refresh", response_model=Token)
+@limiter.limit("30/minute")
 async def refresh_token(
-    request: RefreshRequest,
+    request: Request,
+    response: Response,
+    body: Optional[RefreshRequest] = None,
     db: AsyncSession = Depends(get_db)
 ):
-    """Refresh access token using refresh token (revokes old refresh token)."""
-    token_data = decode_token(request.refresh_token, expected_type="refresh")
+    """Refresh access token using refresh token (revokes old refresh token).
+
+    Accepts refresh_token from request body or from HttpOnly cookie.
+    """
+    # Get refresh token from body or cookie
+    raw_refresh = (body.refresh_token if body and body.refresh_token else None) or request.cookies.get("refresh_token")
+    if not raw_refresh:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token required"
+        )
+
+    token_data = decode_token(raw_refresh, expected_type="refresh")
 
     if token_data is None:
         raise HTTPException(
@@ -489,9 +525,16 @@ async def refresh_token(
         "org_id": str(user.organization_id) if user.organization_id else None,
     }
 
+    new_access = create_access_token(new_token_data)
+    new_refresh = create_refresh_token(new_token_data)
+
+    # Set HttpOnly auth cookies
+    from app.core.cookies import set_auth_cookies
+    set_auth_cookies(response, new_access, new_refresh)
+
     return Token(
-        access_token=create_access_token(new_token_data),
-        refresh_token=create_refresh_token(new_token_data),
+        access_token=new_access,
+        refresh_token=new_refresh,
     )
 
 
@@ -578,18 +621,24 @@ async def change_password(
 @router.post("/logout")
 async def logout(
     request: Request,
-    token: str = Depends(oauth2_scheme),
+    response: Response,
+    token: Optional[str] = Depends(oauth2_scheme),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Logout -- revoke current token via Redis blacklist."""
-    # Extract JTI from the raw token and revoke it
-    token_data = decode_token(token)
-    if token_data and token_data.jti:
-        blacklist = await get_token_blacklist()
-        await blacklist.revoke(token_data.jti)
-        # Remove from active sessions
-        await blacklist.remove_session(str(current_user.id), token_data.jti)
+    """Logout -- revoke current token via Redis blacklist and clear cookies."""
+    # Resolve token from header or cookie
+    raw_token = token or request.cookies.get("access_token")
+    if raw_token:
+        token_data = decode_token(raw_token)
+        if token_data and token_data.jti:
+            blacklist = await get_token_blacklist()
+            await blacklist.revoke(token_data.jti)
+            await blacklist.remove_session(str(current_user.id), token_data.jti)
+
+    # Clear HttpOnly auth cookies
+    from app.core.cookies import clear_auth_cookies
+    clear_auth_cookies(response)
 
     await log_audit_event(
         db, user=current_user, action="logout",
@@ -608,6 +657,7 @@ async def logout(
 @limiter.limit("10/minute")
 async def mfa_challenge(
     request: Request,
+    response: Response,
     data: MFAChallengeRequest,
     db: AsyncSession = Depends(get_db),
 ):
@@ -683,16 +733,20 @@ async def mfa_challenge(
     }
 
     access_token = create_access_token(token_data_dict)
-    refresh_token = create_refresh_token(token_data_dict)
+    refresh_token_str = create_refresh_token(token_data_dict)
 
     # Register session + enforce concurrent session limit
     access_td = decode_token(access_token)
     if access_td and access_td.jti:
         await blacklist.register_session(str(user.id), access_td.jti)
 
+    # Set HttpOnly auth cookies
+    from app.core.cookies import set_auth_cookies
+    set_auth_cookies(response, access_token, refresh_token_str)
+
     return {
         "access_token": access_token,
-        "refresh_token": refresh_token,
+        "refresh_token": refresh_token_str,
         "token_type": "bearer",
         "mfa_required": False,
         "new_ip_detected": ip_is_new,
@@ -905,12 +959,13 @@ async def forgot_password(
     user = result.scalar_one_or_none()
 
     if user:
-        # TODO: Generate a time-limited reset token and send via email service
-        # reset_token = create_access_token(
-        #     {"sub": str(user.id), "type": "password_reset"},
-        #     expires_delta=timedelta(hours=1),
-        # )
-        # await send_reset_email(user.email, reset_token)
+        from app.services.email_service import send_password_reset_email
+
+        reset_token = create_access_token(
+            {"sub": str(user.id), "type": "password_reset"},
+            expires_delta=timedelta(hours=1),
+        )
+        await send_password_reset_email(user.email, reset_token)
         logger.info("Password reset requested for existing user (id=%s)", str(user.id)[:8])
         await log_audit_event(
             db, user=user, action="password_reset_requested", resource_type="auth",

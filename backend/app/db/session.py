@@ -19,9 +19,7 @@ _is_supabase = "supabase.com" in settings.DATABASE_URL or "supabase.co" in setti
 if _is_supabase:
     import ssl as _ssl
     _ctx = _ssl.create_default_context()
-    _ctx.check_hostname = False
-    _ctx.verify_mode = _ssl.CERT_NONE
-    connect_args["ssl"] = _ctx  # TLS without cert verification (Supabase pooler uses self-signed certs)
+    connect_args["ssl"] = _ctx  # Full TLS verification — Supabase uses CA-signed certs
     # Transaction pooler (port 6543) requires disabling prepared statements
     if ":6543/" in settings.DATABASE_URL:
         connect_args["statement_cache_size"] = 0
@@ -32,8 +30,8 @@ engine = create_async_engine(
     settings.DATABASE_URL,
     echo=settings.DEBUG,
     pool_pre_ping=True,
-    pool_size=3,          # Reduced for Supabase free tier (max 15 connections)
-    max_overflow=5,
+    pool_size=5,          # Supabase free tier allows up to 15 connections
+    max_overflow=10,
     pool_recycle=300,     # Recycle connections every 5 minutes
     pool_timeout=10,      # Wait up to 10s for a connection from the pool
     connect_args=connect_args,

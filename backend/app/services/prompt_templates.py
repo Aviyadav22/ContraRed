@@ -13,7 +13,29 @@ Template variables:
 The LEGACY_PROMPT is kept for fallback if the new pipeline fails.
 """
 
-from typing import Optional
+from typing import Optional, Dict
+
+
+# ---------------------------------------------------------------------------
+# Party side context descriptions
+# ---------------------------------------------------------------------------
+
+PARTY_SIDE_CONTEXT: Dict[str, str] = {
+    "buyer": (
+        "You represent the BUYER/CLIENT — the party PURCHASING or RECEIVING goods, services, or licenses. "
+        "Terms that favor the provider/vendor/seller are ADVERSE to your client. "
+        "One-sided obligations imposed on the buyer, uncapped buyer liability, or broad vendor indemnification protection are risks."
+    ),
+    "seller": (
+        "You represent the SELLER/VENDOR/PROVIDER — the party SUPPLYING goods, services, or licenses. "
+        "Terms that favor the buyer/client/customer are ADVERSE to your client. "
+        "Unlimited vendor liability, broad vendor warranties, or one-sided termination rights for the buyer are risks."
+    ),
+    "neutral": (
+        "You are performing a NEUTRAL/BALANCED review. Flag terms that are unfair to EITHER party. "
+        "Assess commercial reasonableness from both perspectives. One-sided terms in either direction should be flagged."
+    ),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +113,7 @@ SYSTEM_PROMPT_V2 = """You are ContraRed AI, an expert contract review system. Yo
 ## YOUR IDENTITY
 - Role: AI contract risk analyst
 - Standard: Big-4 law firm quality
-- Perspective: You represent the CLIENT (the party whose Playbook you are given)
+- Perspective: {party_side_context}
 - Objective: Identify risks, violations, and missing protections — then provide actionable redlines
 
 ## ANALYSIS FRAMEWORK — 4 MANDATORY STEPS
@@ -444,23 +466,27 @@ Return ONLY a valid JSON object:
 def render_system_prompt(
     jurisdiction_context: str = "",
     defined_terms: str = "",
+    party_side: str = "buyer",
 ) -> str:
     """
-    Render the v2 system prompt with jurisdiction and defined terms injected.
+    Render the v2 system prompt with jurisdiction, defined terms, and party side injected.
 
     Args:
         jurisdiction_context: Output of JurisdictionProfile.to_prompt_context()
         defined_terms: Output of DefinedTermsResult.to_prompt_context()
+        party_side: One of "buyer", "seller", "neutral" — determines the perspective for risk assessment.
 
     Returns:
         Complete system prompt string.
     """
     context = jurisdiction_context or "JURISDICTION: Not specified\nThe governing law jurisdiction could not be auto-detected. Apply general commercial law principles and flag jurisdiction-specific risks for manual review."
     terms = defined_terms or "DEFINED TERMS: None detected in the contract."
+    side_context = PARTY_SIDE_CONTEXT.get(party_side, PARTY_SIDE_CONTEXT["buyer"])
 
     return SYSTEM_PROMPT_V2.format(
         jurisdiction_context=context,
         defined_terms=terms,
+        party_side_context=side_context,
     )
 
 

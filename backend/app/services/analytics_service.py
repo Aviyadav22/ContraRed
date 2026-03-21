@@ -27,13 +27,13 @@ async def get_org_overview(
     """Get org-level overview stats for the last N days."""
     since = datetime.now(timezone.utc) - timedelta(days=days)
 
-    # Subquery for user IDs in this org
-    user_ids_subq = select(User.id).where(User.organization_id == org_id).scalar_subquery()
+    # Subquery for user IDs in this org (reused across all queries below)
+    user_ids_q = select(User.id).where(User.organization_id == org_id)
 
     # Documents analyzed
     doc_result = await db.execute(
         select(func.count(Document.id))
-        .where(Document.user_id.in_(select(User.id).where(User.organization_id == org_id)))
+        .where(Document.user_id.in_(user_ids_q))
         .where(Document.created_at >= since)
         .where(Document.status == DocumentStatus.COMPLETED)
     )
@@ -52,7 +52,7 @@ async def get_org_overview(
     # Total risks
     total_result = await db.execute(
         select(func.sum(func.coalesce(Document.total_risks, 0)))
-        .where(Document.user_id.in_(select(User.id).where(User.organization_id == org_id)))
+        .where(Document.user_id.in_(user_ids_q))
         .where(Document.created_at >= since)
         .where(Document.status == DocumentStatus.COMPLETED)
     )
@@ -65,7 +65,7 @@ async def get_org_overview(
             func.sum(cast(Document.risk_summary["red"].as_string(), Integer)).label("red_total"),
             func.sum(cast(Document.risk_summary["yellow"].as_string(), Integer)).label("yellow_total"),
         )
-        .where(Document.user_id.in_(select(User.id).where(User.organization_id == org_id)))
+        .where(Document.user_id.in_(user_ids_q))
         .where(Document.created_at >= since)
         .where(Document.status == DocumentStatus.COMPLETED)
         .where(Document.risk_summary.isnot(None))
@@ -77,7 +77,7 @@ async def get_org_overview(
     # Active users (users who scanned at least one doc)
     active_result = await db.execute(
         select(func.count(func.distinct(Document.user_id)))
-        .where(Document.user_id.in_(select(User.id).where(User.organization_id == org_id)))
+        .where(Document.user_id.in_(user_ids_q))
         .where(Document.created_at >= since)
     )
     active_users = active_result.scalar() or 0
@@ -101,11 +101,11 @@ async def get_risk_breakdown(
     since = datetime.now(timezone.utc) - timedelta(days=days)
 
     # Subquery: document IDs belonging to org users within time range
-    doc_ids_subq = (
+    user_ids_q = select(User.id).where(User.organization_id == org_id)
+    doc_ids_q = (
         select(Document.id)
-        .where(Document.user_id.in_(select(User.id).where(User.organization_id == org_id)))
+        .where(Document.user_id.in_(user_ids_q))
         .where(Document.created_at >= since)
-        .scalar_subquery()
     )
 
     # Get risk breakdown by risk_level
@@ -114,11 +114,7 @@ async def get_risk_breakdown(
             DocumentRisk.risk_level,
             func.count(DocumentRisk.id),
         )
-        .where(DocumentRisk.document_id.in_(
-            select(Document.id)
-            .where(Document.user_id.in_(select(User.id).where(User.organization_id == org_id)))
-            .where(Document.created_at >= since)
-        ))
+        .where(DocumentRisk.document_id.in_(doc_ids_q))
         .group_by(DocumentRisk.risk_level)
     )
 

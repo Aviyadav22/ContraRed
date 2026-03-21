@@ -223,12 +223,10 @@ async def compute_diff_with_ai(
         return diff
 
     try:
-        from app.services.gemini_analyzer import gemini_analyzer, AIServiceError
+        from app.services.analysis_pipeline import analysis_pipeline, _sanitize_for_prompt
 
-        if not gemini_analyzer.is_enabled:
+        if not analysis_pipeline.is_enabled:
             return diff
-
-        from app.services.gemini_analyzer import _sanitize_for_prompt
 
         # Build a batch prompt for all changes
         changes_text = ""
@@ -250,48 +248,12 @@ async def compute_diff_with_ai(
                 for r in playbook_rules[:10]
             )
 
-        prompt = f"""You are a contract review expert. Analyze these changes between two versions of a contract.
-
-{rules_context}
-
-{changes_text}
-
-For each change, provide a one-sentence assessment:
-- Does this change FAVOR the reviewing party, FAVOR the counterparty, or is it NEUTRAL?
-- Briefly explain why.
-
-Return a JSON array of objects:
-[
-  {{"change_number": 1, "assessment": "favors_us" | "favors_them" | "neutral", "explanation": "Brief explanation"}}
-]
-"""
-        import asyncio
-        import json
-
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: gemini_analyzer.client.generate_content(
-                prompt,
-                generation_config={"max_output_tokens": 4096, "temperature": 0.1}
-            )
+        assessments = await analysis_pipeline.assess_diff_changes(
+            changes_text=changes_text,
+            rules_context=rules_context,
         )
 
-        response_text = ""
-        if response.candidates:
-            candidate = response.candidates[0]
-            if candidate.content and candidate.content.parts:
-                response_text = candidate.content.parts[0].text
-
-        if response_text:
-            cleaned = response_text.strip()
-            if cleaned.startswith("```"):
-                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-            if cleaned.endswith("```"):
-                cleaned = cleaned[:-3]
-            cleaned = cleaned.strip()
-
-            assessments = json.loads(cleaned)
+        if assessments:
             for item in assessments:
                 idx = item.get("change_number", 0) - 1
                 if 0 <= idx < len(assessable_changes):

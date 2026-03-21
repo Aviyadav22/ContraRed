@@ -137,7 +137,7 @@ TERM_RULES: List[RulePattern] = [
         primary_position="Contract term should be clearly defined with specific start and end dates",
     ),
     # auto_renewal — imported from DEFAULT_RULES
-    RulePattern(
+    SmartRule(
         id="auto_renewal",
         name="Auto-Renewal",
         clause_type="term",
@@ -148,6 +148,18 @@ TERM_RULES: List[RulePattern] = [
             r"\b(renew(s|ed)?\s+automatically)\b",
         ],
         primary_position="30-day opt-out notice before renewal date",
+        context_window=500,
+        escalation_conditions=[
+            r"\b(no\s+opt[\s-]?out)\b",
+            r"\b(irrevocable)\b",
+            r"\b(without\s+(right\s+to\s+)?terminat)\b",
+            r"\b(cannot\s+be\s+cancelled)\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(\d+\s+days?\s+(written\s+)?notice)\b",
+            r"\b(opt[\s-]?out)\b",
+            r"\b(non[\s-]?renewal\s+notice)\b",
+        ],
     ),
     SmartRule(
         id="termination_for_cause",
@@ -162,11 +174,19 @@ TERM_RULES: List[RulePattern] = [
             r"\b(right\s+to\s+terminate.*breach)\b",
         ],
         primary_position="Termination for cause should require written notice specifying the breach and a reasonable cure period",
+        context_window=500,
+        escalation_conditions=[
+            r"\b(any\s+breach)\b",
+            r"\b(without\s+cure)\b",
+            r"\b(immediate(ly)?\s+terminat)\b",
+            r"\b(no\s+opportunity\s+to\s+(cure|remedy))\b",
+        ],
         de_escalation_conditions=[
             r"\b(cure\s+period)\b",
             r"\b(opportunity\s+to\s+cure)\b",
             r"\b(remedy\s+within\s+\d+\s+days)\b",
             r"\b(right\s+to\s+cure)\b",
+            r"\b(material\s+breach)\b",
         ],
     ),
     SmartRule(
@@ -181,10 +201,18 @@ TERM_RULES: List[RulePattern] = [
             r"\b(termination\s+without\s+cause)\b",
         ],
         primary_position="Termination for convenience should require at least 30 days prior written notice",
+        context_window=500,
         escalation_conditions=[
             r"\b(immediately\s+without\s+notice)\b",
             r"\b(without\s+(any\s+)?prior\s+notice)\b",
             r"\b(terminate\s+at\s+any\s+time\s+without\s+notice)\b",
+            r"\b(sole\s+discretion)\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(either\s+party)\b",
+            r"\b(reasonable\s+notice)\b",
+            r"\b(\d+\s+days?\s+(prior\s+)?(written\s+)?notice)\b",
+            r"\b(mutual\s+right)\b",
         ],
     ),
     RulePattern(
@@ -259,7 +287,7 @@ FINANCIAL_RULES: List[RulePattern] = [
             r"\b(payment.*within\s+(1[0-9]|2[0-9]|30)\s+days)\b",
         ],
     ),
-    RulePattern(
+    SmartRule(
         id="late_payment",
         name="Late Payment Penalties",
         clause_type="payment",
@@ -273,6 +301,19 @@ FINANCIAL_RULES: List[RulePattern] = [
             r"\b(interest\s+at.*per\s+(month|annum))\b",
         ],
         primary_position="Late payment interest should not exceed 1.5% per month or the maximum legal rate",
+        context_window=500,
+        escalation_conditions=[
+            r"\b(compound(ed|ing)?\s+interest)\b",
+            r"\b(cumulative\s+(interest|penalty))\b",
+            r"\b(immediate\s+termination.*late)\b",
+            r"\b(acceleration\s+of\s+all\s+amounts)\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(grace\s+period)\b",
+            r"\b(reasonable\s+(interest|rate))\b",
+            r"\b(\d+\s+days?\s+(grace|cure))\b",
+            r"\b(simple\s+interest)\b",
+        ],
     ),
     RulePattern(
         id="price_escalation",
@@ -305,7 +346,7 @@ FINANCIAL_RULES: List[RulePattern] = [
         ],
         primary_position="Each party responsible for its own taxes; withholding obligations clearly allocated",
     ),
-    RulePattern(
+    SmartRule(
         id="set_off_rights",
         name="Set-Off / Deduction Rights",
         clause_type="payment",
@@ -318,6 +359,18 @@ FINANCIAL_RULES: List[RulePattern] = [
             r"\b(right\s+to\s+withhold\s+payment)\b",
         ],
         primary_position="Set-off rights should be mutual and limited to undisputed amounts",
+        context_window=500,
+        escalation_conditions=[
+            r"\b(sole\s+discretion)\b",
+            r"\b(unilateral(ly)?)\b",
+            r"\b(without\s+(prior\s+)?notice)\b",
+            r"\b(any\s+amounts?\s+(it\s+)?deems)\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(mutual(ly)?)\b",
+            r"\b(undisputed\s+amounts?)\b",
+            r"\b(agreed\s+amounts?)\b",
+        ],
     ),
     RulePattern(
         id="audit_rights",
@@ -373,7 +426,7 @@ FINANCIAL_RULES: List[RulePattern] = [
 
 LIABILITY_RULES: List[RulePattern] = [
     # unlimited_liability — from DEFAULT_RULES
-    RulePattern(
+    SmartRule(
         id="unlimited_liability",
         name="Unlimited Liability",
         clause_type="liability",
@@ -387,8 +440,17 @@ LIABILITY_RULES: List[RulePattern] = [
         primary_position="Liability capped at 12 months of fees paid",
         fallback_position="Liability capped at total contract value",
         is_deal_breaker=True,
+        context_window=500,
+        negative_patterns=[
+            r"\bmutual(ly)?\b.*\bcapped?\s+(at|to)\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(capped?\s+(at|to))\b",
+            r"\b(aggregate.*not\s+exceed)\b",
+            r"\b(limited\s+to\s+the\s+(total|aggregate))\b",
+        ],
     ),
-    RulePattern(
+    SmartRule(
         id="liability_cap",
         name="Liability Cap",
         clause_type="liability",
@@ -402,6 +464,17 @@ LIABILITY_RULES: List[RulePattern] = [
             r"\b(cap\s+on\s+liability)\b",
         ],
         primary_position="Liability cap at 12 months of fees paid; separate super-cap for IP/confidentiality breaches",
+        context_window=500,
+        escalation_conditions=[
+            r"\b(one[\s-]?sided|only\s+the\s+(vendor|provider|supplier))\b",
+            r"\b(less\s+than|1x?\s+month)\b",
+            r"\b(nominal\s+(cap|amount))\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(mutual(ly)?)\b",
+            r"\b(12\s+months?\s+(of\s+)?fees)\b",
+            r"\b(each\s+party)\b",
+        ],
     ),
     SmartRule(
         id="consequential_damages",
@@ -503,7 +576,7 @@ LIABILITY_RULES: List[RulePattern] = [
             r"\b(within\s+(30|60|90|120|150|180)\s+days)\b",
         ],
     ),
-    RulePattern(
+    SmartRule(
         id="insurance_requirement",
         name="Insurance Obligations",
         clause_type="insurance",
@@ -518,6 +591,19 @@ LIABILITY_RULES: List[RulePattern] = [
             r"\b(cyber\s+insurance)\b",
         ],
         primary_position="Insurance requirements proportionate to risk; specify minimum coverage amounts and require certificates of insurance",
+        context_window=600,
+        escalation_conditions=[
+            r"\b(no\s+insurance)\b",
+            r"\b(waive.*insurance)\b",
+            r"\b(at\s+(its|their)\s+sole\s+discretion.*insurance)\b",
+            r"\b(insurance.*not\s+required)\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(minimum.*coverage.*\$[\d,]+)\b",
+            r"\b(certificate.*insurance)\b",
+            r"\b(not\s+less\s+than\s+\$[\d,]+)\b",
+            r"\b(evidence\s+of\s+insurance)\b",
+        ],
     ),
 ]
 
@@ -527,7 +613,7 @@ LIABILITY_RULES: List[RulePattern] = [
 
 IP_RULES: List[RulePattern] = [
     # ip_assignment — from DEFAULT_RULES
-    RulePattern(
+    SmartRule(
         id="ip_assignment",
         name="Broad IP Assignment",
         clause_type="intellectual_property",
@@ -539,8 +625,18 @@ IP_RULES: List[RulePattern] = [
         ],
         primary_position="Pre-existing IP remains with original owner",
         is_deal_breaker=True,
+        context_window=500,
+        negative_patterns=[
+            r"\bpre[\s-]?existing\s+IP\b.*\bexclud",
+            r"\bbackground\s+IP\b.*\bremain",
+        ],
+        de_escalation_conditions=[
+            r"\b(background\s+IP)\b.*\bremain",
+            r"\b(pre[\s-]?existing)\b.*\bretain",
+            r"\b(excluding\s+pre[\s-]?existing)\b",
+        ],
     ),
-    RulePattern(
+    SmartRule(
         id="ip_ownership",
         name="IP Ownership",
         clause_type="intellectual_property",
@@ -554,6 +650,20 @@ IP_RULES: List[RulePattern] = [
             r"\b(vesting\s+of\s+IP)\b",
         ],
         primary_position="Clear IP ownership split: background IP stays with creator, foreground IP jointly owned or licensed back",
+        context_window=500,
+        escalation_conditions=[
+            r"\b(all\s+(IP|intellectual\s+property)\s+.*\b(vest|belong|assign))\b",
+            r"\b(sole\s+ownership)\b",
+            r"\b(all\s+rights.*transfer)\b",
+        ],
+        negative_patterns=[
+            r"\bpre[\s-]?existing\s+IP\s+remains\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(jointly\s+owned)\b",
+            r"\b(license[\s-]?back)\b",
+            r"\b(background.*foreground.*split)\b",
+        ],
     ),
     SmartRule(
         id="license_grant",
@@ -568,10 +678,19 @@ IP_RULES: List[RulePattern] = [
             r"\b(royalty[\s-]?free.*license)\b",
         ],
         primary_position="License scope clearly defined: territory, field of use, duration, sublicensing restrictions",
+        context_window=500,
         escalation_conditions=[
             r"\b(irrevocable.*sublicensable)\b",
             r"\b(sublicensable.*irrevocable)\b",
             r"\b(irrevocable.*transferable.*sublicensable)\b",
+            r"\b(perpetual.*irrevocable)\b",
+            r"\b(exclusive\s+license)\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(non[\s-]?exclusive)\b",
+            r"\b(limited\s+to)\b",
+            r"\b(revocable)\b",
+            r"\b(term\s+of\s+this\s+agreement)\b",
         ],
     ),
     RulePattern(
@@ -659,10 +778,18 @@ CONFIDENTIALITY_RULES: List[RulePattern] = [
             r"\b(duty\s+of\s+confidence)\b",
         ],
         primary_position="Mutual confidentiality obligations with clearly defined scope; reasonable care standard",
+        context_window=500,
         escalation_conditions=[
             r"\b(all\s+information.*deemed\s+confidential)\b",
             r"\b(any\s+and\s+all\s+information.*confidential)\b",
             r"\b(all\s+information\s+(disclosed|exchanged|shared).*confidential)\b",
+            r"\b(one[\s-]?sided|only\s+the\s+(recipient|customer|buyer))\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(mutual(ly)?)\b",
+            r"\b(each\s+party)\b",
+            r"\b(reasonable\s+exceptions)\b",
+            r"\b(clearly\s+marked|marked\s+as\s+confidential)\b",
         ],
     ),
     RulePattern(
@@ -885,7 +1012,7 @@ REPS_WARRANTIES_RULES: List[RulePattern] = [
 
 RESTRICTIVE_RULES: List[RulePattern] = [
     # non_compete — from DEFAULT_RULES
-    RulePattern(
+    SmartRule(
         id="non_compete",
         name="Non-Compete Clause",
         clause_type="restrictive_covenant",
@@ -897,9 +1024,22 @@ RESTRICTIVE_RULES: List[RulePattern] = [
             r"\b(compete\s+directly\s+or\s+indirectly)\b",
         ],
         primary_position="Non-compete limited to 12 months in same geography",
+        context_window=500,
+        escalation_conditions=[
+            r"\b(worldwide|global)\b",
+            r"\b(perpetual|indefinite)\b",
+            r"\b(greater\s+than\s+\d+\s+years?)\b",
+            r"\b(any\s+(business|industry|field))\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(limited\s+to.*\d+\s+months?)\b",
+            r"\b(specific\s+geographic)\b",
+            r"\b(within\s+\d+\s+(km|miles|kilometers))\b",
+            r"\b(\d+\s+months?\s+post[\s-]?termination)\b",
+        ],
     ),
     # non_solicitation — from DEFAULT_RULES
-    RulePattern(
+    SmartRule(
         id="non_solicitation",
         name="Non-Solicitation Clause",
         clause_type="restrictive_covenant",
@@ -912,6 +1052,17 @@ RESTRICTIVE_RULES: List[RulePattern] = [
             r"\b(recruit(ing)?\s+(any\s+)?employee)\b",
         ],
         primary_position="Non-solicitation limited to 12 months post-termination",
+        context_window=500,
+        escalation_conditions=[
+            r"\b(all\s+employees)\b",
+            r"\b(perpetual|indefinite)\b",
+            r"\b(any\s+(employee|personnel|staff))\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(\d+\s+months?\s+post[\s-]?termination)\b",
+            r"\b(key\s+employees?\s+only)\b",
+            r"\b(directly\s+involved)\b",
+        ],
     ),
     RulePattern(
         id="customer_non_solicitation",
@@ -928,7 +1079,7 @@ RESTRICTIVE_RULES: List[RulePattern] = [
         primary_position="Customer non-solicitation limited to 12 months and only to customers actually served during the engagement",
     ),
     # exclusive_dealing — from DEFAULT_RULES
-    RulePattern(
+    SmartRule(
         id="exclusive_dealing",
         name="Exclusive Dealing",
         clause_type="exclusivity",
@@ -941,6 +1092,18 @@ RESTRICTIVE_RULES: List[RulePattern] = [
             r"\b(exclusive\s+supplier)\b",
         ],
         primary_position="Non-exclusive arrangement or limited exclusivity period",
+        context_window=500,
+        escalation_conditions=[
+            r"\b(perpetual|indefinite)\b",
+            r"\b(worldwide|global)\b",
+            r"\b(irrevocable\s+exclusivity)\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(limited\s+to)\b",
+            r"\b(\d+\s+(months?|years?))\b",
+            r"\b(specific\s+(territory|region))\b",
+            r"\b(non[\s-]?exclusive)\b",
+        ],
     ),
     # reverse_engineering — from DEFAULT_RULES
     RulePattern(
@@ -1093,7 +1256,7 @@ OPERATIONAL_RULES: List[RulePattern] = [
         ],
         primary_position="Assignment permitted to affiliates without consent",
     ),
-    RulePattern(
+    SmartRule(
         id="change_of_control",
         name="Change of Control",
         clause_type="assignment",
@@ -1107,6 +1270,19 @@ OPERATIONAL_RULES: List[RulePattern] = [
             r"\b(change\s+of\s+ownership)\b",
         ],
         primary_position="Change of control should trigger notification right, not automatic termination; carve-out for internal restructuring",
+        context_window=600,
+        escalation_conditions=[
+            r"\b(automatic(ally)?\s+terminat)\b",
+            r"\b(immediate(ly)?\s+terminat)\b",
+            r"\b(deemed\s+(an?\s+)?assignment)\b",
+            r"\b(without\s+consent)\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(notification|notice)\b",
+            r"\b(consent.*not.*unreasonably\s+withheld)\b",
+            r"\b(internal\s+restructuring.*excluded)\b",
+            r"\b(affiliate.*carve[\s-]?out)\b",
+        ],
     ),
     RulePattern(
         id="subcontracting",
@@ -1194,6 +1370,60 @@ OPERATIONAL_RULES: List[RulePattern] = [
             r"\b(recovery\s+time\s+objective|RTO)\b",
         ],
         primary_position="Provider must maintain and test BCP/DR plan; RTO and RPO commitments defined; annual testing required",
+    ),
+    SmartRule(
+        id="counterparty_insolvency",
+        name="Counterparty Insolvency / Bankruptcy",
+        clause_type="insolvency",
+        risk_level=RiskLevel.YELLOW,
+        patterns=[
+            r"\b(insolven(cy|t))\b",
+            r"\b(bankrupt(cy)?)\b",
+            r"\b(winding[\s-]?up)\b",
+            r"\b(liquidat(ion|or|ed))\b",
+            r"\b(receiv(er|ership))\b",
+            r"\b(administration\s+order)\b",
+            r"\b(voluntary\s+arrangement)\b",
+            r"\b(unable\s+to\s+pay\s+its\s+debts)\b",
+        ],
+        primary_position="Right to terminate on counterparty insolvency with no penalty; immediate data return/portability rights",
+        fallback_position="At minimum, right to suspend obligations on counterparty insolvency",
+        context_window=600,
+        escalation_conditions=[
+            r"\b(waive|relinquish|forfeit).*insolvency\b",
+            r"\b(no\s+right\s+to\s+terminate).*insolvency\b",
+            r"\b(obligations\s+continue.*insolvency)\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(either\s+party|both\s+parties).*insolvency\b",
+            r"\b(mutual).*terminat.*insolvency\b",
+            r"\b(right\s+to\s+terminate.*insolvency)\b",
+        ],
+    ),
+    SmartRule(
+        id="payment_escalation_cap",
+        name="Payment Escalation Protection",
+        clause_type="payment_escalation",
+        risk_level=RiskLevel.YELLOW,
+        patterns=[
+            r"\b(price\s+increase|fee\s+increase|rate\s+increase)\b",
+            r"\b(adjust(ed|ment)?\s+annually)\b",
+            r"\b(CPI|consumer\s+price\s+index|inflation)\b",
+            r"\b(escalat(e|ion)\s+(clause|provision))\b",
+        ],
+        primary_position="Price increases capped at CPI or fixed percentage (e.g. 5%); right to terminate if increase exceeds cap",
+        context_window=500,
+        escalation_conditions=[
+            r"\b(unlimited|uncapped|no\s+cap).*increase\b",
+            r"\b(sole\s+discretion).*price\b",
+            r"\b(unilateral(ly)?.*increas)\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(cap(ped)?\s+(at|to)).*increase\b",
+            r"\b(not\s+exceed).*percent\b",
+            r"\b(CPI[\s-]?linked)\b",
+            r"\b(mutual\s+agreement.*price)\b",
+        ],
     ),
 ]
 
@@ -1298,10 +1528,38 @@ SAAS_RULES: List[RulePattern] = [
         ],
         primary_position="API access included at no extra cost; rate limits clearly defined; backward-compatible changes with deprecation notice",
     ),
+    SmartRule(
+        id="insurance_adequacy",
+        name="Insurance Coverage Adequacy",
+        clause_type="insurance",
+        risk_level=RiskLevel.YELLOW,
+        patterns=[
+            r"\b(insurance\s+coverage)\b",
+            r"\b(professional\s+indemnity\s+insurance)\b",
+            r"\b(liability\s+insurance)\b",
+            r"\b(errors\s+and\s+omissions)\b",
+            r"\b(cyber\s+insurance)\b",
+            r"\b(policy\s+limit)\b",
+            r"\b(coverage\s+amount)\b",
+        ],
+        primary_position="Adequate insurance with coverage limits proportional to contract value; certificate of insurance required annually",
+        fallback_position="At minimum, professional indemnity insurance maintained during term plus 12 months",
+        context_window=600,
+        escalation_conditions=[
+            r"\b(no\s+insurance|waive.*insurance)\b",
+            r"\b(self[\s-]?insur(ed|ance))\b",
+            r"\b(insurance.*not\s+required)\b",
+        ],
+        de_escalation_conditions=[
+            r"\b(certificate\s+of\s+insurance)\b",
+            r"\b(minimum.*coverage)\b",
+            r"\b(insurance.*shall\s+maintain)\b",
+        ],
+    ),
 ]
 
 # ============================================================
-# ALL RULES COMBINED (75 total)
+# ALL RULES COMBINED (76 total)
 # ============================================================
 
 ALL_RULES: List[RulePattern] = (

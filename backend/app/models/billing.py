@@ -2,12 +2,13 @@
 Billing models — Phase 3.
 
 Invoice: Payment records for subscription charges and overages.
+WebhookEvent: Idempotency tracking for payment gateway webhooks.
 """
 
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
-from sqlalchemy import String, DateTime, Integer, ForeignKey, Text
+from sqlalchemy import String, DateTime, Integer, ForeignKey, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -38,3 +39,21 @@ class Invoice(Base):
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     paid_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class WebhookEvent(Base):
+    """Idempotency tracking for payment gateway webhooks.
+
+    Prevents duplicate processing of the same webhook event
+    (e.g., concurrent subscription.charged events resetting used_scans).
+    """
+    __tablename__ = "webhook_events"
+    __table_args__ = (
+        UniqueConstraint("gateway", "gateway_event_id", name="uq_webhook_gateway_event"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    gateway: Mapped[str] = mapped_column(String(20), nullable=False)  # razorpay, stripe
+    gateway_event_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    processed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))

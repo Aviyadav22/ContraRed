@@ -39,8 +39,21 @@ from app.core.permissions import require_permission
 from app.services.rule_engine import RuleEngine, RuleMatch
 from app.services.ai_service import AIService
 from app.services.cache_service import get_cache
-from app.services.gemini_analyzer import gemini_analyzer, AIServiceError, AIServiceUnavailable, AIRateLimited, AIServiceTimeout, _sanitize_for_prompt
-from app.services.analysis_pipeline import analysis_pipeline, PipelineResult
+from app.services.playbook_cache import (
+    get_default_rule_engine,
+    get_cached_rule_engine,
+    get_cached_rules_dicts,
+    load_playbook,
+)
+from app.services.analysis_pipeline import (
+    analysis_pipeline,
+    PipelineResult,
+    AIServiceError,
+    AIServiceUnavailable,
+    AIRateLimited,
+    AIServiceTimeout,
+    _sanitize_for_prompt,
+)
 from app.services.structure_extractor import StructureExtractor, ContractMap
 from app.core.config import settings
 
@@ -136,6 +149,7 @@ class AIAnalyzeRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=500000)
     playbook_id: Optional[str] = None
     filename: Optional[str] = Field(default="untitled.docx", max_length=255)
+    party_side: Optional[str] = Field(default="buyer", pattern=r"^(buyer|seller|neutral)$")
 
 
 class AIRedlineItem(BaseModel):
@@ -241,6 +255,7 @@ async def list_documents(
 
     query = (
         select(Document)
+        .options(selectinload(Document.risks))
         .where(Document.user_id == current_user.id)
         .order_by(Document.created_at.desc())
         .offset(offset)
@@ -319,31 +334,18 @@ async def analyze_document(
     # Load playbook rules if specified, otherwise use defaults
     if body.playbook_id:
         try:
-            playbook_uuid = UUID(body.playbook_id)
-            result = await db.execute(
-                select(Playbook)
-                .options(selectinload(Playbook.rules_list))
-                .where(Playbook.id == playbook_uuid)
+            playbook = await load_playbook(
+                db, body.playbook_id,
+                current_user_id=current_user.id,
+                current_user_org_id=current_user.organization_id,
             )
-            playbook = result.scalar_one_or_none()
-            
-            if not playbook:
-                raise HTTPException(status_code=404, detail="Playbook not found")
-            
-            # Check access
-            if not playbook.is_public:
-                if playbook.created_by != current_user.id and playbook.organization_id != current_user.organization_id:
-                    raise HTTPException(status_code=403, detail="Access denied to this playbook")
-            
-            # Create rule engine from playbook rules
-            if playbook.rules_list:
-                rule_engine = RuleEngine.from_playbook_rules(playbook.rules_list)
-            else:
-                rule_engine = RuleEngine()  # Empty playbook, use defaults
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid playbook_id format")
+        if not playbook:
+            raise HTTPException(status_code=404, detail="Playbook not found")
+        rule_engine = get_cached_rule_engine(playbook)
     else:
-        rule_engine = RuleEngine()  # Use default rules
+        rule_engine = get_default_rule_engine()
     
     # Create document record (with org + version tracking)
     content_hash = Document.compute_content_hash(body.text)
@@ -389,8 +391,8 @@ async def analyze_document(
                 match.ai_explanation = explanation
                 match.suggested_fix = suggested_fix
 
-                # Store in cache (tenant-scoped)
-                if cache.is_connected and (explanation or suggested_fix):
+                # Store in cache (tenant-scoped) — skip in ZDR mode to prevent risk data persistence
+                if cache.is_connected and (explanation or suggested_fix) and not ZDR_MODE:
                     await cache.set(cache_key, {
                         "explanation": explanation,
                         "suggested_fix": suggested_fix,
@@ -582,25 +584,10 @@ async def analyze_async(
     playbook_name = "Default"
     if body.playbook_id:
         try:
-            result = await db.execute(
-                select(Playbook)
-                .options(selectinload(Playbook.rules_list))
-                .where(Playbook.id == playbook_uuid)
-            )
-            playbook = result.scalar_one_or_none()
+            playbook = await load_playbook(db, playbook_uuid, check_access=False)
             if playbook:
                 playbook_name = playbook.name
-                playbook_rules = [
-                    {
-                        "name": rule.clause_type,
-                        "risk_level": rule.risk_level.value.upper() if hasattr(rule.risk_level, 'value') else str(rule.risk_level).upper(),
-                        "primary_position": rule.primary_position or "",
-                        "fallback_position": rule.fallback_position or "",
-                        "is_deal_breaker": rule.is_deal_breaker,
-                        "verification_prompt": rule.verification_prompt or "",
-                    }
-                    for rule in playbook.rules_list
-                ]
+                playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
         except Exception as e:
             logger.error("Error loading playbook for async: %s", e)
 
@@ -708,27 +695,10 @@ async def analyze_full_ai(
 
     if body.playbook_id:
         try:
-            playbook_uuid = UUID(body.playbook_id)
-            result = await db.execute(
-                select(Playbook)
-                .options(selectinload(Playbook.rules_list))
-                .where(Playbook.id == playbook_uuid)
-            )
-            playbook = result.scalar_one_or_none()
-
+            playbook = await load_playbook(db, body.playbook_id, check_access=False)
             if playbook:
                 playbook_name = playbook.name
-                playbook_rules = [
-                    {
-                        "name": rule.clause_type,
-                        "risk_level": rule.risk_level.value.upper() if hasattr(rule.risk_level, 'value') else str(rule.risk_level).upper(),
-                        "primary_position": rule.primary_position or "",
-                        "fallback_position": rule.fallback_position or "",
-                        "is_deal_breaker": rule.is_deal_breaker,
-                        "verification_prompt": rule.verification_prompt or "",
-                    }
-                    for rule in playbook.rules_list
-                ]
+                playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
         except Exception as e:
             logger.error("Error loading playbook: %s", e)
 
@@ -745,6 +715,7 @@ async def analyze_full_ai(
                     contract_text=body.text,
                     playbook_rules=playbook_rules,
                     playbook_name=playbook_name,
+                    party_side=body.party_side or "buyer",
                 ),
                 timeout=120.0,
             )
@@ -916,38 +887,22 @@ async def analyze_clause(
 
     if body.playbook_id:
         try:
-            playbook_uuid = UUID(body.playbook_id)
-            result = await db.execute(
-                select(Playbook)
-                .options(selectinload(Playbook.rules_list))
-                .where(Playbook.id == playbook_uuid)
+            playbook = await load_playbook(
+                db, body.playbook_id,
+                current_user_id=current_user.id,
+                current_user_org_id=current_user.organization_id,
             )
-            playbook = result.scalar_one_or_none()
-
             if playbook:
-                # Access control check
-                if playbook.organization_id:
-                    if playbook.organization_id != current_user.organization_id and not playbook.is_public:
-                        raise HTTPException(status_code=403, detail={"message": "Access denied to this playbook.", "error_code": "forbidden"})
-
                 playbook_name = playbook.name
-                playbook_rules = [
-                    {
-                        "name": rule.clause_type,
-                        "risk_level": rule.risk_level.value.upper() if hasattr(rule.risk_level, 'value') else str(rule.risk_level).upper(),
-                        "primary_position": rule.primary_position or "",
-                        "fallback_position": rule.fallback_position or "",
-                        "is_deal_breaker": rule.is_deal_breaker,
-                        "verification_prompt": rule.verification_prompt or "",
-                    }
-                    for rule in playbook.rules_list
-                ]
+                playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
+        except (ValueError, HTTPException):
+            raise
         except Exception as e:
             logger.error("Error loading playbook for clause analysis: %s", e)
 
     try:
         ai_result = await asyncio.wait_for(
-            gemini_analyzer.analyze_clause(
+            analysis_pipeline.analyze_clause(
                 clause_text=body.clause_text,
                 playbook_rules=playbook_rules,
                 playbook_name=playbook_name,
@@ -1242,12 +1197,7 @@ async def _process_batch(
     if playbook_id:
         try:
             async with AsyncSessionLocal() as db:
-                result = await db.execute(
-                    select(Playbook)
-                    .options(selectinload(Playbook.rules_list))
-                    .where(Playbook.id == UUID(playbook_id))
-                )
-                playbook = result.scalar_one_or_none()
+                playbook = await load_playbook(db, playbook_id, check_access=False)
                 if playbook:
                     playbook_name = playbook.name
                     playbook_rules = [
@@ -1450,32 +1400,18 @@ async def generate_clause(
         # Load playbook rules if provided (with authorization check)
         playbook_rules = None
         if body.playbook_id:
-            result = await db.execute(
-                select(Playbook)
-                .options(selectinload(Playbook.rules_list))
-                .where(Playbook.id == body.playbook_id)
-                .where(
-                    (Playbook.is_public == True) |
-                    (Playbook.organization_id == current_user.organization_id) |
-                    (Playbook.created_by == current_user.id)
-                )
+            playbook = await load_playbook(
+                db, body.playbook_id,
+                auth_in_query=True,
+                current_user_id=current_user.id,
+                current_user_org_id=current_user.organization_id,
             )
-            playbook = result.scalar_one_or_none()
             if playbook:
-                playbook_rules = [
-                    {
-                        "name": rule.clause_type,
-                        "risk_level": rule.risk_level.value.upper() if hasattr(rule.risk_level, 'value') else str(rule.risk_level).upper(),
-                        "primary_position": rule.primary_position or "",
-                        "fallback_position": rule.fallback_position or "",
-                        "is_deal_breaker": rule.is_deal_breaker,
-                    }
-                    for rule in playbook.rules_list
-                ]
+                playbook_rules = get_cached_rules_dicts(playbook)
 
         try:
             generated = await asyncio.wait_for(
-                gemini_analyzer.generate_clause(
+                analysis_pipeline.generate_clause(
                     clause_type=body.clause_type,
                     contract_context=body.contract_context or "",
                     playbook_rules=playbook_rules,
@@ -1529,12 +1465,15 @@ class GenerateFixRequest(BaseModel):
     redline_type: Literal["violation", "missing"] = "violation"
     surrounding_context: Optional[str] = Field(default=None, max_length=10000)
     playbook_id: Optional[UUID] = None
+    contract_text: Optional[str] = Field(default=None, max_length=500000)
 
 
 class GenerateFixResponse(BaseModel):
     """Response with generated fix text."""
     fix_text: str
     reasoning: str
+    fix_verified: bool = True
+    fix_warnings: Optional[List[str]] = None
 
 
 @router.post("/generate-fix", response_model=GenerateFixResponse)
@@ -1556,32 +1495,18 @@ async def generate_fix(
         # Load playbook rules if provided (with authorization check)
         playbook_rules = None
         if body.playbook_id:
-            result = await db.execute(
-                select(Playbook)
-                .options(selectinload(Playbook.rules_list))
-                .where(Playbook.id == body.playbook_id)
-                .where(
-                    (Playbook.is_public == True) |
-                    (Playbook.organization_id == current_user.organization_id) |
-                    (Playbook.created_by == current_user.id)
-                )
+            playbook = await load_playbook(
+                db, body.playbook_id,
+                auth_in_query=True,
+                current_user_id=current_user.id,
+                current_user_org_id=current_user.organization_id,
             )
-            playbook = result.scalar_one_or_none()
             if playbook:
-                playbook_rules = [
-                    {
-                        "name": rule.clause_type,
-                        "risk_level": rule.risk_level.value.upper() if hasattr(rule.risk_level, 'value') else str(rule.risk_level).upper(),
-                        "primary_position": rule.primary_position or "",
-                        "fallback_position": rule.fallback_position or "",
-                        "is_deal_breaker": rule.is_deal_breaker,
-                    }
-                    for rule in playbook.rules_list
-                ]
+                playbook_rules = get_cached_rules_dicts(playbook)
 
         try:
             generated = await asyncio.wait_for(
-                gemini_analyzer.generate_fix(
+                analysis_pipeline.generate_fix(
                     original_text=body.original_text,
                     recommendation=body.recommendation,
                     rule_name=body.rule_name,
@@ -1597,19 +1522,36 @@ async def generate_fix(
                 detail={"message": "AI analysis timed out. Please try with a shorter document.", "error_code": "ai_timeout"},
             )
 
+        # Verify the generated fix before returning
+        fix_verified = True
+        fix_warnings: List[str] = []
+        if body.contract_text:
+            from app.services.fix_verifier import FixVerifier
+            verifier = FixVerifier()
+            verification = verifier.verify_fix(
+                fix_text=generated["fix_text"],
+                original_text=body.original_text,
+                contract_text=body.contract_text,
+                rule_name=body.rule_name,
+            )
+            fix_verified = verification.passed
+            fix_warnings = verification.warnings + verification.errors
+
         # Audit log
         await log_audit_event(
             db=db,
             user=current_user,
             action="fix_generation",
             resource_type="clause",
-            details=json.dumps({"rule_name": body.rule_name, "redline_type": body.redline_type}),
+            details=json.dumps({"rule_name": body.rule_name, "redline_type": body.redline_type, "fix_verified": fix_verified}),
         )
         await db.commit()
 
         return GenerateFixResponse(
             fix_text=generated["fix_text"],
             reasoning=generated["reasoning"],
+            fix_verified=fix_verified,
+            fix_warnings=fix_warnings if fix_warnings else None,
         )
 
     except AIServiceUnavailable as e:
@@ -1670,7 +1612,7 @@ async def research_clause(
     try:
         try:
             result = await asyncio.wait_for(
-                gemini_analyzer.research_clause(
+                analysis_pipeline.research_clause(
                     clause_text=body.clause_text,
                     clause_type=body.clause_type or "",
                 ),
@@ -1773,27 +1715,14 @@ async def compare_contracts(
         # Load playbook rules if provided (with authorization check)
         playbook_rules = None
         if body.playbook_id:
-            result = await db.execute(
-                select(Playbook)
-                .options(selectinload(Playbook.rules_list))
-                .where(Playbook.id == body.playbook_id)
-                .where(
-                    (Playbook.is_public == True) |
-                    (Playbook.organization_id == current_user.organization_id) |
-                    (Playbook.created_by == current_user.id)
-                )
+            playbook = await load_playbook(
+                db, body.playbook_id,
+                auth_in_query=True,
+                current_user_id=current_user.id,
+                current_user_org_id=current_user.organization_id,
             )
-            playbook = result.scalar_one_or_none()
             if playbook:
-                playbook_rules = [
-                    {
-                        "name": rule.clause_type,
-                        "risk_level": rule.risk_level.value.upper() if hasattr(rule.risk_level, 'value') else str(rule.risk_level).upper(),
-                        "primary_position": rule.primary_position or "",
-                        "fallback_position": rule.fallback_position or "",
-                    }
-                    for rule in playbook.rules_list
-                ]
+                playbook_rules = get_cached_rules_dicts(playbook, include_deal_breaker=False)
 
         diff = await compute_diff_with_ai(
             text_a=body.text_a,
@@ -1902,30 +1831,19 @@ async def analyze_file(
     # Load playbook rules if specified
     if playbook_id:
         try:
-            playbook_uuid = UUID(playbook_id)
-            result = await db.execute(
-                select(Playbook)
-                .options(selectinload(Playbook.rules_list))
-                .where(Playbook.id == playbook_uuid)
+            playbook = await load_playbook(
+                db, playbook_id,
+                current_user_id=current_user.id,
+                current_user_org_id=current_user.organization_id,
             )
-            playbook = result.scalar_one_or_none()
-            
-            if not playbook:
-                raise HTTPException(status_code=404, detail="Playbook not found")
-            
-            if not playbook.is_public:
-                if playbook.created_by != current_user.id and playbook.organization_id != current_user.organization_id:
-                    raise HTTPException(status_code=403, detail="Access denied to this playbook")
-            
-            if playbook.rules_list:
-                rule_engine = RuleEngine.from_playbook_rules(playbook.rules_list)
-            else:
-                rule_engine = RuleEngine()
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid playbook_id format")
+        if not playbook:
+            raise HTTPException(status_code=404, detail="Playbook not found")
+        rule_engine = get_cached_rule_engine(playbook)
     else:
-        rule_engine = RuleEngine()
-    
+        rule_engine = get_default_rule_engine()
+
     # Create document record
     document = Document(
         user_id=current_user.id,
@@ -1971,7 +1889,8 @@ async def analyze_file(
                 match.ai_explanation = explanation
                 match.suggested_fix = suggested_fix
 
-                if cache.is_connected and (explanation or suggested_fix):
+                # Skip cache in ZDR mode to prevent risk data persistence
+                if cache.is_connected and (explanation or suggested_fix) and not ZDR_MODE:
                     await cache.set(cache_key, {
                         "explanation": explanation,
                         "suggested_fix": suggested_fix,
@@ -2086,14 +2005,12 @@ async def summarize_contract(
     playbook_name = "Default Rules"
     if body.playbook_id:
         try:
-            pb_uuid = UUID(body.playbook_id)
-            pb_result = await db.execute(select(Playbook).where(Playbook.id == pb_uuid))
-            playbook = pb_result.scalar_one_or_none()
+            playbook = await load_playbook(db, body.playbook_id, check_access=False)
             if playbook:
                 playbook_name = playbook.name
         except ValueError:
             pass
-    
+
     # Get the risks for this document from DB (or use empty list for ZDR mode)
     db_risks = []
     if document:
@@ -2105,12 +2022,12 @@ async def summarize_contract(
             db_risks = risks_result.scalars().all()
         except (ValueError, Exception):
             pass
-    
+
     # Convert DB risks to a format the AI service can use
     # For ZDR mode, we need to re-run rule engine
     if not db_risks:
         # ZDR mode - re-run rule engine to get risk matches
-        rule_engine = RuleEngine()
+        rule_engine = get_default_rule_engine()
         matches = rule_engine.evaluate(body.contract_text)
     else:
         # Use persisted risks
@@ -2260,6 +2177,13 @@ async def generate_redline(
         )
     
     # Mode 2: DB Mode - look up risk by ID
+    # ZDR guard: DB mode is not available in ZDR — text must be provided in request
+    if ZDR_MODE:
+        raise HTTPException(
+            status_code=400,
+            detail="Zero Data Retention mode is enabled. Provide original_text and suggested_text in the request body.",
+        )
+
     try:
         risk_uuid = UUID(request.risk_id)
     except ValueError:
@@ -2509,12 +2433,22 @@ async def get_document(
             detail="Document not found"
         )
     
-    # Get risks
+    # ZDR mode: don't return persisted risk text from DB
+    if ZDR_MODE:
+        return AnalysisResult(
+            document_id=str(document.id),
+            filename=document.filename,
+            total_risks=document.total_risks,
+            risk_summary=document.risk_summary or {},
+            risks=[],  # ZDR: risk text not persisted, re-analyze to get risks
+        )
+
+    # Non-ZDR: return risks from DB
     result = await db.execute(
         select(DocumentRisk).where(DocumentRisk.document_id == document_id)
     )
     risks = result.scalars().all()
-    
+
     return AnalysisResult(
         document_id=str(document.id),
         filename=document.filename,
@@ -2524,8 +2458,8 @@ async def get_document(
             RiskItem(
                 id=str(risk.id),
                 clause_text=risk.clause_text,
-                risk_level=risk.risk_level.value.upper(),  # Ensure uppercase
-                rule_name="",  # Not stored in DB currently
+                risk_level=risk.risk_level.value.upper(),
+                rule_name="",
                 clause_type="",
                 ai_explanation=risk.ai_explanation,
                 suggested_fix=risk.suggested_fix,

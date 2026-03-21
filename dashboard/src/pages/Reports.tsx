@@ -32,10 +32,10 @@ const SEVERITY_COLORS: Record<string, string> = {
 
 function MetricCard({ label, value }: { label: string; value: string | number }) {
     return (
-        <div className="bg-white rounded-lg border border-slate-200 p-4">
+        <article className="bg-white rounded-lg border border-slate-200 p-4">
             <div className="text-sm text-slate-500">{label}</div>
             <div className="text-2xl font-bold text-slate-900 mt-1">{value}</div>
-        </div>
+        </article>
     );
 }
 
@@ -314,7 +314,9 @@ export default function Reports() {
                         <h1 className="text-2xl font-bold text-slate-900">Reports</h1>
                         <p className="text-sm text-slate-500 mt-1">Generate and view analytics reports</p>
                     </div>
+                    <label htmlFor="reports-time-range" className="sr-only">Time range</label>
                     <select
+                        id="reports-time-range"
                         value={days}
                         onChange={(e) => setDays(Number(e.target.value))}
                         className="px-3 py-2 border border-slate-300 rounded-lg text-sm"

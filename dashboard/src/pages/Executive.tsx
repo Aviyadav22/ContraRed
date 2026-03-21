@@ -15,11 +15,11 @@ function formatCurrency(value: number, currency: string = 'INR'): string {
 
 function BigMetric({ label, value, sub, color = 'text-slate-900' }: { label: string; value: string | number; sub?: string; color?: string }) {
     return (
-        <div className="bg-white rounded-2xl border border-slate-200 p-8 text-center">
+        <article className="bg-white rounded-2xl border border-slate-200 p-8 text-center">
             <div className="text-sm font-medium text-slate-500 mb-2">{label}</div>
             <div className={`text-5xl font-bold ${color}`}>{value}</div>
             {sub && <div className="text-sm text-slate-400 mt-2">{sub}</div>}
-        </div>
+        </article>
     );
 }
 
@@ -44,7 +44,9 @@ export default function Executive() {
                         <h1 className="text-3xl font-bold text-slate-900">Executive Dashboard</h1>
                         <p className="text-sm text-slate-500 mt-1">Board-ready metrics at a glance</p>
                     </div>
+                    <label htmlFor="exec-time-range" className="sr-only">Time range</label>
                     <select
+                        id="exec-time-range"
                         value={days}
                         onChange={(e) => setDays(Number(e.target.value))}
                         className="px-3 py-2 border border-slate-300 rounded-lg text-sm"

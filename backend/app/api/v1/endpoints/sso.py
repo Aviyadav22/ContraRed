@@ -29,6 +29,7 @@ from app.core.permissions import require_permission
 from app.services import sso_service
 from app.services.token_service import get_token_blacklist
 from app.api.v1.endpoints.auth import limiter
+from app.api.v1.endpoints.billing import require_tier
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +266,7 @@ async def sso_enable(
     data: SSOEnableRequest,
     current_user: User = Depends(require_permission("sso.manage")),
     db: AsyncSession = Depends(get_db),
+    _tier=Depends(require_tier("business")),
 ):
     """Enable SSO for an organization (requires sso.manage permission)."""
     try:
@@ -321,6 +323,7 @@ async def sso_disable(
     data: SSODisableRequest,
     current_user: User = Depends(require_permission("sso.manage")),
     db: AsyncSession = Depends(get_db),
+    _tier=Depends(require_tier("business")),
 ):
     """Disable SSO for an organization (requires sso.manage permission)."""
     try:

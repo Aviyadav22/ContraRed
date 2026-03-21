@@ -312,7 +312,7 @@ app.add_middleware(RequestLoggingMiddleware)
 _cors_kwargs = dict(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-CSRF-Token"],
 )
 if settings.DEBUG:
     _cors_kwargs["allow_origin_regex"] = r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
@@ -323,6 +323,10 @@ app.add_middleware(CORSMiddleware, **_cors_kwargs)
 # 4. Proxy headers (trust reverse proxy for real client IP)
 _trusted = [h.strip() for h in settings.TRUSTED_PROXY_HOSTS.split(",") if h.strip()]
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=_trusted)
+
+# 5. GZip compression (outermost — compresses final response body >= 500 bytes)
+from starlette.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # Rate limiting exception handler
 from app.api.v1.endpoints.auth import limiter

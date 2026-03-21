@@ -220,6 +220,7 @@ class GeminiAnalyzer:
         playbook_rules: Optional[List[Dict]] = None,
         playbook_name: str = "Default",
         jurisdiction_override: Optional[str] = None,
+        party_side: str = "buyer",
     ) -> AIAnalysisResult:
         """
         Perform full AI analysis of a contract.
@@ -264,6 +265,7 @@ class GeminiAnalyzer:
         system_prompt = render_system_prompt(
             jurisdiction_context=jurisdiction_context,
             defined_terms=defined_terms_context,
+            party_side=party_side,
         )
         user_prompt = render_user_prompt(
             contract_text=safe_contract_text,

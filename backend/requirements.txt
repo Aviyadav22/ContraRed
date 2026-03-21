@@ -22,6 +22,7 @@ razorpay>=1.4.0
 stripe>=8.0.0  # International payments (USD/EUR/GBP)
 pyotp>=2.9.0
 workos>=5.0.0
+resend>=2.0.0  # Transactional email (password resets)
 sentry-sdk[fastapi]>=2.0.0  # Error monitoring (optional)
 openpyxl>=3.1.0  # Excel export (Phase 7)
 fpdf2>=2.7.0  # PDF report generation (Phase 7)

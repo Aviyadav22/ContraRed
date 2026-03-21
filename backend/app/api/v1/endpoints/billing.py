@@ -31,6 +31,7 @@ from app.db.session import get_db
 from app.models.user import User, SubscriptionTier
 from app.models.organization import Subscription, SubscriptionStatus, PlanType
 from app.models.document import UsageLog, UsageAction
+from app.models.billing import Invoice, WebhookEvent
 from app.api.v1.endpoints.auth import get_current_user
 from app.api.dependencies import require_permission, require_admin
 from app.core.config import settings
@@ -758,12 +759,29 @@ async def razorpay_webhook(
 
         event = json.loads(body)
         event_type = event.get("event")
-        logger.info("Razorpay webhook: %s", event_type)
+        event_id = event.get("event_id") or event.get("id", "")
+        logger.info("Razorpay webhook: %s (event_id=%s)", event_type, event_id)
+
+        # Idempotency check — skip if already processed
+        if event_id:
+            existing = await db.execute(
+                select(WebhookEvent).where(
+                    WebhookEvent.gateway == "razorpay",
+                    WebhookEvent.gateway_event_id == event_id,
+                )
+            )
+            if existing.scalar_one_or_none():
+                logger.info("Razorpay webhook %s already processed, skipping", event_id)
+                return {"status": "already_processed"}
+            db.add(WebhookEvent(gateway="razorpay", gateway_event_id=event_id, event_type=event_type or ""))
 
         if event_type == "subscription.charged":
             subscription_id = event["payload"]["subscription"]["entity"]["id"]
+            # FOR UPDATE lock prevents concurrent charge events from racing
             result = await db.execute(
-                select(Subscription).where(Subscription.razorpay_subscription_id == subscription_id)
+                select(Subscription)
+                .where(Subscription.razorpay_subscription_id == subscription_id)
+                .with_for_update()
             )
             subscription = result.scalar_one_or_none()
             if subscription:
@@ -771,12 +789,18 @@ async def razorpay_webhook(
                 subscription.current_period_start = datetime.now(timezone.utc)
                 subscription.current_period_end = datetime.now(timezone.utc) + timedelta(days=30)
                 subscription.status = SubscriptionStatus.ACTIVE
+                # Reset dunning state on successful payment
+                subscription.dunning_attempts = 0
+                subscription.last_dunning_at = None
+                subscription.dunning_next_retry_at = None
                 await db.commit()
 
         elif event_type == "subscription.cancelled":
             subscription_id = event["payload"]["subscription"]["entity"]["id"]
             result = await db.execute(
-                select(Subscription).where(Subscription.razorpay_subscription_id == subscription_id)
+                select(Subscription)
+                .where(Subscription.razorpay_subscription_id == subscription_id)
+                .with_for_update()
             )
             subscription = result.scalar_one_or_none()
             if subscription:
@@ -784,19 +808,18 @@ async def razorpay_webhook(
                 await db.commit()
 
         elif event_type == "payment.failed":
-            # Dunning: mark subscription as past_due
             entity = event.get("payload", {}).get("payment", {}).get("entity", {})
             notes = entity.get("notes", {})
             sub_id = notes.get("subscription_id")
             if sub_id:
                 result = await db.execute(
-                    select(Subscription).where(Subscription.razorpay_subscription_id == sub_id)
+                    select(Subscription)
+                    .where(Subscription.razorpay_subscription_id == sub_id)
+                    .with_for_update()
                 )
                 subscription = result.scalar_one_or_none()
                 if subscription:
-                    subscription.status = SubscriptionStatus.PAST_DUE
-                    await db.commit()
-                    logger.warning("Payment failed for subscription %s — marked PAST_DUE", sub_id)
+                    await _handle_payment_failure(subscription, db)
 
         return {"status": "ok"}
     except HTTPException:
@@ -833,17 +856,31 @@ async def stripe_webhook(
         except stripe.error.SignatureVerificationError:
             logger.warning("Stripe webhook signature verification failed")
             raise HTTPException(status_code=401, detail="Invalid webhook signature")
-        logger.info("Stripe webhook: %s", event["type"])
+        stripe_event_id = event.get("id", "")
+        stripe_event_type = event["type"]
+        logger.info("Stripe webhook: %s (event_id=%s)", stripe_event_type, stripe_event_id)
 
-        if event["type"] == "invoice.paid":
-            # Successful payment — reset usage
+        # Idempotency check — skip if already processed
+        if stripe_event_id:
+            existing = await db.execute(
+                select(WebhookEvent).where(
+                    WebhookEvent.gateway == "stripe",
+                    WebhookEvent.gateway_event_id == stripe_event_id,
+                )
+            )
+            if existing.scalar_one_or_none():
+                logger.info("Stripe webhook %s already processed, skipping", stripe_event_id)
+                return {"status": "already_processed"}
+            db.add(WebhookEvent(gateway="stripe", gateway_event_id=stripe_event_id, event_type=stripe_event_type))
+
+        if stripe_event_type == "invoice.paid":
             sub_data = event["data"]["object"]
             stripe_sub_id = sub_data.get("subscription")
             if stripe_sub_id:
                 result = await db.execute(
-                    select(Subscription).where(
-                        Subscription.stripe_subscription_id == stripe_sub_id
-                    )
+                    select(Subscription)
+                    .where(Subscription.stripe_subscription_id == stripe_sub_id)
+                    .with_for_update()
                 )
                 subscription = result.scalar_one_or_none()
                 if subscription:
@@ -851,31 +888,33 @@ async def stripe_webhook(
                     subscription.status = SubscriptionStatus.ACTIVE
                     subscription.current_period_start = datetime.now(timezone.utc)
                     subscription.current_period_end = datetime.now(timezone.utc) + timedelta(days=30)
+                    # Reset dunning state on successful payment
+                    subscription.dunning_attempts = 0
+                    subscription.last_dunning_at = None
+                    subscription.dunning_next_retry_at = None
                     await db.commit()
 
-        elif event["type"] == "invoice.payment_failed":
-            # Dunning
+        elif stripe_event_type == "invoice.payment_failed":
             sub_data = event["data"]["object"]
             stripe_sub_id = sub_data.get("subscription")
             if stripe_sub_id:
                 result = await db.execute(
-                    select(Subscription).where(
-                        Subscription.stripe_subscription_id == stripe_sub_id
-                    )
+                    select(Subscription)
+                    .where(Subscription.stripe_subscription_id == stripe_sub_id)
+                    .with_for_update()
                 )
                 subscription = result.scalar_one_or_none()
                 if subscription:
-                    subscription.status = SubscriptionStatus.PAST_DUE
-                    await db.commit()
+                    await _handle_payment_failure(subscription, db)
 
-        elif event["type"] == "customer.subscription.deleted":
+        elif stripe_event_type == "customer.subscription.deleted":
             sub_data = event["data"]["object"]
             stripe_sub_id = sub_data.get("id")
             if stripe_sub_id:
                 result = await db.execute(
-                    select(Subscription).where(
-                        Subscription.stripe_subscription_id == stripe_sub_id
-                    )
+                    select(Subscription)
+                    .where(Subscription.stripe_subscription_id == stripe_sub_id)
+                    .with_for_update()
                 )
                 subscription = result.scalar_one_or_none()
                 if subscription:
@@ -902,6 +941,130 @@ async def webhook_compat(request: Request, db: AsyncSession = Depends(get_db)):
 
 
 # ============================================================================
+# Dunning Management (Audit Fix #33)
+# ============================================================================
+
+# Exponential backoff schedule: 1 day, 3 days, 7 days, 14 days
+DUNNING_RETRY_DAYS = [1, 3, 7, 14]
+DUNNING_MAX_ATTEMPTS = len(DUNNING_RETRY_DAYS)  # 4 attempts → auto-downgrade
+
+
+async def _handle_payment_failure(subscription: Subscription, db: AsyncSession):
+    """Handle a failed payment: update dunning state, send email, auto-downgrade if threshold hit."""
+    now = datetime.now(timezone.utc)
+    subscription.status = SubscriptionStatus.PAST_DUE
+    subscription.dunning_attempts = (subscription.dunning_attempts or 0) + 1
+    subscription.last_dunning_at = now
+
+    attempts = subscription.dunning_attempts
+    if attempts >= DUNNING_MAX_ATTEMPTS:
+        # Auto-downgrade to FREE after exhausting retries
+        subscription.plan = PlanType.FREE
+        subscription.included_scans = 5
+        subscription.dunning_next_retry_at = None
+        logger.warning(
+            "Subscription %s auto-downgraded to FREE after %d failed payment attempts",
+            subscription.id, attempts,
+        )
+    else:
+        retry_days = DUNNING_RETRY_DAYS[min(attempts - 1, len(DUNNING_RETRY_DAYS) - 1)]
+        subscription.dunning_next_retry_at = now + timedelta(days=retry_days)
+
+    await db.commit()
+    logger.warning(
+        "Payment failed for subscription %s — attempt %d, status=%s",
+        subscription.id, attempts, subscription.status.value,
+    )
+
+    # Send dunning email (best-effort, don't fail webhook on email error)
+    try:
+        from app.services.email_service import send_dunning_email
+        # Fetch user email from the org
+        from app.models.user import User as UserModel
+        user_result = await db.execute(
+            select(UserModel).where(UserModel.organization_id == subscription.organization_id).limit(1)
+        )
+        user = user_result.scalar_one_or_none()
+        if user:
+            await send_dunning_email(
+                user_email=user.email,
+                user_name=user.name,
+                plan=subscription.plan.value,
+                attempts=attempts,
+                next_retry_at=subscription.dunning_next_retry_at,
+            )
+    except Exception as e:
+        logger.error("Failed to send dunning email: %s", e)
+
+
+class DunningStatusResponse(BaseModel):
+    status: str
+    dunning_attempts: int
+    last_dunning_at: Optional[str] = None
+    next_retry_at: Optional[str] = None
+    will_downgrade_after: int = DUNNING_MAX_ATTEMPTS
+
+
+@router.get("/dunning/status", response_model=DunningStatusResponse)
+async def get_dunning_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get current user's dunning (failed payment) status."""
+    subscription = await get_user_subscription(current_user, db)
+    if not subscription:
+        return DunningStatusResponse(status="none", dunning_attempts=0)
+
+    return DunningStatusResponse(
+        status=subscription.status.value,
+        dunning_attempts=subscription.dunning_attempts or 0,
+        last_dunning_at=subscription.last_dunning_at.isoformat() if subscription.last_dunning_at else None,
+        next_retry_at=subscription.dunning_next_retry_at.isoformat() if subscription.dunning_next_retry_at else None,
+    )
+
+
+# ============================================================================
+# Invoice PDF Download (Audit Fix #32)
+# ============================================================================
+
+@router.get("/invoices/{invoice_id}/download")
+async def download_invoice_pdf(
+    invoice_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download invoice as PDF for compliance/record-keeping."""
+    from uuid import UUID as PyUUID
+    try:
+        inv_uuid = PyUUID(invoice_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid invoice ID")
+
+    result = await db.execute(
+        select(Invoice).where(Invoice.id == inv_uuid)
+    )
+    invoice = result.scalar_one_or_none()
+    if not invoice:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    # Verify ownership: invoice belongs to user or user's org
+    if invoice.user_id != current_user.id:
+        if not current_user.organization_id or invoice.organization_id != current_user.organization_id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    from app.services.invoice_pdf import generate_invoice_pdf
+    from fastapi.responses import Response
+
+    pdf_bytes = generate_invoice_pdf(invoice, current_user)
+    short_id = str(invoice.id)[:8]
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="ContraRed-Invoice-{short_id}.pdf"'},
+    )
+
+
+# ============================================================================
 # Quota Check Dependency (Phase 3.1 — fixes free bypass bug)
 # ============================================================================
 
@@ -916,6 +1079,14 @@ async def check_and_increment_quota(
     so solo users (no org) can no longer bypass the free quota.
     """
     subscription = await get_user_subscription(current_user, db)
+
+    # Auto-downgrade check: if dunning exhausted, force FREE tier
+    if subscription and (subscription.dunning_attempts or 0) >= DUNNING_MAX_ATTEMPTS:
+        if subscription.plan != PlanType.FREE:
+            subscription.plan = PlanType.FREE
+            subscription.included_scans = 5
+            await db.commit()
+            logger.info("Auto-downgraded subscription %s to FREE (dunning exhausted)", subscription.id)
 
     plan = subscription.plan.value if subscription else current_user.subscription_tier.value
     plan_info = get_plan_info(plan)
@@ -949,3 +1120,122 @@ async def check_and_increment_quota(
     await db.commit()
 
     return {"plan": plan, "used": used + 1, "limit": limit}
+
+
+# ============================================================================
+# Tier-Based Feature Gating
+# ============================================================================
+
+_TIER_ORDER = {
+    "free": 0,
+    "starter": 1,
+    "pro": 2,
+    "business": 3,
+    "enterprise": 4,
+}
+
+
+def require_tier(*minimum_tiers: str):
+    """
+    FastAPI dependency factory that enforces subscription tier requirements.
+
+    Usage:
+        Depends(require_tier("business", "enterprise"))
+
+    User must be on the lowest listed tier or higher.
+    """
+    min_level = min(_TIER_ORDER.get(t, 0) for t in minimum_tiers)
+
+    async def _check_tier(
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ):
+        subscription = await get_user_subscription(current_user, db)
+        plan = subscription.plan.value if subscription else current_user.subscription_tier.value
+        user_level = _TIER_ORDER.get(plan, 0)
+
+        if user_level < min_level:
+            min_tier_name = [t for t, v in _TIER_ORDER.items() if v == min_level][0]
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "message": f"This feature requires a {min_tier_name.title()} plan or higher. "
+                               f"Your current plan: {plan.title()}.",
+                    "error_code": "tier_required",
+                    "current_tier": plan,
+                    "required_tier": min_tier_name,
+                    "upgrade_url": "/billing/plans",
+                },
+            )
+        return plan
+
+    return _check_tier
+
+
+def require_seat_limit():
+    """
+    FastAPI dependency that enforces seat limits per plan.
+    Used when adding new team members.
+    """
+    async def _check_seats(
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+    ):
+        subscription = await get_user_subscription(current_user, db)
+        plan = subscription.plan.value if subscription else current_user.subscription_tier.value
+        plan_info = get_plan_info(plan)
+        seat_limit = plan_info["seats"]
+
+        if seat_limit > 0 and current_user.organization_id:
+            count_result = await db.execute(
+                select(func.count(User.id)).where(
+                    User.organization_id == current_user.organization_id
+                )
+            )
+            current_seats = count_result.scalar() or 0
+
+            if current_seats >= seat_limit:
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "message": f"Seat limit reached ({current_seats}/{seat_limit}). "
+                                   f"Upgrade your plan to add more team members.",
+                        "error_code": "seat_limit_reached",
+                        "current_seats": current_seats,
+                        "seat_limit": seat_limit,
+                        "upgrade_url": "/billing/plans",
+                    },
+                )
+        return plan
+
+    return _check_seats
+
+
+# ============================================================================
+# ZDR Admin: Purge Risk Text (Audit Fix #34)
+# ============================================================================
+
+@router.post("/admin/zdr/purge-risks")
+async def purge_zdr_risks(
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Purge all DocumentRisk records when ZDR mode is enabled.
+
+    Use this if ZDR was toggled on after documents were already analyzed
+    in non-ZDR mode, leaving clause_text persisted in the DB.
+    """
+    if not getattr(settings, "ZERO_DATA_RETENTION", True):
+        raise HTTPException(
+            status_code=400,
+            detail="ZDR mode is not enabled. Set ZERO_DATA_RETENTION=true to use this endpoint.",
+        )
+
+    from app.models.document import DocumentRisk
+    from sqlalchemy import delete
+
+    result = await db.execute(delete(DocumentRisk))
+    await db.commit()
+    count = result.rowcount
+    logger.info("ZDR purge: deleted %d DocumentRisk records (admin: %s)", count, current_user.email)
+    return {"status": "purged", "deleted_count": count}

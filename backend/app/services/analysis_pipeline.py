@@ -28,8 +28,11 @@ from app.services.gemini_analyzer import (
     AIRedline,
     AIServiceError,
     AIServiceUnavailable,
+    AIRateLimited,
+    AIServiceTimeout,
     GeminiAnalyzer,
     gemini_analyzer,
+    _sanitize_for_prompt,
 )
 from app.services.hallucination_guard import (
     HallucinationGuard,
@@ -299,6 +302,7 @@ class AnalysisPipeline:
         contract_text: str,
         playbook_rules: Optional[List[Dict[str, Any]]] = None,
         playbook_name: str = "Default",
+        party_side: str = "buyer",
     ) -> PipelineResult:
         """
         Run the full 5-stage pipeline.
@@ -429,7 +433,7 @@ class AnalysisPipeline:
         try:
             s3_start = time.monotonic()
             raw_redlines, ai_summary, s3_tokens = await self._stage3_risk_assessment(
-                extraction, classification, playbook_rules, playbook_name
+                extraction, classification, playbook_rules, playbook_name, party_side
             )
             executive_summary = ai_summary
             total_tokens += s3_tokens
@@ -676,6 +680,7 @@ class AnalysisPipeline:
         classification: PipelineClassificationResult,
         playbook_rules: Optional[List[Dict[str, Any]]],
         playbook_name: str,
+        party_side: str = "buyer",
     ) -> Tuple[List[RawRedline], List[str], int]:
         """
         Full AI analysis using GeminiAnalyzer.
@@ -693,6 +698,7 @@ class AnalysisPipeline:
             playbook_rules=playbook_rules,
             playbook_name=playbook_name,
             jurisdiction_override=jurisdiction_hint,
+            party_side=party_side,
         )
 
         # Build a set of regex-matched texts for corroboration
@@ -980,6 +986,194 @@ class AnalysisPipeline:
                 playbook_rule=pb_rule,
             ))
         return redlines
+
+
+    # ======================================================================
+    # Clause-level pipeline methods (unified entry points for all AI calls)
+    # ======================================================================
+
+    async def analyze_clause(
+        self,
+        clause_text: str,
+        playbook_rules: list = None,
+        playbook_name: str = "Default",
+        jurisdiction: str = None,
+    ) -> dict:
+        """Analyze a single clause with hallucination guard + confidence scoring.
+
+        Wraps gemini_analyzer.analyze_clause() and adds:
+        - Stage 4: Hallucination verification of returned quotes
+        - Stage 5: Confidence scoring on verified redlines
+
+        Returns the same dict format as gemini_analyzer.analyze_clause()
+        with additional 'confidence' and 'verification_status' per redline.
+        """
+        ai_result = await self._analyzer.analyze_clause(
+            clause_text=clause_text,
+            playbook_rules=playbook_rules,
+            playbook_name=playbook_name,
+            jurisdiction=jurisdiction,
+        )
+
+        raw_redlines = ai_result.get("redlines", [])
+        if not raw_redlines or not clause_text:
+            return ai_result
+
+        # Stage 4: Verify quotes against source clause text
+        guard = HallucinationGuard(clause_text)
+        verified_redlines = []
+        for redline in raw_redlines:
+            original_text = redline.get("original_text", "")
+            if not original_text:
+                verified_redlines.append(redline)
+                continue
+
+            result = guard.verify_quote(original_text)
+            if result.status == "rejected" and result.similarity_score < 0.5:
+                logger.info(
+                    "Clause analysis: rejecting hallucinated quote '%.60s...'",
+                    original_text,
+                )
+                continue
+
+            redline["verification_status"] = result.status
+            if result.verified_quote and result.status == "fuzzy_corrected":
+                redline["original_text"] = result.verified_quote
+
+            # Stage 5: Confidence scoring
+            confidence = self._scorer.score_redline(
+                text_verification_confidence=result.confidence,
+                regex_matched=False,
+                ai_flagged=True,
+                playbook_rule=None,
+                model_confidence=None,
+            )
+            redline["confidence"] = confidence.score
+            redline["confidence_level"] = confidence.level.value
+
+            verified_redlines.append(redline)
+
+        ai_result["redlines"] = verified_redlines
+        return ai_result
+
+    async def generate_clause(
+        self,
+        clause_type: str,
+        contract_context: str = "",
+        playbook_rules: Optional[List[Dict]] = None,
+        jurisdiction_override: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """Generate a contract clause via the unified pipeline.
+
+        Delegates to gemini_analyzer.generate_clause() with jurisdiction awareness.
+        """
+        return await self._analyzer.generate_clause(
+            clause_type=clause_type,
+            contract_context=contract_context,
+            playbook_rules=playbook_rules,
+            jurisdiction_override=jurisdiction_override,
+        )
+
+    async def generate_fix(
+        self,
+        original_text: str,
+        recommendation: str,
+        rule_name: str,
+        redline_type: str = "violation",
+        surrounding_context: str = "",
+        playbook_rules: Optional[List[Dict]] = None,
+        jurisdiction_override: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate exact replacement text via the unified pipeline.
+
+        Delegates to gemini_analyzer.generate_fix() with jurisdiction awareness.
+        """
+        return await self._analyzer.generate_fix(
+            original_text=original_text,
+            recommendation=recommendation,
+            rule_name=rule_name,
+            redline_type=redline_type,
+            surrounding_context=surrounding_context,
+            playbook_rules=playbook_rules,
+            jurisdiction_override=jurisdiction_override,
+        )
+
+    async def research_clause(
+        self,
+        clause_text: str,
+        clause_type: str = "",
+        jurisdiction_override: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Research case law for a clause via the unified pipeline.
+
+        Delegates to gemini_analyzer.research_clause().
+        """
+        return await self._analyzer.research_clause(
+            clause_text=clause_text,
+            clause_type=clause_type,
+            jurisdiction_override=jurisdiction_override,
+        )
+
+    async def assess_diff_changes(
+        self,
+        changes_text: str,
+        rules_context: str = "",
+    ) -> Optional[list]:
+        """AI assessment of contract diff changes via the unified pipeline.
+
+        Returns list of assessment dicts or None if AI unavailable.
+        """
+        if not self._analyzer.is_enabled:
+            return None
+
+        prompt = f"""You are a contract review expert. Analyze these changes between two versions of a contract.
+
+{rules_context}
+
+{changes_text}
+
+For each change, provide a one-sentence assessment:
+- Does this change FAVOR the reviewing party, FAVOR the counterparty, or is it NEUTRAL?
+- Briefly explain why.
+
+Return a JSON array of objects:
+[
+  {{"change_number": 1, "assessment": "favors_us" | "favors_them" | "neutral", "explanation": "Brief explanation"}}
+]
+"""
+        import json as _json
+
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(
+            None,
+            lambda: self._analyzer.client.generate_content(
+                prompt,
+                generation_config={"max_output_tokens": 4096, "temperature": 0.1},
+            ),
+        )
+
+        response_text = ""
+        if response.candidates:
+            candidate = response.candidates[0]
+            if candidate.content and candidate.content.parts:
+                response_text = candidate.content.parts[0].text
+
+        if not response_text:
+            return None
+
+        cleaned = response_text.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+        return _json.loads(cleaned)
+
+    @property
+    def is_enabled(self) -> bool:
+        """Whether the AI backend is available."""
+        return self._analyzer.is_enabled
 
 
 # ---------------------------------------------------------------------------

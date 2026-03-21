@@ -313,6 +313,7 @@ function showNotification(message: string, type: 'error' | 'warning' | 'info' = 
 // ============================================================================
 
 let currentAIAnalysis: AIAnalysisResult | null = null;
+let lastScannedText: string = '';  // Cache contract text for fix verification
 const fixedRisks: Set<string> = new Set();
 let isScanning = false;  // Guard against double-click race condition
 
@@ -321,7 +322,7 @@ const appliedFixesMap: Map<string, { originalText: string; fixText: string; para
 
 // Filter & Sort state
 let activeFilter: 'ALL' | 'RED' | 'YELLOW' | 'UNFIXED' = 'ALL';
-let activeSort: 'risk_level' | 'rule_name' = 'risk_level';
+let activeSort: 'risk_level' | 'rule_name' | 'confidence' = 'risk_level';
 let searchQuery = '';
 
 // Selection scanning state
@@ -400,12 +401,23 @@ Office.onReady((info) => {
     logoutBtn()?.addEventListener('click', handleLogout);
     scanBtn()?.addEventListener('click', scanDocument);
     document.getElementById('scanSelectionBtn')?.addEventListener('click', scanSelection);
+    document.getElementById('scanBtn')?.setAttribute('title', 'Scan Document (Ctrl+Shift+D)');
+    document.getElementById('scanSelectionBtn')?.setAttribute('title', 'Scan Selection (Ctrl+Alt+S)');
+
+    // Shortcuts help panel
+    document.getElementById('shortcutsHelpBtn')?.addEventListener('click', toggleShortcutsPanel);
+    document.getElementById('shortcutsPanelClose')?.addEventListener('click', () => {
+      const panel = document.getElementById('shortcutsPanel');
+      if (panel) panel.style.display = 'none';
+      shortcutsPanelTrap?.deactivate();
+    });
 
     // Template picker
     document.getElementById('templateBtn')?.addEventListener('click', toggleTemplatePicker);
     document.getElementById('templatePickerClose')?.addEventListener('click', () => {
       const picker = document.getElementById('templatePicker');
       if (picker) picker.style.display = 'none';
+      templatePickerTrap?.deactivate();
     });
 
     // Allow Enter key to submit login
@@ -452,7 +464,8 @@ Office.onReady((info) => {
     // Keyboard shortcuts (Phase 8)
     document.addEventListener('keydown', handleKeyboardShortcuts);
 
-    // Negotiation mode exit button (Phase 8.4)
+    // Negotiation mode buttons (Phase 8.4)
+    document.getElementById('negotiationBtn')?.addEventListener('click', toggleNegotiationMode);
     document.getElementById('exitNegotiationBtn')?.addEventListener('click', toggleNegotiationMode);
 
   } else {
@@ -587,11 +600,14 @@ async function toggleTemplatePicker(): Promise<void> {
   if (!picker) return;
 
   if (picker.style.display === 'block') {
+    templatePickerTrap?.deactivate();
     picker.style.display = 'none';
     return;
   }
 
   picker.style.display = 'block';
+  templatePickerTrap = new FocusTrap(picker, () => { picker.style.display = 'none'; });
+  templatePickerTrap.activate();
   const list = document.getElementById('templateList');
   if (!list) return;
 
@@ -663,6 +679,11 @@ async function applyTemplate(templateId: string, pairedPlaybookId?: string): Pro
   }
 }
 
+// Focus trap instances for modal dialogs
+let playBookModalTrap: FocusTrap | null = null;
+let templatePickerTrap: FocusTrap | null = null;
+let shortcutsPanelTrap: FocusTrap | null = null;
+
 // Admin feature handlers — bind once to prevent duplicate listeners
 let adminActionsBound = false;
 function bindAdminActions(): void {
@@ -675,12 +696,17 @@ function bindAdminActions(): void {
 
   addPlaybookBtn?.addEventListener('click', () => {
     const modal = document.getElementById('createPlaybookModal');
-    if (modal) modal.style.display = 'block';
+    if (modal) {
+      modal.style.display = 'block';
+      playBookModalTrap = new FocusTrap(modal, () => { modal.style.display = 'none'; clearPlaybookForm(); });
+      playBookModalTrap.activate();
+    }
   });
 
   createCancel?.addEventListener('click', () => {
     const modal = document.getElementById('createPlaybookModal');
     if (modal) modal.style.display = 'none';
+    playBookModalTrap?.deactivate();
     clearPlaybookForm();
   });
 
@@ -713,6 +739,7 @@ async function handleCreatePlaybook(): Promise<void> {
     // Close modal and refresh playbooks
     const modal = document.getElementById('createPlaybookModal');
     if (modal) modal.style.display = 'none';
+    playBookModalTrap?.deactivate();
     clearPlaybookForm();
     await loadPlaybooks();
   } catch (error) {
@@ -902,7 +929,9 @@ async function findTextInDocument(
 
   const fuse = new Fuse(paragraphData, {
     keys: ['text'],
-    threshold: 0.4,  // Allow 40% difference
+    threshold: 0.25,  // Require 75% similarity minimum
+    distance: 1000,
+    minMatchCharLength: 15,
     includeScore: true,
   });
 
@@ -911,6 +940,12 @@ async function findTextInDocument(
   if (fuzzyResults.length > 0 && fuzzyResults[0].score !== undefined) {
     const bestMatch = fuzzyResults[0];
     const confidence = 1 - (bestMatch.score || 0);  // Convert score to confidence
+
+    // Reject fuzzy matches below minimum confidence to avoid highlighting wrong clauses
+    const MIN_FUZZY_CONFIDENCE = 0.6;
+    if (confidence < MIN_FUZZY_CONFIDENCE) {
+      return { range: null, method: 'none', confidence: 0 };
+    }
 
     // Get the range of the matched paragraph
     const matchedParagraph = paragraphData[bestMatch.refIndex];
@@ -939,6 +974,7 @@ async function scanDocument(): Promise<void> {
   try {
     // Step 1: Get document text from Word
     const documentText = await getDocumentText();
+    lastScannedText = documentText || '';
 
     if (!documentText || documentText.trim().length < 50) {
       displayScanError(new Error('Document appears to be empty or too short. Please add some contract text.'));
@@ -967,7 +1003,9 @@ async function scanDocument(): Promise<void> {
       // fallback to document.docx
     }
 
-    const aiResult = await api.analyzeWithAI(documentText, docName, selectedPlaybookId);
+    const partySideSelect = document.getElementById('partySideSelect') as HTMLSelectElement;
+    const selectedPartySide = partySideSelect?.value || 'buyer';
+    const aiResult = await api.analyzeWithAI(documentText, docName, selectedPlaybookId, selectedPartySide);
 
     currentAIAnalysis = aiResult;
     fixedRisks.clear();
@@ -1181,9 +1219,14 @@ function toggleNegotiationMode(): void {
   negotiationMode = !negotiationMode;
   const panel = document.getElementById('negotiationPanel');
 
+  const negBtn = document.getElementById('negotiationBtn') as HTMLButtonElement | null;
+  const negBtnText = document.getElementById('negotiationBtnText');
+
   if (negotiationMode) {
     document.body.classList.add('negotiation-mode');
     if (panel) panel.style.display = 'block';
+    if (negBtn) { negBtn.style.background = 'linear-gradient(135deg, #DC2626, #B91C1C)'; }
+    if (negBtnText) negBtnText.textContent = 'End Negotiation';
 
     negotiationSession = loadNegotiationSession() || {
       started_at: Date.now(), notes: '', decisions: [], document_name: currentAIAnalysis?.filename || 'Unknown',
@@ -1205,6 +1248,8 @@ function toggleNegotiationMode(): void {
   } else {
     document.body.classList.remove('negotiation-mode');
     if (panel) panel.style.display = 'none';
+    if (negBtn) { negBtn.style.background = 'linear-gradient(135deg, #7C3AED, #6D28D9)'; }
+    if (negBtnText) negBtnText.textContent = 'Live Negotiation';
     if (negotiationTimer) { clearInterval(negotiationTimer); negotiationTimer = null; }
     if (selectionDebounceTimer) { clearTimeout(selectionDebounceTimer); selectionDebounceTimer = null; }
     unregisterSelectionHandler();
@@ -1324,6 +1369,13 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
   const tag = (e.target as HTMLElement)?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
+  // ? key → Toggle shortcuts help
+  if (e.key === '?') {
+    e.preventDefault();
+    toggleShortcutsPanel();
+    return;
+  }
+
   // Ctrl+Alt+S → Scan Selection (changed from Ctrl+Shift+S to avoid Save As conflict)
   if (e.ctrlKey && e.altKey && (e.key === 'S' || e.key === 's')) {
     e.preventDefault();
@@ -1385,6 +1437,20 @@ function handleKeyboardShortcuts(e: KeyboardEvent): void {
     e.preventDefault();
     clickFocusedCardButton('.research-btn');
     return;
+  }
+}
+
+function toggleShortcutsPanel(): void {
+  const panel = document.getElementById('shortcutsPanel');
+  if (!panel) return;
+  const isVisible = panel.style.display !== 'none' && panel.style.display !== '';
+  if (isVisible) {
+    panel.style.display = 'none';
+    shortcutsPanelTrap?.deactivate();
+  } else {
+    panel.style.display = 'flex';
+    shortcutsPanelTrap = new FocusTrap(panel, () => { panel.style.display = 'none'; });
+    shortcutsPanelTrap.activate();
   }
 }
 
@@ -1556,6 +1622,8 @@ function getFilteredRedlines(): AIRedlineItem[] {
     filtered.sort((a, b) => (order[a.risk_level] ?? 2) - (order[b.risk_level] ?? 2));
   } else if (activeSort === 'rule_name') {
     filtered.sort((a, b) => a.rule_name.localeCompare(b.rule_name));
+  } else if (activeSort === 'confidence') {
+    filtered.sort((a, b) => (b.confidence || 0) - (a.confidence || 0));
   }
 
   return filtered;
@@ -1593,6 +1661,32 @@ function renderRedlineList(): void {
   filtered.forEach((redline) => {
     const card = createAIRedlineCard(redline, docId);
     if (fixedRisks.has(redline.id)) card.classList.add('fixed');
+    // Collapse LOW confidence items by default
+    if (redline.confidence_level === 'LOW') {
+      card.classList.add('low-confidence');
+      const clause = card.querySelector('.risk-clause') as HTMLElement;
+      const explanation = card.querySelector('.risk-explanation') as HTMLElement;
+      const suggestedFix = card.querySelector('.suggested-fix') as HTMLElement;
+      const actions = card.querySelector('.risk-actions') as HTMLElement;
+      if (clause) clause.style.display = 'none';
+      if (explanation) explanation.style.display = 'none';
+      if (suggestedFix) suggestedFix.style.display = 'none';
+      if (actions) actions.style.display = 'none';
+      // Add expand toggle
+      const toggle = document.createElement('div');
+      toggle.className = 'low-confidence-toggle';
+      toggle.style.cssText = 'font-size:11px;color:#6B7280;cursor:pointer;padding:4px 0;';
+      toggle.textContent = 'Low confidence \u2014 click to expand';
+      toggle.addEventListener('click', () => {
+        if (clause) clause.style.display = '';
+        if (explanation) explanation.style.display = '';
+        if (suggestedFix) suggestedFix.style.display = '';
+        if (actions) actions.style.display = '';
+        toggle.remove();
+        card.classList.remove('low-confidence');
+      });
+      card.querySelector('.risk-card-header')?.insertAdjacentElement('afterend', toggle);
+    }
     list.appendChild(card);
   });
 }
@@ -1606,16 +1700,83 @@ function updateApplyAllCount(): void {
   const btnText = document.getElementById('applyAllBtnText');
   const applyBtn = document.getElementById('applyAllBtn') as HTMLButtonElement;
 
+  if (!btnText || !applyBtn) return;
+
   if (unfixed === 0) {
-    if (btnText) btnText.textContent = 'All Fixed';
-    if (applyBtn) applyBtn.disabled = true;
+    btnText.textContent = 'All Fixed';
+    applyBtn.disabled = true;
+  } else if (generated === unfixed) {
+    btnText.textContent = `Apply All Fixes (${generated})`;
+    applyBtn.disabled = false;
   } else if (generated > 0) {
-    // Some fixes already generated — show "Apply N Generated"
-    if (btnText) btnText.textContent = `Apply ${generated} Generated Fix${generated !== 1 ? 'es' : ''}`;
-    if (applyBtn) applyBtn.disabled = false;
+    btnText.textContent = `Apply ${generated} Ready / Generate ${unfixed - generated} More`;
+    applyBtn.disabled = false;
   } else {
-    if (btnText) btnText.textContent = `Generate All Fixes (${unfixed})`;
-    if (applyBtn) applyBtn.disabled = false;
+    btnText.textContent = `Generate All Fixes (${unfixed})`;
+    applyBtn.disabled = false;
+  }
+  applyBtn.setAttribute('aria-label', btnText.textContent);
+}
+
+/**
+ * Focus trap utility for modal dialogs.
+ * Traps Tab/Shift+Tab within a container, handles Escape to close.
+ */
+class FocusTrap {
+  private container: HTMLElement;
+  private onClose: () => void;
+  private previouslyFocused: Element | null;
+  private keyHandler: (e: KeyboardEvent) => void;
+
+  constructor(container: HTMLElement, onClose: () => void) {
+    this.container = container;
+    this.onClose = onClose;
+    this.previouslyFocused = document.activeElement;
+
+    this.keyHandler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        this.deactivate();
+        this.onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+
+      const focusable = this.container.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) return;
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+  }
+
+  activate(): void {
+    this.container.addEventListener('keydown', this.keyHandler);
+    const first = this.container.querySelector<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+    );
+    if (first) first.focus();
+  }
+
+  deactivate(): void {
+    this.container.removeEventListener('keydown', this.keyHandler);
+    if (this.previouslyFocused instanceof HTMLElement) {
+      this.previouslyFocused.focus();
+    }
   }
 }
 
@@ -1623,7 +1784,7 @@ function updateApplyAllCount(): void {
  * Create a risk card for an AI redline item.
  */
 function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLElement {
-  const card = document.createElement('div');
+  const card = document.createElement('article');
   card.className = 'risk-card';
   card.id = `risk-${redline.id}`;
   card.dataset.risk = redline.risk_level.toLowerCase();
@@ -1640,11 +1801,31 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
     ? '<span class="redline-type-badge type-missing">Missing</span>'
     : '<span class="redline-type-badge type-violation">Violation</span>';
 
+  // Confidence badge — color-coded by level
+  const confLevel = redline.confidence_level || '';
+  const confScore = redline.confidence != null ? Math.round(redline.confidence * 100) : null;
+  let confidenceBadge = '';
+  if (confScore != null && confLevel) {
+    const confColor = confLevel === 'HIGH' ? '#166534' : confLevel === 'MEDIUM' ? '#92400E' : '#991B1B';
+    const confBg = confLevel === 'HIGH' ? '#DCFCE7' : confLevel === 'MEDIUM' ? '#FEF3C7' : '#FEE2E2';
+    const verStatus = redline.verification_status ? ` (${redline.verification_status})` : '';
+    confidenceBadge = `<span class="confidence-badge" style="font-size:10px;padding:1px 6px;border-radius:8px;background:${confBg};color:${confColor};margin-left:auto;" title="Confidence: ${confScore}%${verStatus}">${confLevel} ${confScore}%</span>`;
+  }
+
+  // Warn when a RED risk has LOW confidence — lawyer should verify manually
+  const riskLevel = redline.risk_level.toLowerCase();
+  let lowConfWarning = '';
+  if (riskLevel === 'red' && confScore != null && confScore < 50) {
+    lowConfWarning = '<div class="low-conf-warning" style="background:#FEF3C7;color:#92400E;font-size:10px;padding:4px 8px;margin-top:4px;border-radius:4px;border-left:3px solid #F59E0B;" role="alert">Low confidence — verify this risk manually</div>';
+  }
+
   card.innerHTML = `
     <div class="risk-card-header">
-      <div class="risk-title"></div>
+      <h3 class="risk-title"></h3>
       ${typeBadge}
+      ${confidenceBadge}
     </div>
+    ${lowConfWarning}
     <div class="risk-clause"><span class="clause-label">${escapeHtml(clauseLabel)}</span><span class="clause-text"></span></div>
     <div class="risk-explanation"></div>
     ${redline.recommendation ? `
@@ -1654,20 +1835,20 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
     ` : ''}
     <div class="risk-actions">
       <button class="btn btn-secondary btn-sm highlight-btn">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
         </svg>
         Highlight
       </button>
       <button class="btn btn-primary btn-sm generate-fix-btn">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
         </svg>
         Generate Fix
       </button>
       <button class="btn btn-secondary btn-sm research-btn">
-        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14">
+        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
         </svg>
         Research
@@ -1697,16 +1878,24 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
   const suggestedFixEl = card.querySelector('.suggested-fix-text');
   if (suggestedFixEl) suggestedFixEl.textContent = truncatedRec;
 
+  // ARIA labels for screen readers
+  card.querySelector('.highlight-btn')?.setAttribute('aria-label', `Highlight in document: ${redline.rule_name}`);
+  card.querySelector('.generate-fix-btn')?.setAttribute('aria-label', `Generate fix for: ${redline.rule_name}`);
+  card.querySelector('.research-btn')?.setAttribute('aria-label', `Research case law: ${redline.rule_name}`);
+  card.querySelector('.undo-btn')?.setAttribute('aria-label', `Undo fix: ${redline.rule_name}`);
+  card.querySelector('.rescan-btn')?.setAttribute('aria-label', `Re-scan: ${redline.rule_name}`);
+
   // Bind button handlers
   const highlightBtn = card.querySelector('.highlight-btn');
   highlightBtn?.addEventListener('click', async () => {
     const matchResult = await highlightAIText(redline.original_text, redline.risk_level, redline.redline_type);
-    // Fix #17: Show fuzzy match confidence indicator
-    if (matchResult === 'fuzzy') {
+    // Fix #17/#25: Show fuzzy match confidence indicator with percentage
+    if (matchResult.method === 'fuzzy') {
       const existingIndicator = card.querySelector('.match-confidence-indicator');
       if (!existingIndicator) {
+        const pct = Math.round(matchResult.confidence * 100);
         card.querySelector('.risk-card-header')?.insertAdjacentHTML('beforeend',
-          '<span style="font-size: 10px; color: #D4A017; margin-left: 4px;" title="Approximate text match" class="match-confidence-indicator">~</span>');
+          `<span style="font-size: 10px; color: #D4A017; margin-left: 4px;" title="Approximate text match (${pct}% confidence)" class="match-confidence-indicator">~${pct}%</span>`);
       }
     }
   });
@@ -1763,6 +1952,7 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
         redlineType: redline.redline_type || 'violation',
         surroundingContext,
         playbookId: currentPlaybookId,
+        contractText: lastScannedText || undefined,
       });
 
       // Store generated fix on card element
@@ -1790,12 +1980,29 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
       reasoning.textContent = result.reasoning;
       wrapper.appendChild(reasoning);
 
+      // Show verification warnings if any
+      if (result.fix_warnings && result.fix_warnings.length > 0) {
+        const warningsEl = document.createElement('div');
+        warningsEl.style.cssText = 'margin:6px 0;padding:6px 8px;background:#FEF3C7;border-radius:6px;border:1px solid #F59E0B;';
+        warningsEl.innerHTML = result.fix_warnings.map((w: string) =>
+          `<div style="color:#92400E;font-size:11px;line-height:1.4;">\u26a0 ${escapeHtml(w)}</div>`
+        ).join('');
+        wrapper.appendChild(warningsEl);
+      }
+      if (result.fix_verified === false) {
+        const errorEl = document.createElement('div');
+        errorEl.style.cssText = 'margin:6px 0;padding:6px 8px;background:#FEE2E2;border-radius:6px;border:1px solid #EF4444;color:#991B1B;font-size:11px;';
+        errorEl.textContent = 'Fix verification failed — review warnings above before applying.';
+        wrapper.appendChild(errorEl);
+      }
+
       const actions = document.createElement('div');
       actions.className = 'generate-actions';
 
       const applyBtn = document.createElement('button');
       applyBtn.className = 'btn btn-primary btn-sm';
       applyBtn.textContent = 'Apply to Document';
+      applyBtn.setAttribute('aria-label', `Apply fix to document: ${redline.rule_name}`);
       applyBtn.addEventListener('click', async () => {
         applyBtn.disabled = true;
         applyBtn.textContent = 'Applying...';
@@ -1984,7 +2191,7 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
  * Highlight text found by AI using three-tier search.
  * Uses blue for missing clause anchors, red/yellow for violations.
  */
-async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW', redlineType?: string): Promise<string> {
+async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW', redlineType?: string): Promise<{ method: string; confidence: number }> {
   try {
     return await Word.run(async (context) => {
       const result = await findTextInDocument(searchText, context);
@@ -2001,15 +2208,15 @@ async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW', 
         await context.sync();
 
         log.info(`Highlighted via ${result.method} match (confidence: ${result.confidence.toFixed(2)})`);
-        return result.method;
+        return { method: result.method, confidence: result.confidence };
       } else {
         log.warn('Could not find text in document:', searchText.slice(0, 50) + '...');
-        return 'none';
+        return { method: 'none', confidence: 0 };
       }
     });
   } catch (error) {
     log.error('Highlight error:', error);
-    return 'none';
+    return { method: 'none', confidence: 0 };
   }
 }
 

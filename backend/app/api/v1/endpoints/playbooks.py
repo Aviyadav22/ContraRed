@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db
 from app.models.user import User
+from app.services.playbook_cache import invalidate_playbook_cache
 from app.models.playbook import (
     Playbook, PlaybookRule, PlaybookCategory, RiskLevel,
     PlaybookRuleTier, PlaybookCondition, PlaybookRuleOverride,
@@ -21,6 +22,7 @@ from app.models.playbook import (
 )
 from app.api.v1.endpoints.auth import get_current_user
 from app.api.dependencies import require_permission
+from app.api.v1.endpoints.billing import require_tier
 from app.models.audit_log import log_audit_event
 from app.services.playbook_versioning import playbook_versioning_service
 
@@ -169,7 +171,8 @@ async def list_playbooks(
 async def create_playbook(
     playbook_data: PlaybookCreate,
     current_user: User = Depends(require_permission("playbook.admin")),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _tier=Depends(require_tier("starter")),
 ):
     """Create a new playbook. Requires ADMIN role."""
     
@@ -623,6 +626,7 @@ async def update_playbook(
         resource_type="playbook", resource_name=playbook.name, status="success",
     )
     await db.commit()
+    invalidate_playbook_cache(str(playbook_id))
 
     # Reload with rules to get accurate count
     result = await db.execute(
@@ -667,6 +671,7 @@ async def delete_playbook(
         resource_type="playbook", resource_name=playbook_name, status="success",
     )
     await db.commit()
+    invalidate_playbook_cache(str(playbook_id))
 
 
 @router.post("/{playbook_id}/publish", response_model=PlaybookResponse)

@@ -87,19 +87,21 @@ export interface CreateClauseData {
 }
 
 // ============================================================================
-// Auth Storage
+// Auth Storage (cookies for tokens, localStorage for user profile only)
 // ============================================================================
 
-const TOKEN_KEY = 'contrared_tokens';
 const USER_KEY = 'contrared_user';
 
+function getCsrfToken(): string {
+    const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
+    return match ? decodeURIComponent(match[1]) : '';
+}
+
 export function getStoredTokens(): AuthTokens | null {
-    try {
-        const stored = localStorage.getItem(TOKEN_KEY);
-        return stored ? JSON.parse(stored) : null;
-    } catch {
-        return null;
-    }
+    // Tokens are in HttpOnly cookies (not accessible to JS).
+    // Return a sentinel so isAuthenticated() checks user profile instead.
+    const user = getStoredUser();
+    return user ? { access_token: '__httponly__', refresh_token: '__httponly__' } : null;
 }
 
 export function getStoredUser(): User | null {
@@ -111,18 +113,18 @@ export function getStoredUser(): User | null {
     }
 }
 
-export function saveAuth(tokens: AuthTokens, user: User): void {
-    localStorage.setItem(TOKEN_KEY, JSON.stringify(tokens));
+export function saveAuth(_tokens: AuthTokens, user: User): void {
+    // Tokens are stored in HttpOnly cookies by the server.
+    // Only store non-sensitive user profile in localStorage.
     localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
 export function clearAuth(): void {
-    localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
 }
 
 export function isAuthenticated(): boolean {
-    return !!getStoredTokens()?.access_token;
+    return !!getStoredUser();
 }
 
 export function isAdmin(): boolean {
@@ -135,44 +137,67 @@ export function isAdmin(): boolean {
 // ============================================================================
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const tokens = getStoredTokens();
-    const headers: HeadersInit = {
+    const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        ...options.headers,
+        ...(options.headers as Record<string, string>),
     };
 
-    if (tokens?.access_token) {
-        (headers as Record<string, string>)['Authorization'] = `Bearer ${tokens.access_token}`;
+    // Add CSRF token for state-changing requests (cookie-based auth)
+    const method = (options.method || 'GET').toUpperCase();
+    if (method !== 'GET' && method !== 'HEAD') {
+        const csrf = getCsrfToken();
+        if (csrf) headers['X-CSRF-Token'] = csrf;
     }
 
     const url = `${API_BASE_URL}${endpoint}`;
-    const response = await fetch(url, { ...options, headers });
+
+    // AbortController timeout: 2 minutes (matches Word Add-in)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 120000);
+
+    let response: Response;
+    try {
+        response = await fetch(url, {
+            ...options,
+            headers,
+            credentials: 'include',
+            signal: controller.signal,
+        });
+    } catch (err) {
+        clearTimeout(timeoutId);
+        if (err instanceof DOMException && err.name === 'AbortError') {
+            throw new Error('Request timed out after 2 minutes. The server may be slow or unreachable.');
+        }
+        throw err;
+    } finally {
+        clearTimeout(timeoutId);
+    }
 
     if (!response.ok) {
         if (response.status === 401) {
-            const tokens = getStoredTokens();
-            if (tokens?.refresh_token) {
-                try {
-                    const refreshResp = await fetch(`${API_BASE_URL}/auth/refresh`, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ refresh_token: tokens.refresh_token }),
+            // Try cookie-based refresh (server reads refresh_token from cookie)
+            try {
+                const refreshResp = await fetch(`${API_BASE_URL}/auth/refresh`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                });
+                if (refreshResp.ok) {
+                    // Cookies updated by server, retry original request
+                    const retryHeaders: Record<string, string> = { ...headers };
+                    const newCsrf = getCsrfToken();
+                    if (newCsrf) retryHeaders['X-CSRF-Token'] = newCsrf;
+                    const retryResp = await fetch(url, {
+                        ...options,
+                        headers: retryHeaders,
+                        credentials: 'include',
                     });
-                    if (refreshResp.ok) {
-                        const newTokens = await refreshResp.json();
-                        const user = getStoredUser();
-                        if (user) saveAuth(newTokens, user);
-                        // Retry original request
-                        const retryHeaders: Record<string, string> = { ...options.headers as any };
-                        retryHeaders['Authorization'] = `Bearer ${newTokens.access_token}`;
-                        const retryResp = await fetch(url, { ...options, headers: retryHeaders });
-                        if (retryResp.ok || retryResp.status !== 401) {
-                            if (retryResp.status === 204) return undefined as T;
-                            return retryResp.json();
-                        }
+                    if (retryResp.ok || retryResp.status !== 401) {
+                        if (retryResp.status === 204) return undefined as T;
+                        return retryResp.json();
                     }
-                } catch {}
-            }
+                }
+            } catch { /* refresh failed */ }
             clearAuth();
             window.location.href = '/login';
             throw new Error('Session expired');
@@ -205,6 +230,7 @@ export async function login(email: string, password: string): Promise<{ user: Us
     const response = await fetch(`${API_BASE_URL}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        credentials: 'include',
         body: formData,
     });
 
@@ -214,11 +240,21 @@ export async function login(email: string, password: string): Promise<{ user: Us
     }
 
     const data = await response.json();
-    saveAuth({ access_token: data.access_token, refresh_token: data.refresh_token }, data.user);
+    // Server sets HttpOnly cookies; only store user profile locally
+    saveAuth({ access_token: '', refresh_token: '' }, data.user);
     return { user: data.user };
 }
 
-export function logout(): void {
+export async function logout(): Promise<void> {
+    try {
+        await fetch(`${API_BASE_URL}/auth/logout`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+                'X-CSRF-Token': getCsrfToken(),
+            },
+        });
+    } catch { /* best-effort server logout */ }
     clearAuth();
     window.location.href = '/';
 }
@@ -227,6 +263,7 @@ export async function register(name: string, email: string, password: string): P
     const response = await fetch(`${API_BASE_URL}/auth/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({ name, email, password }),
     });
 
@@ -966,28 +1003,33 @@ export async function batchAnalyze(files: File[], playbookId?: string): Promise<
     files.forEach(f => formData.append('files', f));
     if (playbookId) formData.append('playbook_id', playbookId);
 
-    const tokens = getStoredTokens();
+    const headers: Record<string, string> = {};
+    const csrf = getCsrfToken();
+    if (csrf) headers['X-CSRF-Token'] = csrf;
+
     let res = await fetch(`${API_BASE_URL}/documents/batch-analyze`, {
         method: 'POST',
-        headers: { 'Authorization': `Bearer ${tokens?.access_token}` },
+        headers,
+        credentials: 'include',
         body: formData,
     });
 
-    // Handle 401 with token refresh
-    if (res.status === 401 && tokens?.refresh_token) {
+    // Handle 401 with cookie-based refresh
+    if (res.status === 401) {
         try {
             const refreshResp = await fetch(`${API_BASE_URL}/auth/refresh`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ refresh_token: tokens.refresh_token }),
+                credentials: 'include',
             });
             if (refreshResp.ok) {
-                const newTokens = await refreshResp.json();
-                const user = getStoredUser();
-                if (user) saveAuth(newTokens, user);
+                const retryHeaders: Record<string, string> = {};
+                const newCsrf = getCsrfToken();
+                if (newCsrf) retryHeaders['X-CSRF-Token'] = newCsrf;
                 res = await fetch(`${API_BASE_URL}/documents/batch-analyze`, {
                     method: 'POST',
-                    headers: { 'Authorization': `Bearer ${newTokens.access_token}` },
+                    headers: retryHeaders,
+                    credentials: 'include',
                     body: formData,
                 });
             } else {

@@ -71,6 +71,10 @@ def get_backend() -> Optional[str]:
 
     Thread-safe: uses double-checked locking to avoid race conditions
     when multiple threads call this concurrently during startup.
+
+    When REQUIRE_VERTEX_AI is True, refuses to fall back to the consumer
+    Gemini API — contract text must only go through Vertex AI (which has
+    DPA and enterprise compliance controls).
     """
     global _BACKEND
     if _BACKEND is not None:
@@ -82,7 +86,19 @@ def get_backend() -> Optional[str]:
         # Lazy first-call initialisation
         if _try_init_vertex():
             _BACKEND = "vertex"
+        elif settings.REQUIRE_VERTEX_AI:
+            logger.error(
+                "REQUIRE_VERTEX_AI is True but Vertex AI init failed. "
+                "Refusing to fall back to consumer Gemini API. "
+                "Set VERTEX_PROJECT_ID and install google-cloud-aiplatform, "
+                "or set REQUIRE_VERTEX_AI=false for development."
+            )
+            _BACKEND = None
         elif _try_init_consumer():
+            logger.warning(
+                "Using consumer Gemini API — NOT suitable for production with "
+                "privileged data. Set VERTEX_PROJECT_ID for enterprise compliance."
+            )
             _BACKEND = "consumer"
         else:
             _BACKEND = None

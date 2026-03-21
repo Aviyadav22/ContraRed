@@ -1599,6 +1599,58 @@
         .tooltip-box { background: var(--bg-surface, white); border-radius: 10px; padding: 16px; max-width: 280px; box-shadow: 0 8px 32px rgba(0,0,0,0.15); }
         .tooltip-text { font-size: 13px; line-height: 1.5; margin-bottom: 12px; }
         .tooltip-actions { display: flex; gap: 8px; justify-content: flex-end; }
+
+        /* Semantic h3 reset for risk card titles */
+        h3.risk-title {
+            margin: 0;
+            font-size: inherit;
+            font-weight: 600;
+        }
+
+        /* Keyboard Shortcuts Panel */
+        .shortcuts-panel {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.3);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .shortcuts-panel-inner {
+            background: var(--bg-surface, white);
+            border-radius: var(--radius-md, 10px);
+            padding: 20px;
+            max-width: 300px;
+            width: 90%;
+            box-shadow: var(--shadow-md);
+        }
+        .shortcuts-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .shortcut-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 12px;
+            color: var(--text-primary);
+        }
+        .shortcut-row kbd {
+            background: var(--bg-elevated, #F5F4F2);
+            border: 1px solid var(--border-default, #D4CFC8);
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-family: 'Inter', monospace;
+            font-size: 11px;
+            font-weight: 500;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+        .shortcut-row span {
+            color: var(--text-secondary);
+        }
     </style>
 </head>
 
@@ -1607,7 +1659,10 @@
         <!-- Header -->
         <header class="header" style="margin-bottom: var(--space-3); padding-bottom: var(--space-2);">
             <span style="font-size: 15px; font-weight: 700; letter-spacing: -0.3px; color: var(--text-primary);">Contra<span style="color: #C0392B;">Red</span></span>
-            <a href="https://contrared.netlify.app" target="_blank" class="btn btn-ghost btn-sm" style="text-decoration: none; font-size: 11px; padding: 4px 10px;">Dashboard</a>
+            <div style="display: flex; align-items: center; gap: 6px;">
+                <button id="shortcutsHelpBtn" class="btn-icon" aria-label="Show keyboard shortcuts" title="Keyboard shortcuts" style="width: 28px; height: 28px; font-size: 13px; font-weight: 600;">?</button>
+                <a href="https://contrared.netlify.app" target="_blank" class="btn btn-ghost btn-sm" style="text-decoration: none; font-size: 11px; padding: 4px 10px;" aria-label="Open ContraRed Dashboard">Dashboard</a>
+            </div>
         </header>
 
         <!-- ================================================================ -->
@@ -1660,13 +1715,13 @@
                         <div id="userTier" class="user-tier">Free Tier</div>
                     </div>
                 </div>
-                <button id="logoutBtn" class="btn btn-ghost btn-sm">Logout</button>
+                <button id="logoutBtn" class="btn btn-ghost btn-sm" aria-label="Sign out">Logout</button>
             </div>
 
             <!-- Admin Actions (hidden for non-admins, shown via JS) -->
             <div id="adminActions" style="display: none; margin-bottom: 12px;">
                 <div style="display: flex; gap: 8px;">
-                    <button id="addPlaybookBtn" class="btn btn-secondary btn-sm" style="flex: 1;">
+                    <button id="addPlaybookBtn" class="btn btn-secondary btn-sm" style="flex: 1;" aria-label="Create a new playbook">
                         + New Playbook
                     </button>
                     <a id="dashboardLink" href="https://contrared.netlify.app/dashboard"
@@ -1678,7 +1733,7 @@
             </div>
 
             <!-- Create Playbook Modal (hidden by default) -->
-            <div id="createPlaybookModal" style="display: none; margin-bottom: 16px;">
+            <div id="createPlaybookModal" role="dialog" aria-modal="true" aria-label="Create new playbook" style="display: none; margin-bottom: 16px;">
                 <div style="background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-4);">
                     <div class="section-header" style="margin-bottom: 12px;">
                         <span class="section-title">New Playbook</span>
@@ -1728,9 +1783,19 @@
                     </div>
                 </div>
 
+                <!-- Party Side Selector -->
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label" for="partySideSelect">Your Role</label>
+                    <select id="partySideSelect" class="form-input" style="margin: 0;">
+                        <option value="buyer">Buyer / Client</option>
+                        <option value="seller">Seller / Vendor</option>
+                        <option value="neutral">Neutral Review</option>
+                    </select>
+                </div>
+
                 <!-- Scan Button (full width) -->
                 <div style="margin-bottom: 8px;">
-                    <button id="scanBtn" class="btn btn-primary">
+                    <button id="scanBtn" class="btn btn-primary" aria-label="Scan entire document for risks">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -1738,18 +1803,21 @@
                         <span id="scanBtnText">Scan Document</span>
                         <div id="scanSpinner" class="spinner" style="display: none;"></div>
                     </button>
-                    <button id="scanSelectionBtn" class="btn btn-secondary btn-full" style="margin-top: 6px;">
+                    <button id="scanSelectionBtn" class="btn btn-secondary btn-full" style="margin-top: 6px;" aria-label="Scan selected text for risks">
                         <span id="scanSelectionBtnText">Scan Selection</span>
                         <div id="scanSelectionSpinner" class="spinner" style="display:none;"></div>
                     </button>
-                    <div class="shortcut-hint" style="font-size:11px; color:var(--text-muted, #A09B96); margin-top:4px; text-align:center;">
-                        Ctrl+Alt+S: Scan Selection &middot; Ctrl+Shift+D: Full Scan &middot; Alt+&uarr;/&darr;: Navigate<br/>
-                        Ctrl+Alt+A: Apply Fix &middot; Ctrl+Shift+G: Generate Fix &middot; Ctrl+Shift+N: Negotiation
-                    </div>
+                    <button id="negotiationBtn" class="btn btn-full" style="margin-top: 6px; background: linear-gradient(135deg, #7C3AED, #6D28D9); color: #fff; border: none; font-weight: 600;" aria-label="Start live negotiation mode">
+                        <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:16px;height:16px;margin-right:4px;vertical-align:middle;">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a2 2 0 01-2-2v-1m0-3V4a2 2 0 012-2h6a2 2 0 012 2v4a2 2 0 01-2 2H9l-4 4V8z" />
+                        </svg>
+                        <span id="negotiationBtnText">Live Negotiation</span>
+                    </button>
                 </div>
 
                 <!-- Template Picker -->
-                <div id="templatePicker" style="display: none;" class="template-picker">
+                <div id="templatePicker" role="dialog" aria-modal="true" aria-label="Choose a template" style="display: none;" class="template-picker">
                     <div class="template-picker-header">
                         <span class="template-picker-title">Choose a Template</span>
                         <button id="templatePickerClose" class="template-picker-close">&times;</button>
@@ -1867,23 +1935,24 @@
                 <!-- Filter Toolbar (hidden until scan) -->
                 <div id="filterToolbar" class="filter-toolbar" style="display: none;">
                     <div class="filter-buttons">
-                        <button class="filter-btn active" data-filter="ALL">All</button>
-                        <button class="filter-btn" data-filter="RED">Critical</button>
-                        <button class="filter-btn" data-filter="YELLOW">Warning</button>
-                        <button class="filter-btn" data-filter="UNFIXED">Unfixed</button>
+                        <button class="filter-btn active" data-filter="ALL" aria-label="Show all risks">All</button>
+                        <button class="filter-btn" data-filter="RED" aria-label="Show critical risks only">Critical</button>
+                        <button class="filter-btn" data-filter="YELLOW" aria-label="Show warning risks only">Warning</button>
+                        <button class="filter-btn" data-filter="UNFIXED" aria-label="Show unfixed risks only">Unfixed</button>
                     </div>
                     <div class="filter-row">
-                        <input type="text" id="riskSearchInput" class="form-input filter-input" placeholder="Search clauses...">
-                        <select id="sortSelect" class="form-input filter-select">
+                        <input type="text" id="riskSearchInput" class="form-input filter-input" placeholder="Search clauses..." aria-label="Search risk clauses">
+                        <select id="sortSelect" class="form-input filter-select" aria-label="Sort risks by">
                             <option value="risk_level">Risk Level</option>
                             <option value="rule_name">Clause Type</option>
+                            <option value="confidence">Confidence</option>
                         </select>
                     </div>
                 </div>
 
                 <!-- Bulk Actions Bar (hidden until scan) -->
                 <div id="bulkActionsBar" class="bulk-actions" style="display: none;">
-                    <button id="applyAllBtn" class="btn btn-primary btn-sm">
+                    <button id="applyAllBtn" class="btn btn-primary btn-sm" aria-label="Generate and apply all fixes">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="14" height="14">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
                         </svg>
@@ -1893,7 +1962,7 @@
                         <div class="progress-bar">
                             <div id="progressFill" class="progress-fill"></div>
                         </div>
-                        <span id="progressText" class="progress-text">0 / 0</span>
+                        <span id="progressText" class="progress-text" aria-live="polite">0 / 0</span>
                     </div>
                 </div>
 
@@ -1931,6 +2000,27 @@
             <div class="tooltip-actions">
                 <button id="tooltipNext" class="btn btn-primary btn-sm">Got it</button>
                 <button id="tooltipSkip" class="btn btn-ghost btn-sm">Skip all</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Keyboard Shortcuts Panel -->
+    <div id="shortcutsPanel" class="shortcuts-panel" style="display: none;" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts reference">
+        <div class="shortcuts-panel-inner">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                <h2 style="font-size: 14px; font-weight: 600; margin: 0;">Keyboard Shortcuts</h2>
+                <button id="shortcutsPanelClose" class="btn-icon" aria-label="Close shortcuts panel" style="width: 28px; height: 28px;">&times;</button>
+            </div>
+            <div class="shortcuts-list">
+                <div class="shortcut-row"><kbd>Ctrl+Shift+D</kbd><span>Scan Full Document</span></div>
+                <div class="shortcut-row"><kbd>Ctrl+Alt+S</kbd><span>Scan Selection</span></div>
+                <div class="shortcut-row"><kbd>Ctrl+Shift+N</kbd><span>Toggle Negotiation Mode</span></div>
+                <div class="shortcut-row"><kbd>Alt+Up/Down</kbd><span>Navigate Risk Cards</span></div>
+                <div class="shortcut-row"><kbd>Ctrl+Shift+H</kbd><span>Highlight Focused Risk</span></div>
+                <div class="shortcut-row"><kbd>Ctrl+Shift+G</kbd><span>Generate Fix</span></div>
+                <div class="shortcut-row"><kbd>Ctrl+Alt+A</kbd><span>Apply Fix</span></div>
+                <div class="shortcut-row"><kbd>Ctrl+Shift+R</kbd><span>Research Risk</span></div>
+                <div class="shortcut-row"><kbd>?</kbd><span>Toggle This Panel</span></div>
             </div>
         </div>
     </div>

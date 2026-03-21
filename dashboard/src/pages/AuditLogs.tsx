@@ -44,36 +44,45 @@ export default function AuditLogs() {
 
                 {/* Filters */}
                 <div className="flex gap-4 mb-6 flex-wrap items-end">
-                    <select
-                        value={actionFilter}
-                        onChange={(e) => { setActionFilter(e.target.value); setPage(1); }}
-                        className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                    >
-                        <option value="">All Actions</option>
-                        <option value="login_success">Login Success</option>
-                        <option value="login_failed">Login Failed</option>
-                        <option value="user_registered">User Registered</option>
-                        <option value="analyze">Document Analyzed</option>
-                        <option value="ai_full_analysis">AI Analysis</option>
-                        <option value="redline_generated">Redline Generated</option>
-                        <option value="summary_generated">Summary Generated</option>
-                        <option value="playbook_created">Playbook Created</option>
-                        <option value="playbook_updated">Playbook Updated</option>
-                        <option value="playbook_deleted">Playbook Deleted</option>
-                        <option value="role_changed">Role Changed</option>
-                    </select>
+                    <div className="flex flex-col gap-1">
+                        <label htmlFor="action-filter" className="text-xs font-medium text-slate-500">Action</label>
+                        <select
+                            id="action-filter"
+                            value={actionFilter}
+                            onChange={(e) => { setActionFilter(e.target.value); setPage(1); }}
+                            className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
+                        >
+                            <option value="">All Actions</option>
+                            <option value="login_success">Login Success</option>
+                            <option value="login_failed">Login Failed</option>
+                            <option value="user_registered">User Registered</option>
+                            <option value="analyze">Document Analyzed</option>
+                            <option value="ai_full_analysis">AI Analysis</option>
+                            <option value="redline_generated">Redline Generated</option>
+                            <option value="summary_generated">Summary Generated</option>
+                            <option value="playbook_created">Playbook Created</option>
+                            <option value="playbook_updated">Playbook Updated</option>
+                            <option value="playbook_deleted">Playbook Deleted</option>
+                            <option value="role_changed">Role Changed</option>
+                        </select>
+                    </div>
 
-                    <input
-                        type="text"
-                        placeholder="Filter by email..."
-                        value={emailFilter}
-                        onChange={(e) => setEmailFilter(e.target.value)}
-                        className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white w-64"
-                    />
+                    <div className="flex flex-col gap-1">
+                        <label htmlFor="email-filter" className="text-xs font-medium text-slate-500">Email</label>
+                        <input
+                            id="email-filter"
+                            type="text"
+                            placeholder="Filter by email..."
+                            value={emailFilter}
+                            onChange={(e) => setEmailFilter(e.target.value)}
+                            className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white w-64"
+                        />
+                    </div>
 
                     <div className="flex items-center gap-2">
-                        <label className="text-xs font-medium text-slate-500">From</label>
+                        <label htmlFor="date-from" className="text-xs font-medium text-slate-500">From</label>
                         <input
+                            id="date-from"
                             type="date"
                             value={dateFrom}
                             onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
@@ -81,8 +90,9 @@ export default function AuditLogs() {
                         />
                     </div>
                     <div className="flex items-center gap-2">
-                        <label className="text-xs font-medium text-slate-500">To</label>
+                        <label htmlFor="date-to" className="text-xs font-medium text-slate-500">To</label>
                         <input
+                            id="date-to"
                             type="date"
                             value={dateTo}
                             onChange={(e) => { setDateTo(e.target.value); setPage(1); }}

@@ -98,9 +98,8 @@
       </Resources>
   </VersionOverrides>
 
-  <!-- Store listing URLs -->
-  <!-- PrivacyUrl: https://contrared.com/privacy -->
-  <!-- TermsOfUseUrl: https://contrared.com/terms -->
-  <!-- These URLs should be configured in the AppSource/Partner Center listing -->
+  <!-- Store listing URLs (required for AppSource certification) -->
+  <PrivacyUrl DefaultValue="https://contrared-addin.netlify.app/privacy.html"/>
+  <TermsOfUseUrl DefaultValue="https://contrared-addin.netlify.app/terms.html"/>
 
 </OfficeApp>

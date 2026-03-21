@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
 import { listPlaybooks, createPlaybook, deletePlaybook, togglePlaybookPublish, isAdmin, type Playbook } from '@/api/client';
 import AppHeader from '@/components/AppHeader';
 
@@ -31,6 +32,7 @@ export default function Playbooks() {
     const [newDescription, setNewDescription] = useState('');
     const admin = isAdmin();
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+    const modalRef = useFocusTrap(showCreate);
 
     const { data: playbooks, isLoading, error } = useQuery({
         queryKey: ['playbooks'],
@@ -84,7 +86,7 @@ export default function Playbooks() {
                             onClick={() => setShowCreate(true)}
                             className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors"
                         >
-                            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                            <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
                             New Playbook
                         </button>
                     )}
@@ -92,9 +94,9 @@ export default function Playbooks() {
 
                 {/* Create Modal */}
                 {showCreate && (
-                    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" role="dialog" aria-modal="true" onKeyDown={(e) => { if (e.key === 'Escape') setShowCreate(false); }}>
-                        <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-2xl">
-                            <h2 className="text-xl font-bold text-slate-900 mb-6">Create Playbook</h2>
+                    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" role="dialog" aria-modal="true" aria-labelledby="create-playbook-title" onKeyDown={(e) => { if (e.key === 'Escape') setShowCreate(false); }}>
+                        <div ref={modalRef} className="bg-white rounded-2xl p-8 w-full max-w-md shadow-2xl">
+                            <h2 id="create-playbook-title" className="text-xl font-bold text-slate-900 mb-6">Create Playbook</h2>
                             <form onSubmit={handleCreate}>
                                 <div className="mb-5">
                                     <label className="block text-[13px] font-semibold text-slate-700 mb-1.5">Name</label>

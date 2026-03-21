@@ -38,19 +38,9 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (!isAuthenticated()) {
     return <Navigate to="/login" replace />;
   }
-  // Check token expiry
-  const token = localStorage.getItem('contrared_tokens');
-  if (token) {
-    try {
-      const parsed = JSON.parse(token);
-      const payload = JSON.parse(atob(parsed.access_token.split('.')[1]));
-      if (payload.exp && payload.exp * 1000 < Date.now()) {
-        localStorage.removeItem('contrared_tokens');
-        localStorage.removeItem('contrared_user');
-        return <Navigate to="/login" replace />;
-      }
-    } catch { /* malformed token, let request-level auth handle it */ }
-  }
+  // Token expiry is now handled server-side via HttpOnly cookies.
+  // The server will return 401 if the token is expired, triggering
+  // automatic refresh or redirect to login.
   return <>{children}</>;
 }
 

@@ -16,6 +16,7 @@ from app.models.user import User, UserRole
 from app.api.dependencies import require_permission
 from app.models.audit_log import log_audit_event
 from app.api.v1.endpoints.auth import limiter
+from app.api.v1.endpoints.billing import require_tier
 
 
 router = APIRouter()
@@ -88,7 +89,8 @@ async def change_role(
     body: ChangeRoleRequest,
     request: Request,
     current_user: User = Depends(require_permission("user.manage")),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    _tier=Depends(require_tier("pro")),
 ):
     """Change a team member's role."""
     # Find target user

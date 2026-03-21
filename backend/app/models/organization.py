@@ -72,6 +72,10 @@ class Subscription(Base):
     used_scans: Mapped[int] = mapped_column(Integer, default=0)
     current_period_start: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     current_period_end: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Dunning fields — track failed payment retries
+    dunning_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    last_dunning_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    dunning_next_retry_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     
     organization: Mapped["Organization"] = relationship("Organization", back_populates="subscriptions")

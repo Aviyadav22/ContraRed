@@ -107,6 +107,11 @@ class Settings(BaseSettings):
                 return [origin.strip() for origin in v.split(",")]
         return v
     
+    # Cookie-based auth (HttpOnly, Secure, SameSite=None for cross-origin)
+    COOKIE_DOMAIN: str = ""  # Leave empty for default (response origin)
+    COOKIE_SECURE: bool = True  # Must be True for SameSite=None
+    COOKIE_SAMESITE: str = "none"  # "none" required for cross-origin (add-in iframe)
+
     # Subscription Limits (Phase 3 — tier inversion fix)
     FREE_TIER_SCANS: int = 5
     STARTER_TIER_SCANS: int = 50
@@ -147,9 +152,9 @@ class Settings(BaseSettings):
     # before sending customer data through Vertex AI in production.
     VERTEX_PROJECT_ID: str = ""
     VERTEX_LOCATION: str = "us-central1"
-    # When VERTEX_PROJECT_ID is set and google-cloud-aiplatform is installed,
-    # the system uses Vertex AI. Otherwise it falls back to the consumer
-    # google.generativeai SDK with GEMINI_API_KEY.
+    # When True, refuse to fall back to consumer Gemini API in production.
+    # Set to True on Render once Vertex AI credentials are configured.
+    REQUIRE_VERTEX_AI: bool = False
 
     # AI Provider selection: "gemini" or "azure"
     AI_PROVIDER: str = "gemini"
@@ -160,13 +165,24 @@ class Settings(BaseSettings):
 
     @field_validator("ENCRYPTION_KEY", mode="before")
     @classmethod
-    def validate_encryption_key(cls, v):
-        """Warn if ENCRYPTION_KEY is empty (encryption features will be disabled)."""
+    def validate_encryption_key(cls, v, info):
+        """Require ENCRYPTION_KEY in production; warn in development."""
+        import os
         if not v:
-            _config_logger.warning(
-                "ENCRYPTION_KEY is not set. Field-level encryption is disabled. "
-                "Set ENCRYPTION_KEY for production use."
+            is_debug = (
+                os.environ.get("DEBUG", "").lower() == "true"
+                or (info.data.get("DEBUG") is True if info.data else False)
             )
+            if is_debug:
+                _config_logger.warning(
+                    "ENCRYPTION_KEY is not set. Field-level encryption is disabled. "
+                    "Set ENCRYPTION_KEY for production use."
+                )
+            else:
+                raise ValueError(
+                    "ENCRYPTION_KEY is required in production. "
+                    "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+                )
         return v
 
     # Token blacklist TTL (seconds) — how long revoked tokens stay in blacklist
@@ -177,6 +193,10 @@ class Settings(BaseSettings):
 
     # Trusted proxy hosts for X-Forwarded-For processing
     TRUSTED_PROXY_HOSTS: str = "127.0.0.1"
+
+    # Resend (transactional email — password resets, notifications)
+    RESEND_API_KEY: str = ""
+    EMAIL_FROM: str = "ContraRed <noreply@contrared.com>"
 
     # Sentry (error monitoring — optional, degrades gracefully)
     SENTRY_DSN: str = ""

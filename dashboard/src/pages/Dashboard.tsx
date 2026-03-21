@@ -16,7 +16,7 @@ export default function Dashboard() {
             label: 'Documents Analyzed',
             value: stats?.documents_analyzed ?? 0,
             icon: (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: '#6B6966' }}>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: '#6B6966' }} aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
             ),
@@ -26,7 +26,7 @@ export default function Dashboard() {
             label: 'Risks Detected',
             value: stats?.total_risks_detected ?? 0,
             icon: (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: '#C0392B' }}>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: '#C0392B' }} aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                 </svg>
             ),
@@ -50,7 +50,7 @@ export default function Dashboard() {
             label: 'Fixes Applied',
             value: stats?.redlines_applied ?? 0,
             icon: (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: '#1A7A4A' }}>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: '#1A7A4A' }} aria-hidden="true">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 13l4 4L19 7" />
                 </svg>
             ),
@@ -113,7 +113,7 @@ export default function Dashboard() {
                 {/* Stats Cards */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
                     {statCards.map(card => (
-                        <div
+                        <article
                             key={card.label}
                             className="rounded-xl p-5 transition-shadow hover:shadow"
                             style={{ background: '#FFFFFF', border: '1px solid #E8E5E0' }}
@@ -138,7 +138,7 @@ export default function Dashboard() {
                                     {card.extra}
                                 </div>
                             </div>
-                        </div>
+                        </article>
                     ))}
                 </div>
 
