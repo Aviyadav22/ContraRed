@@ -80,11 +80,11 @@ This codebase was written by Claude Opus across multiple sessions. Many function
 - [x] HARDEN-10: Verify the Word Add-in CSP headers in ContraRed-PoC/netlify.toml allow connections to the correct API URL (https://contrared.onrender.com).
 
 ## PHASE 6: FINAL VERIFICATION
-- [ ] VERIFY-1: Run `cd backend && python -c "from main import app; print('Backend imports OK')"` — verify zero import errors.
-- [ ] VERIFY-2: Run `cd dashboard && npx tsc --noEmit --noUnusedLocals --noUnusedParameters` — verify zero TypeScript errors.
-- [ ] VERIFY-3: Run `cd dashboard && npx vite build` — verify zero build errors.
-- [ ] VERIFY-4: Run `cd ContraRed-PoC && npx tsc --noEmit` — verify zero TypeScript errors.
-- [ ] VERIFY-5: Run `cd ContraRed-PoC && npm run build` — verify webpack builds successfully.
-- [ ] VERIFY-6: Trace end-to-end: Lawyer opens Word → signs in → selects playbook → scans contract → sees risk cards → generates fix → sees word-level diff → applies fix → Track Changes appear in document → exports report. Document any step that fails.
-- [ ] VERIFY-7: Trace dashboard end-to-end: Lawyer logs in → sees dashboard → uploads document → views analytics → manages playbooks → manages team → views audit logs → manages billing. Document any step that fails.
-- [ ] VERIFY-8: Create FINAL_STATUS.md summarizing: what was wired, what was fixed, what needs human review, what was left untouched and why.
+- [x] VERIFY-1: Run `cd backend && python -c "from main import app; print('Backend imports OK')"` — verify zero import errors.
+- [x] VERIFY-2: Run `cd dashboard && npx tsc --noEmit --noUnusedLocals --noUnusedParameters` — verify zero TypeScript errors.
+- [x] VERIFY-3: Run `cd dashboard && npx vite build` — verify zero build errors.
+- [x] VERIFY-4: Run `cd ContraRed-PoC && npx tsc --noEmit` — verify zero TypeScript errors.
+- [x] VERIFY-5: Run `cd ContraRed-PoC && npm run build` — verify webpack builds successfully.
+- [x] VERIFY-6: Trace end-to-end: Lawyer opens Word → signs in → selects playbook → scans contract → sees risk cards → generates fix → sees word-level diff → applies fix → Track Changes appear in document → exports report. Document any step that fails.
+- [x] VERIFY-7: Trace dashboard end-to-end: Lawyer logs in → sees dashboard → uploads document → views analytics → manages playbooks → manages team → views audit logs → manages billing. Document any step that fails.
+- [x] VERIFY-8: Create FINAL_STATUS.md summarizing: what was wired, what was fixed, what needs human review, what was left untouched and why.

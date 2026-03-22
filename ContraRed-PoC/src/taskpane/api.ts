@@ -522,16 +522,17 @@ class ContraRedAPI {
      * Returns a Blob for download.
      */
     async exportReport(analysisResult: AIAnalysisResult): Promise<Blob> {
+        // WIRED_BY_REFACTOR: Replaced dead this.accessToken with cookie-based CSRF auth
+        const csrf = this.getCsrfToken();
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
         };
-        if (this.accessToken) {
-            headers['Authorization'] = `Bearer ${this.accessToken}`;
-        }
+        if (csrf) headers['X-CSRF-Token'] = csrf;
 
         const response = await fetch(`${API_BASE_URL}/documents/export-report`, {
             method: 'POST',
             headers,
+            credentials: 'include',
             body: JSON.stringify({
                 filename: analysisResult.filename,
                 executive_summary: analysisResult.executive_summary,

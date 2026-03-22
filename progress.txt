@@ -86,6 +86,12 @@
 - Word Add-in uses insertOoxml() for both violations (replace) and missing clauses (after)
 - No broken links. Pipeline is fully wired.
 
+## Iteration 14 — VERIFY-1 through VERIFY-8: Final Verification + FINAL_STATUS.md
+**Task:** Run all build commands, trace end-to-end flows, create FINAL_STATUS.md.
+**Bug Fixed:** exportReport() in api.ts used dead this.accessToken. Replaced with cookie-based CSRF auth.
+**Build Results:** All 5 pass (backend imports, dashboard TS + build, add-in TS + webpack build)
+**Files Changed:** ContraRed-PoC/src/taskpane/api.ts (bug fix), FINAL_STATUS.md (created), REFACTOR_PRD.md (all checked)
+
 ## Iteration 13 — HARDEN-1 through HARDEN-10: Hardening Verification
 **Task:** Verify all 10 hardening requirements.
 **What I learned:**
