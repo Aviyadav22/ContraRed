@@ -510,3 +510,45 @@ vertex_client.py (core/vertex_client.py)
 - Azure OpenAI: separate path in `ai_service.py`, not used by main pipeline
 
 **Status: No broken links. Provider chain is fully functional.**
+
+---
+
+## AUDIT-7: Redline Generation Pipeline
+
+### Full Chain
+```
+Word Add-in (taskpane.ts)                    Backend (documents.py + redline_implementer.py)
+─────────────────────────                    ──────────────────────────────────────────────
+1. User clicks "Generate Fix" on risk card
+   → api.generateFix()                       → POST /documents/generate-fix
+                                              → GeminiAnalyzer.generate_fix()
+                                              → FixVerifier.verify_fix() (section refs, length, playbook)
+                                              → Returns { fix_text, reasoning }
+
+2. User sees word-level diff preview
+   → wordDiff(original, modified)            (client-side SequenceMatcher in taskpane.ts)
+   → Red deletions, green insertions shown
+
+3. User clicks "Apply"
+   → api.generateRedlineZDR()                → POST /documents/redline (ZDR mode)
+                                              → RedlineImplementer.find_anchor()
+                                                ├── Hash match (SHA-256 paragraph hash)
+                                                ├── Exact substring match
+                                                └── Fuzzy match (rapidfuzz, threshold 80%)
+                                              → RedlineImplementer.generate_track_changes_ooxml()
+                                                └── SequenceMatcher word-level diff → OOXML Track Changes
+                                              OR: generate_insert_only_ooxml() for missing clauses
+                                              → Returns { ooxml, match_confidence, match_method }
+
+4. Word applies Track Changes
+   → range.insertOoxml(ooxml, InsertLocation.replace)    (for violations)
+   → range.insertOoxml(ooxml, InsertLocation.after)       (for missing clauses)
+```
+
+### Surgical Word-Level Diff (SequenceMatcher)
+- Uses `difflib.SequenceMatcher` to tokenize original and replacement by whitespace
+- Generates OOXML `<w:del>` (red strikethrough) and `<w:ins>` (green underline) tags
+- Each word is individually marked as equal/insert/delete — NOT bulk paragraph replacement
+- Match confidence tracked: exact (1.0) > normalized > fuzzy (<1.0)
+
+**Status: Fully wired end-to-end. No broken links.**

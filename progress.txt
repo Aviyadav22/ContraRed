@@ -74,3 +74,14 @@
 - Vertex AI (enterprise) -> Consumer Gemini (dev) -> None (error). REQUIRE_VERTEX_AI blocks consumer fallback.
 - ai_service.py has Azure OpenAI as a separate fallback but it's NOT used by the main pipeline (analysis_pipeline.py uses gemini_analyzer directly)
 - No broken links in provider chain.
+
+## Iteration 7 — AUDIT-7: Redline Generation Pipeline
+**Task:** Map the full redline chain from Generate Fix to Track Changes in Word.
+**Files Changed:** AUDIT_MAP.md (appended), REFACTOR_PRD.md (checked off)
+**What I learned:**
+- Full chain: Generate Fix -> generate_fix() -> FixVerifier -> word diff preview -> Apply -> generateRedlineZDR -> RedlineImplementer.find_anchor() -> generate_track_changes_ooxml() -> insertOoxml()
+- find_anchor() uses 3 strategies: hash match (SHA-256) -> exact substring -> fuzzy (rapidfuzz, 80% threshold)
+- generate_track_changes_ooxml() uses difflib.SequenceMatcher for word-level diffs -- NOT bulk paragraph replacement
+- Missing clause handling: generate_insert_only_ooxml() with InsertLocation.after
+- Word Add-in uses insertOoxml() for both violations (replace) and missing clauses (after)
+- No broken links. Pipeline is fully wired.
