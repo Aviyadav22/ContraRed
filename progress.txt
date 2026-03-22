@@ -1,0 +1,19 @@
+## Iteration 1 — AUDIT-1: Backend Services Audit
+**Task:** Map all 37 service files and 198+ functions to their contract review workflows.
+**Files Changed:** AUDIT_MAP.md (created), REFACTOR_PRD.md (checked off)
+**What I learned:**
+- 37 service files with 198+ public functions organized across 25 workflow categories
+- Core pipeline: gemini_analyzer.py -> analysis_pipeline.py -> rule_engine.py + rules_library.py -> hallucination_guard.py -> confidence_scorer.py -> redline_implementer.py
+- AI providers: vertex_client.py (Vertex AI) -> gemini_analyzer.py (consumer Gemini) -> ai_service.py (Azure OpenAI fallback)
+- Key auxiliary services: scope_analyzer, jurisdiction_detector, defined_terms_resolver, dependency_resolver
+- analysis_pipeline.py is the orchestrator -- it calls gemini_analyzer, hallucination_guard, confidence_scorer, scope_analyzer, jurisdiction_detector
+- intelligence_bridge.py provides Strategy pattern (OmniContext for small docs, HybridSentinel for large) but may not be actively used since gemini_analyzer.py handles the main flow now
+- rules_library.py has 75 built-in rules for clause detection -- this is the default playbook
+- playbook_conditions_engine.py handles conditional rule overrides based on deal context
+- text_normalizer.py is critical for Word text matching (smart quotes, soft hyphens, zero-width chars)
+- redline_implementer.py generates surgical word-level OOXML Track Changes using SequenceMatcher
+
+**Patterns for next iteration:**
+- Service files are well-organized by concern. Most are actively imported by other services or endpoints.
+- The lazy import in __init__.py means services load on demand -- don't break this.
+- playbook_cache.py provides in-memory caching for rule engines -- critical for performance.
