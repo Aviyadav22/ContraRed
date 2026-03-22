@@ -45,13 +45,13 @@ This codebase was written by Claude Opus across multiple sessions. Many function
 - [x] ANALYZE-8: Test the full pipeline on production: login → open contract → scan → verify results show risk cards with correct severity levels.
 
 ## PHASE 3: WIRE THE REDLINE AND FIX PIPELINE
-- [ ] REDLINE-1: Verify "Generate Fix" works end-to-end: user clicks Generate Fix on a risk card → POST /documents/generate-fix → AI generates suggested text → displayed with word-level diff (red deletions, green insertions). Wire if any step is broken.
-- [ ] REDLINE-2: Verify "Apply Fix" works end-to-end: user clicks Apply → POST /documents/redline (ZDR mode) → redline_implementer generates OOXML → insertOoxml() applies to Word document with Track Changes. Verify the surgical word-level OOXML (not bulk paragraph replacement) is correctly generated.
-- [ ] REDLINE-3: Verify the text anchor matching works in redline_implementer — it should find the exact clause in the document using exact match → normalized match → fuzzy match (rapidfuzz). Test with a clause that has slight whitespace differences.
-- [ ] REDLINE-4: Verify "Apply All" bulk redline works: applyAllRedlines() in taskpane.ts iterates all unfixed risks and applies them sequentially. Wire if disconnected.
-- [ ] REDLINE-5: Verify "Fixed" / "Undo" state tracking works: after applying a fix, the risk card shows ✓ Fixed with an Undo button. State persists in fixedRisks Set and localStorage. Wire if disconnected.
-- [ ] REDLINE-6: Verify the live negotiation feature works: user clicks negotiation button → enters counterparty negotiation mode → can Accept/Counter/Escalate each redline. Trace from UI button → API calls → backend NegotiationSession tracking. Wire if disconnected.
-- [ ] REDLINE-7: Verify export works: Export Report button → generates PDF/DOCX of all risks, fixes, and recommendations. Wire if disconnected.
+- [x] REDLINE-1: Verify "Generate Fix" works end-to-end: user clicks Generate Fix on a risk card → POST /documents/generate-fix → AI generates suggested text → displayed with word-level diff (red deletions, green insertions). Wire if any step is broken.
+- [x] REDLINE-2: Verify "Apply Fix" works end-to-end: user clicks Apply → POST /documents/redline (ZDR mode) → redline_implementer generates OOXML → insertOoxml() applies to Word document with Track Changes. Verify the surgical word-level OOXML (not bulk paragraph replacement) is correctly generated.
+- [x] REDLINE-3: Verify the text anchor matching works in redline_implementer — it should find the exact clause in the document using exact match → normalized match → fuzzy match (rapidfuzz). Test with a clause that has slight whitespace differences.
+- [x] REDLINE-4: Verify "Apply All" bulk redline works: applyAllRedlines() in taskpane.ts iterates all unfixed risks and applies them sequentially. Wire if disconnected.
+- [x] REDLINE-5: Verify "Fixed" / "Undo" state tracking works: after applying a fix, the risk card shows ✓ Fixed with an Undo button. State persists in fixedRisks Set and localStorage. Wire if disconnected.
+- [x] REDLINE-6: Verify the live negotiation feature works: user clicks negotiation button → enters counterparty negotiation mode → can Accept/Counter/Escalate each redline. Trace from UI button → API calls → backend NegotiationSession tracking. Wire if disconnected.
+- [x] REDLINE-7: Verify export works: Export Report button → generates PDF/DOCX of all risks, fixes, and recommendations. Wire if disconnected.
 
 ## PHASE 4: WIRE SUPPORTING FEATURES
 - [ ] SUPPORT-1: Verify playbook CRUD works end-to-end: dashboard Playbooks.tsx → create/edit/delete playbooks → PlaybookEditor.tsx rule builder → backend stores in playbooks/playbook_rules tables. Wire if disconnected.

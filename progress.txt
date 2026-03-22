@@ -86,6 +86,17 @@
 - Word Add-in uses insertOoxml() for both violations (replace) and missing clauses (after)
 - No broken links. Pipeline is fully wired.
 
+## Iteration 11 — REDLINE-1 through REDLINE-7: Redline & Fix Pipeline Verification
+**Task:** Verify all redline/fix features end-to-end.
+**What I learned:** All 7 redline tasks verified as fully wired:
+- Generate Fix: POST /generate-fix -> analysis_pipeline.generate_fix() -> FixVerifier
+- Apply Fix: POST /redline (ZDR) -> RedlineImplementer -> OOXML -> insertOoxml()
+- Text anchoring: hash -> exact -> fuzzy (rapidfuzz 80% threshold)
+- Apply All: applyAllRedlines() iterates unfixed risks sequentially
+- Fixed/Undo: fixedRisks Set + localStorage persistence
+- Negotiation: toggleNegotiationMode() -> accept/counter/escalate -> session in localStorage
+- Export: POST /export-report -> generate_risk_report() -> DOCX blob download
+
 ## Iteration 10 — ANALYZE-1 through ANALYZE-8: Document Analysis Pipeline Verification
 **Task:** Verify the entire document analysis pipeline end-to-end.
 **What I learned:**
