@@ -52,3 +52,16 @@
 - The fix flow is: Generate Fix button -> api.generateFix() -> word diff preview -> Apply button -> api.generateRedlineZDR() -> insertOoxml()
 - Negotiation mode is fully wired: toggleNegotiationMode() -> accept/counter/escalate buttons -> recordNegotiationDecision()
 - The bug: exportReport() uses this.accessToken which doesn't exist. Should use cookie-based auth. Fix in Phase 3.
+
+## Iteration 5 — AUDIT-5: 5-Stage Analysis Pipeline Trace
+**Task:** Trace every stage, verify all imports, identify broken links.
+**Files Changed:** AUDIT_MAP.md (appended), REFACTOR_PRD.md (checked off)
+**What I learned:**
+- Pipeline is fully wired. All 5 stages execute correctly with graceful degradation.
+- Stage 1 (Extraction): StructureExtractor + DefinedTermsResolver + JurisdictionDetector -- all deterministic, no AI cost
+- Stage 2 (Classification): RuleEngine.evaluate() -- pattern matching against 75 built-in rules or custom playbook rules
+- Between 2-3: ScopeAnalyzer runs scope analysis + jurisdiction overrides
+- Stage 3 (Risk Assessment): GeminiAnalyzer.analyze_full_contract() -- the heavy AI call (Gemini Pro)
+- Stage 4 (Verification): HallucinationGuard.verify_batch() -- kills AI hallucinations via 4-tier text matching
+- Stage 5 (Enrichment): ConfidenceScorer.score_batch() -- 5-factor scoring (0-1) per redline
+- Key insight: Stage 3 has a fallback to rule-engine-only mode if AI is unavailable. This means the system degrades gracefully without Gemini API access.

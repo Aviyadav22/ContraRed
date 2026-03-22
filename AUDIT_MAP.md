@@ -431,3 +431,52 @@ No service functions were found without at least one route calling them. All 37 
 | `listClauses/createClause()` | Not called — clause library not in add-in |
 
 **Note:** These API methods exist because the add-in codebase shares the API client pattern with the dashboard. They're available for future add-in features but playbook/clause management is intentionally dashboard-only.
+
+---
+
+## AUDIT-5: 5-Stage Analysis Pipeline (analysis_pipeline.py)
+
+### Pipeline Flow
+```
+run() orchestrator
+├── Pre-Stage: Input validation (min 100 chars, English check, contract check)
+├── Stage 1: EXTRACTION (deterministic, CPU-bound via thread pool)
+│   ├── StructureExtractor.extract_from_text() → ContractMap with SHA-256 hashes
+│   ├── DefinedTermsResolver.resolve() → defined terms + overbroad flags
+│   └── JurisdictionDetector.detect() → jurisdiction hints
+├── Stage 2: CLASSIFICATION (rule engine, CPU-bound via thread pool)
+│   ├── RuleEngine.evaluate() → RuleMatch objects against contract text
+│   └── Optional: playbook_rules override default rules
+├── Scope Analysis (between Stage 2-3, deterministic)
+│   ├── ScopeAnalyzer.analyze() → breadth/mutuality/exposure/duration/trigger
+│   ├── ScopeAnalyzer.get_coverage_report() → clause types found/missing
+│   └── apply_jurisdiction_overrides() → jurisdiction-specific risk adjustments
+├── Stage 3: RISK ASSESSMENT (Gemini Pro, async AI call)
+│   ├── GeminiAnalyzer.analyze_full_contract() → raw redlines with AI explanations
+│   └── Fallback: _rule_matches_to_raw_redlines() if AI unavailable
+├── Stage 4: VERIFICATION (hallucination guard, CPU-bound via thread pool)
+│   ├── HallucinationGuard.verify_batch() → 4-stage verification (exact→normalized→fuzzy→reject)
+│   └── Stats: total_checked, exact_matches, fuzzy_matches, rejected
+└── Stage 5: ENRICHMENT (confidence scoring, CPU-bound via thread pool)
+    ├── ConfidenceScorer.score_batch() → 5-factor confidence (0-1) per redline
+    └── ConfidenceLevel: HIGH (>0.7) / MEDIUM (0.4-0.7) / LOW (<0.4)
+```
+
+### Graceful Degradation
+- Each stage wrapped in try/except — failure returns partial results from completed stages
+- Stage 3 fallback: if AI unavailable, converts rule matches to raw redlines (rule-engine-only mode)
+- Stage 4 fallback: if verification fails, passes unverified redlines with low confidence (0.2)
+- Stage 5 fallback: if scoring fails, assigns MEDIUM confidence (0.5) to all
+
+### Dependencies Verified
+| Import | From | Status |
+|--------|------|--------|
+| `GeminiAnalyzer, gemini_analyzer` | `gemini_analyzer.py` | OK |
+| `HallucinationGuard, HallucinationStats` | `hallucination_guard.py` | OK |
+| `ConfidenceScorer, ConfidenceScore` | `confidence_scorer.py` | OK |
+| `RuleEngine, RuleMatch` | `rule_engine.py` | OK |
+| `StructureExtractor, ContractMap` | `structure_extractor.py` | OK |
+| `ScopeAnalyzer, scope_analyzer` | `scope_analyzer.py` | OK |
+| `jurisdiction_detector, apply_jurisdiction_overrides` | `jurisdiction_detector.py` | OK |
+
+**No broken imports. All stages call functions that exist. Pipeline is fully wired.**
