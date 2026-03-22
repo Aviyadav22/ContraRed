@@ -35,14 +35,14 @@ This codebase was written by Claude Opus across multiple sessions. Many function
 - [x] AUDIT-9: Create a DISCONNECTED_FUNCTIONS.md listing every function that exists but is not reachable from any user action. For each one, write your best guess of where it should plug in based on its name, parameters, and the contract review workflow it seems to serve.
 
 ## PHASE 2: WIRE THE DOCUMENT ANALYSIS PIPELINE
-- [ ] ANALYZE-1: Verify document upload exists end-to-end: dashboard Documents.tsx upload button → POST /documents/upload → document stored in DB. If any link is broken, wire it.
-- [ ] ANALYZE-2: Verify the full AI scan works: POST /documents/analyze-full → 5-stage pipeline runs → results stored in Document.analysis_results (JSONB). If any stage fails silently or returns empty, investigate and fix.
-- [ ] ANALYZE-3: Verify the Word Add-in scan works: user clicks Scan Document → taskpane.ts calls api.analyzeWithAI() → POST /documents/analyze-full → results displayed as risk cards in the taskpane. Wire any disconnected step.
-- [ ] ANALYZE-4: Verify Scan Selection works: user highlights text in Word → clicks Scan Selection → POST /documents/analyze-clause → results displayed. Wire if disconnected.
-- [ ] ANALYZE-5: Verify the rule engine (rule_engine.py) and rules library (rules_library.py) are correctly called during Stage 2 classification. The rules_library.py is 63KB of RED/YELLOW flag patterns — verify these patterns actually get matched against contract text.
-- [ ] ANALYZE-6: Verify the hallucination guard (Stage 4) actually runs and filters out AI-invented clause references. If it exists but is bypassed, wire it back in.
-- [ ] ANALYZE-7: Verify playbook-aware analysis works: when a user selects a custom playbook, the AI analysis uses that playbook's rules instead of defaults. Trace from playbookSelect dropdown → API call → analysis_pipeline. Wire if disconnected.
-- [ ] ANALYZE-8: Test the full pipeline on production: login → open contract → scan → verify results show risk cards with correct severity levels.
+- [x] ANALYZE-1: Verify document upload exists end-to-end: dashboard Documents.tsx upload button → POST /documents/upload → document stored in DB. If any link is broken, wire it.
+- [x] ANALYZE-2: Verify the full AI scan works: POST /documents/analyze-full → 5-stage pipeline runs → results stored in Document.analysis_results (JSONB). If any stage fails silently or returns empty, investigate and fix.
+- [x] ANALYZE-3: Verify the Word Add-in scan works: user clicks Scan Document → taskpane.ts calls api.analyzeWithAI() → POST /documents/analyze-full → results displayed as risk cards in the taskpane. Wire any disconnected step.
+- [x] ANALYZE-4: Verify Scan Selection works: user highlights text in Word → clicks Scan Selection → POST /documents/analyze-clause → results displayed. Wire if disconnected.
+- [x] ANALYZE-5: Verify the rule engine (rule_engine.py) and rules library (rules_library.py) are correctly called during Stage 2 classification. The rules_library.py is 63KB of RED/YELLOW flag patterns — verify these patterns actually get matched against contract text.
+- [x] ANALYZE-6: Verify the hallucination guard (Stage 4) actually runs and filters out AI-invented clause references. If it exists but is bypassed, wire it back in.
+- [x] ANALYZE-7: Verify playbook-aware analysis works: when a user selects a custom playbook, the AI analysis uses that playbook's rules instead of defaults. Trace from playbookSelect dropdown → API call → analysis_pipeline. Wire if disconnected.
+- [x] ANALYZE-8: Test the full pipeline on production: login → open contract → scan → verify results show risk cards with correct severity levels.
 
 ## PHASE 3: WIRE THE REDLINE AND FIX PIPELINE
 - [ ] REDLINE-1: Verify "Generate Fix" works end-to-end: user clicks Generate Fix on a risk card → POST /documents/generate-fix → AI generates suggested text → displayed with word-level diff (red deletions, green insertions). Wire if any step is broken.

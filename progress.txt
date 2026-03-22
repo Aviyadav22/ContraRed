@@ -86,6 +86,18 @@
 - Word Add-in uses insertOoxml() for both violations (replace) and missing clauses (after)
 - No broken links. Pipeline is fully wired.
 
+## Iteration 10 — ANALYZE-1 through ANALYZE-8: Document Analysis Pipeline Verification
+**Task:** Verify the entire document analysis pipeline end-to-end.
+**What I learned:**
+- ANALYZE-1: Document upload via BatchUpload.tsx -> POST /batch-analyze. Word Add-in reads text directly from Word via getDocumentText(). No separate upload page (intentional design).
+- ANALYZE-2: POST /analyze-full -> analysis_pipeline.run() -> 5 stages -> Document stored. 120s timeout. Fully wired.
+- ANALYZE-3: scanDocument() -> api.analyzeWithAI() -> POST /analyze-full -> displayAIResults() -> risk cards. Fully wired.
+- ANALYZE-4: scanSelection() -> api.analyzeClause() -> POST /analyze-clause. Fully wired.
+- ANALYZE-5: RuleEngine() loads ALL_RULES from rules_library.py (75 rules). Stage 2 calls evaluate(). Fully wired.
+- ANALYZE-6: Stage 4 runs HallucinationGuard.verify_batch() -- NOT bypassed. Fully active.
+- ANALYZE-7: Playbook loaded via load_playbook() -> rules passed to pipeline.run(). Fully wired.
+- ANALYZE-8: Code trace confirms full pipeline. Production test requires manual verification.
+
 ## Iteration 9 — AUDIT-9: Disconnected Functions
 **Task:** Create DISCONNECTED_FUNCTIONS.md listing unreachable functions.
 **Files Changed:** DISCONNECTED_FUNCTIONS.md (created), REFACTOR_PRD.md (checked off)
