@@ -17,3 +17,16 @@
 - Service files are well-organized by concern. Most are actively imported by other services or endpoints.
 - The lazy import in __init__.py means services load on demand -- don't break this.
 - playbook_cache.py provides in-memory caching for rule engines -- critical for performance.
+
+## Iteration 2 — AUDIT-2: Backend Endpoints Audit
+**Task:** Map all 13 endpoint files (105+ routes) to services and frontend callers.
+**Files Changed:** AUDIT_MAP.md (appended), REFACTOR_PRD.md (checked off)
+**What I learned:**
+- 105+ routes across 13 endpoint files. ALL routes are connected to frontend callers.
+- 0 DISCONNECTED routes, 0 UNEXPOSED service functions.
+- documents.py is the largest with 24 routes covering the full analysis pipeline.
+- The analysis flow: POST /analyze-full -> analysis_pipeline.run() -> gemini_analyzer -> hallucination_guard -> confidence_scorer
+- Billing has webhook endpoints (razorpay/stripe) that are external-only (correct behavior).
+- SSO endpoints exist but require WorkOS credentials to function.
+- Playbooks have 19 routes covering full CRUD + rules + tiers + conditions + dependencies + versioning + marketplace.
+- Key insight: The codebase is remarkably well-wired. Most "disconnected" perception comes from functions being called through import chains (service A calls service B) rather than directly from endpoints.

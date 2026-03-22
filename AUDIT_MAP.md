@@ -236,3 +236,115 @@
 | `TokenBlacklistService.revoke/is_revoked()` | Token blacklisting for logout | token-management |
 | `TokenBlacklistService.register_session()` | Enforce concurrent session limits | token-management |
 | `TokenBlacklistService.record_login_ip()` | IP tracking for anomaly detection | token-management |
+
+---
+
+## AUDIT-2: Backend Endpoints (13 files, 105+ routes)
+
+### analytics.py (18 routes) — ALL CONNECTED
+| Route | Service Called | Frontend Caller |
+|-------|---------------|-----------------|
+| `GET /overview` | `analytics_service.get_org_overview()` | Dashboard |
+| `GET /risks` | `analytics_service.get_risk_breakdown()` | Dashboard |
+| `GET /users` | `analytics_service.get_user_activity()` | Dashboard |
+| `GET /trends` | `analytics_service.get_trend_data()` | Dashboard |
+| `GET /export` | Multiple analytics functions | Dashboard |
+| `GET /executive` | `analytics_service.get_executive_dashboard()` | Dashboard |
+| `GET /roi` | `roi_service.calculate_roi()` | Dashboard |
+| `PUT /roi/benchmarks` | `roi_service.update_org_benchmarks()` | Dashboard |
+| `PUT /roi/config` | `roi_service.update_roi_config()` | Dashboard |
+| `GET /portfolio` | `benchmark_service.get_portfolio_risk()` | Dashboard |
+| `GET /clauses` | `benchmark_service.get_clause_analytics()` | Dashboard |
+| `GET /team-performance` | `benchmark_service.get_team_performance()` | Dashboard |
+| `GET /benchmark/{id}` | `benchmark_service.get_document_percentile()` | Dashboard |
+| `POST /benchmarks/refresh` | `benchmark_service.refresh_benchmark_profiles()` | Dashboard |
+| `GET /bi-export/{dataset}` | `analytics_service.get_bi_export_data()` | Dashboard |
+| `POST /reports/generate` | `report_service.generate_report()` | Dashboard |
+| `GET /reports` | `report_service.list_reports()` | Dashboard |
+| `GET /reports/{id}` | `report_service.get_report()` | Dashboard |
+
+### audit.py (2 routes) — ALL CONNECTED
+| Route | Service Called | Frontend Caller |
+|-------|---------------|-----------------|
+| `GET /` | Direct SQLAlchemy query | Dashboard |
+| `GET /verify` | Hash chain verification (inline) | Dashboard |
+
+### auth.py (13 routes) — ALL CONNECTED
+| Route | Service Called | Frontend Caller |
+|-------|---------------|-----------------|
+| `POST /register` | Direct user creation | Both |
+| `POST /login` | `mfa_service` | Both |
+| `POST /refresh` | `token_service` | Both |
+| `GET /me` | Direct user fetch | Both |
+| `POST /change-password` | `token_service` | Both |
+| `POST /logout` | `token_service` | Both |
+| `POST /mfa/*` (5 routes) | `mfa_service` | Dashboard |
+| `POST /forgot-password` | `email_service.send_password_reset_email()` | Both |
+| `POST /reset-password` | Direct password update | Both |
+
+### billing.py (13 routes) — ALL CONNECTED
+| Route | Service Called | Frontend Caller |
+|-------|---------------|-----------------|
+| `GET /subscription` | Inline helpers | Dashboard |
+| `GET /plans` | PLAN_CATALOG constant | Dashboard |
+| `GET /usage` | Inline helpers | Dashboard |
+| `POST /create-subscription` | Razorpay/Stripe integration | Dashboard |
+| `POST /verify` | Payment verification | Dashboard |
+| `GET /invoices` | Direct query | Dashboard |
+| `POST /webhook/razorpay` | Payment processing | External (Razorpay) |
+| `POST /webhook/stripe` | Payment processing | External (Stripe) |
+| `POST /webhook` | Compat endpoint | External |
+| `GET /dunning/status` | Dunning logic | Dashboard |
+| `GET /invoices/{id}/download` | `invoice_pdf.generate_invoice_pdf()` | Dashboard |
+| `POST /admin/zdr/purge-risks` | Admin cleanup | Internal |
+
+### clauses.py (5 routes) — ALL CONNECTED
+Full CRUD for clause library. All called from Dashboard ClauseLibrary.tsx.
+
+### documents.py (24 routes) — ALL CONNECTED
+| Route | Service Called | Frontend Caller |
+|-------|---------------|-----------------|
+| `GET /list` | Direct query | Both |
+| `POST /analyze` | `RuleEngine.evaluate()`, `AIService` | Word Add-in |
+| `POST /analyze-async` | `task_queue.enqueue()` | Dashboard |
+| `GET /jobs/{id}` | `task_queue.get_job_status()` | Dashboard |
+| `POST /analyze-full` | `analysis_pipeline.run()` | Both |
+| `POST /analyze-clause` | `analysis_pipeline.analyze_clause()` | Word Add-in |
+| `POST /batch-analyze` | Batch processing | Dashboard |
+| `GET /batch/{id}/status` | Batch status | Dashboard |
+| `POST /generate-clause` | `gemini_analyzer.generate_clause()` | Word Add-in |
+| `POST /generate-fix` | `gemini_analyzer.generate_fix()` | Word Add-in |
+| `POST /research-clause` | `gemini_analyzer.research_clause()` | Word Add-in |
+| `POST /compare` | `contract_differ.compute_diff()` | Dashboard |
+| `POST /analyze-file` | File upload analysis | Dashboard |
+| `POST /summarize` | `ai_service.summarize_contract()` | Dashboard |
+| `POST /redline` | `redline_implementer.apply_redline()` | Word Add-in |
+| `GET /manifest` | Serves XML | External |
+| `GET /installer` | Serves JSON | External |
+| `POST /export-report` | `report_generator.generate_risk_report()` | Word Add-in |
+| `POST /export-issues` | `issues_exporter` | Dashboard |
+| `GET /{id}` | Direct fetch | Dashboard |
+| `POST /{id}/versions` | Version creation | Dashboard |
+| `GET /{id}/versions` | Version listing | Dashboard |
+| `GET /{id}/diff` | `contract_differ.compute_diff()` | Dashboard |
+
+### feedback.py (3 routes) — ALL CONNECTED
+Full CRUD for rule feedback. Called from Dashboard.
+
+### playbooks.py (19 routes) — ALL CONNECTED
+Full CRUD + rules + tiers + conditions + overrides + dependencies + versioning + marketplace. All called from Dashboard.
+
+### sso.py (5 routes) — ALL CONNECTED
+SSO authorize/callback/status/enable/disable. Service: `sso_service`. Note: requires WorkOS credentials.
+
+### team.py (3 routes) — ALL CONNECTED
+Team member listing, role change, removal. Called from Dashboard Team.tsx.
+
+### templates.py (4 routes) — ALL CONNECTED
+Template CRUD. Called from Dashboard Templates.tsx.
+
+### users.py (5 routes) — ALL CONNECTED
+User stats, profile update, org stats, account deletion. Called from Dashboard.
+
+### UNEXPOSED Service Functions
+No service functions were found without at least one route calling them. All 37 service files have routes that invoke their functions either directly or through the analysis pipeline chain.
