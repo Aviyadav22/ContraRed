@@ -348,3 +348,33 @@ User stats, profile update, org stats, account deletion. Called from Dashboard.
 
 ### UNEXPOSED Service Functions
 No service functions were found without at least one route calling them. All 37 service files have routes that invoke their functions either directly or through the analysis pipeline chain.
+
+---
+
+## AUDIT-3: Dashboard React Components (19 pages + 1 shared component)
+
+| Component | Renders | User Action | API Imports |
+|-----------|---------|-------------|-------------|
+| Landing.tsx | Landing page with features, pricing, CTA | Download installer, navigate to auth | None |
+| Login.tsx | Email/password login form | Sign in | `login` |
+| Register.tsx | Registration form with password validation | Create account | `register` |
+| ForgotPassword.tsx | Password reset request form | Submit email for reset | **None (TODO: wire to backend)** |
+| Dashboard.tsx | Stats cards (docs, risks, fixes) + admin links | View metrics, navigate | `getDashboardStats`, `isAdmin` |
+| Playbooks.tsx | Playbook list with create/delete/publish | CRUD playbooks | `listPlaybooks`, `createPlaybook`, `deletePlaybook`, `togglePlaybookPublish` |
+| PlaybookEditor.tsx | Advanced rule builder with tiers/conditions/deps/versions | Full rule management | 16+ API functions |
+| ClauseLibrary.tsx | Approved clauses list with CRUD | Manage clauses | `listClauses`, `createClause`, `updateClause`, `deleteClause` |
+| Templates.tsx | Contract template library | Download templates | `listTemplates`, `downloadTemplate` |
+| Compare.tsx | Document diff viewer | Compare two contract versions | `compareContracts`, `listPlaybooks` |
+| BatchUpload.tsx | Multi-file upload with progress | Batch analysis | `listPlaybooks`, `batchAnalyze`, `getBatchStatus` |
+| AuditLogs.tsx | Audit log viewer with filters | Filter/paginate logs | `getAuditLogs` |
+| Team.tsx | Team member management | Invite, role change, remove | `getTeamMembers`, `changeTeamMemberRole`, `removeTeamMember` |
+| Billing.tsx | Subscription/usage/invoices dashboard | Upgrade plans, view usage | `getSubscription`, `getUsageStats`, `listInvoices`, `createSubscription` |
+| Analytics.tsx | Multi-tab analytics (overview/portfolio/team/reports) | View analytics, generate reports | 12+ API functions |
+| Executive.tsx | Executive dashboard with ROI/trends | Select time period | `getExecutiveDashboard` |
+| Reports.tsx | Report generation and history | Generate/view reports | `generateAnalyticsReport`, `listAnalyticsReports`, `getAnalyticsReport` |
+| Marketplace.tsx | Public playbook marketplace with ratings | Browse, fork, rate | `browseMarketplace`, `forkPlaybook`, `ratePlaybook` |
+| NotFound.tsx | 404 page | Navigate back | None |
+| AppHeader.tsx | Navigation header with user menu | Navigate, logout | `getStoredUser`, `logout`, `isAdmin` |
+
+**Orphaned components: NONE** — All 19 pages routed in App.tsx.
+**Notable gap:** ForgotPassword.tsx has a TODO — not wired to backend `/auth/forgot-password` endpoint.

@@ -30,3 +30,14 @@
 - SSO endpoints exist but require WorkOS credentials to function.
 - Playbooks have 19 routes covering full CRUD + rules + tiers + conditions + dependencies + versioning + marketplace.
 - Key insight: The codebase is remarkably well-wired. Most "disconnected" perception comes from functions being called through import chains (service A calls service B) rather than directly from endpoints.
+
+## Iteration 3 — AUDIT-3: Dashboard React Components
+**Task:** Map all 19 page components + 1 shared component.
+**Files Changed:** AUDIT_MAP.md (appended), REFACTOR_PRD.md (checked off)
+**What I learned:**
+- 19 page components, all routed in App.tsx. 0 orphaned components.
+- ForgotPassword.tsx has a TODO -- not wired to backend /auth/forgot-password. This is a gap to fix later.
+- PlaybookEditor.tsx is the most complex page, importing 16+ API functions for rules/tiers/conditions/overrides/dependencies/versions.
+- Analytics.tsx has 4 sub-tabs (overview, portfolio, team, reports) -- very feature-rich.
+- All components use @tanstack/react-query for data fetching -- consistent pattern.
+- useFocusTrap hook used for modal accessibility in Playbooks.tsx.
