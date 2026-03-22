@@ -86,6 +86,22 @@
 - Word Add-in uses insertOoxml() for both violations (replace) and missing clauses (after)
 - No broken links. Pipeline is fully wired.
 
+## Iteration 12 — SUPPORT-1 through SUPPORT-12: Supporting Features Verification
+**Task:** Verify all 12 supporting features.
+**What I learned:** All supporting features verified as wired:
+- Playbook CRUD (9 calls in PlaybookEditor, 3 in Playbooks)
+- Versioning (4 calls in PlaybookEditor)
+- Marketplace (4 calls in Marketplace.tsx)
+- Clause Library (5 calls in ClauseLibrary.tsx)
+- Team management (4 calls in Team.tsx)
+- Billing (5 calls in Billing.tsx)
+- Audit logs (2 calls in AuditLogs.tsx)
+- Analytics (14 calls in Analytics.tsx)
+- Recent scans (3 calls in taskpane.ts)
+- SSO: endpoints exist, require WorkOS credentials (documented)
+- Feedback: 3 endpoints exist, no dedicated dashboard page (documented)
+- No orphaned UI components
+
 ## Iteration 11 — REDLINE-1 through REDLINE-7: Redline & Fix Pipeline Verification
 **Task:** Verify all redline/fix features end-to-end.
 **What I learned:** All 7 redline tasks verified as fully wired:

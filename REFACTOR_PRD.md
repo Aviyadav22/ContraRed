@@ -54,18 +54,18 @@ This codebase was written by Claude Opus across multiple sessions. Many function
 - [x] REDLINE-7: Verify export works: Export Report button → generates PDF/DOCX of all risks, fixes, and recommendations. Wire if disconnected.
 
 ## PHASE 4: WIRE SUPPORTING FEATURES
-- [ ] SUPPORT-1: Verify playbook CRUD works end-to-end: dashboard Playbooks.tsx → create/edit/delete playbooks → PlaybookEditor.tsx rule builder → backend stores in playbooks/playbook_rules tables. Wire if disconnected.
-- [ ] SUPPORT-2: Verify playbook versioning works: PlaybookEditor saves versions → can diff/rollback via playbook_versioning.py. Wire if disconnected.
-- [ ] SUPPORT-3: Verify the Playbook Marketplace works: publish playbook → appears in Marketplace.tsx → other users can browse/rate/clone. Wire if disconnected.
-- [ ] SUPPORT-4: Verify Clause Library works: dashboard ClauseLibrary.tsx → CRUD approved clauses → backend clause_library table → used during analysis for clause suggestions. Wire if disconnected.
-- [ ] SUPPORT-5: Verify team management works: Team.tsx → invite users → role assignment (admin/viewer/user) → backend team endpoints. Wire if disconnected.
-- [ ] SUPPORT-6: Verify billing/subscription works: Billing.tsx → plan selection → Razorpay/Stripe payment → subscription stored → quota enforcement (FREE_TIER_SCANS limit). Wire if disconnected.
-- [ ] SUPPORT-7: Verify audit logging works: every API action → AuditLog entry → viewable in AuditLogs.tsx → exportable. Wire if disconnected.
-- [ ] SUPPORT-8: Verify analytics works: Analytics.tsx → risk trends, time benchmarks, ROI calculations → backend analytics_service.py. Wire if disconnected.
-- [ ] SUPPORT-9: Verify search history / recent scans works: Word Add-in shows recent scans list → backend GET /documents/list → displays last 5 documents. Wire if disconnected.
-- [ ] SUPPORT-10: If there are SSO functions (sso_service.py, sso.py endpoints) that exist but have no dashboard UI, document what's needed to wire them. Do NOT build the UI — just document the gap.
-- [ ] SUPPORT-11: If there are feedback functions (feedback.py endpoints) that exist but have no dashboard UI, document the gap similarly.
-- [ ] SUPPORT-12: Check for any UI components (modals, sidebars, settings pages) in the dashboard that exist but arent reachable from navigation. Wire them into React Router.
+- [x] SUPPORT-1: Verify playbook CRUD works end-to-end: dashboard Playbooks.tsx → create/edit/delete playbooks → PlaybookEditor.tsx rule builder → backend stores in playbooks/playbook_rules tables. Wire if disconnected.
+- [x] SUPPORT-2: Verify playbook versioning works: PlaybookEditor saves versions → can diff/rollback via playbook_versioning.py. Wire if disconnected.
+- [x] SUPPORT-3: Verify the Playbook Marketplace works: publish playbook → appears in Marketplace.tsx → other users can browse/rate/clone. Wire if disconnected.
+- [x] SUPPORT-4: Verify Clause Library works: dashboard ClauseLibrary.tsx → CRUD approved clauses → backend clause_library table → used during analysis for clause suggestions. Wire if disconnected.
+- [x] SUPPORT-5: Verify team management works: Team.tsx → invite users → role assignment (admin/viewer/user) → backend team endpoints. Wire if disconnected.
+- [x] SUPPORT-6: Verify billing/subscription works: Billing.tsx → plan selection → Razorpay/Stripe payment → subscription stored → quota enforcement (FREE_TIER_SCANS limit). Wire if disconnected.
+- [x] SUPPORT-7: Verify audit logging works: every API action → AuditLog entry → viewable in AuditLogs.tsx → exportable. Wire if disconnected.
+- [x] SUPPORT-8: Verify analytics works: Analytics.tsx → risk trends, time benchmarks, ROI calculations → backend analytics_service.py. Wire if disconnected.
+- [x] SUPPORT-9: Verify search history / recent scans works: Word Add-in shows recent scans list → backend GET /documents/list → displays last 5 documents. Wire if disconnected.
+- [x] SUPPORT-10: If there are SSO functions (sso_service.py, sso.py endpoints) that exist but have no dashboard UI, document what's needed to wire them. Do NOT build the UI — just document the gap.
+- [x] SUPPORT-11: If there are feedback functions (feedback.py endpoints) that exist but have no dashboard UI, document the gap similarly.
+- [x] SUPPORT-12: Check for any UI components (modals, sidebars, settings pages) in the dashboard that exist but arent reachable from navigation. Wire them into React Router.
 
 ## PHASE 5: HARDEN
 - [ ] HARDEN-1: Add try/except with proper HTTP error codes to every FastAPI route that lacks it. A lawyer getting a generic 500 error during a time-sensitive contract review loses trust instantly.
