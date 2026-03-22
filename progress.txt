@@ -65,3 +65,12 @@
 - Stage 4 (Verification): HallucinationGuard.verify_batch() -- kills AI hallucinations via 4-tier text matching
 - Stage 5 (Enrichment): ConfidenceScorer.score_batch() -- 5-factor scoring (0-1) per redline
 - Key insight: Stage 3 has a fallback to rule-engine-only mode if AI is unavailable. This means the system degrades gracefully without Gemini API access.
+
+## Iteration 6 — AUDIT-6: AI Provider Chain
+**Task:** Map vertex_client.py -> gemini_analyzer.py -> ai_service.py provider chain.
+**Files Changed:** AUDIT_MAP.md (appended), REFACTOR_PRD.md (checked off)
+**What I learned:**
+- vertex_client.py has clean thread-safe double-checked locking for backend selection
+- Vertex AI (enterprise) -> Consumer Gemini (dev) -> None (error). REQUIRE_VERTEX_AI blocks consumer fallback.
+- ai_service.py has Azure OpenAI as a separate fallback but it's NOT used by the main pipeline (analysis_pipeline.py uses gemini_analyzer directly)
+- No broken links in provider chain.

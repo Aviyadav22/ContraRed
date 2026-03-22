@@ -480,3 +480,33 @@ run() orchestrator
 | `jurisdiction_detector, apply_jurisdiction_overrides` | `jurisdiction_detector.py` | OK |
 
 **No broken imports. All stages call functions that exist. Pipeline is fully wired.**
+
+---
+
+## AUDIT-6: AI Provider Chain
+
+### Provider Hierarchy
+```
+vertex_client.py (core/vertex_client.py)
+├── get_backend() → "vertex" | "consumer" | None (thread-safe, double-checked locking)
+├── _try_init_vertex() → Vertex AI SDK (enterprise, DPA-compliant)
+├── _try_init_consumer() → Consumer google.generativeai SDK (dev/free tier)
+├── get_generative_model(name) → GenerativeModel for either backend
+└── is_available() → True if any backend works
+```
+
+### Call Chain
+1. `gemini_analyzer.py` imports `get_generative_model` from `vertex_client.py`
+2. `GeminiAnalyzer.__init__()` calls `get_generative_model("gemini-2.0-flash")` (or configured model)
+3. Model is used for `generate_content()` calls in all Gemini methods
+4. `analysis_pipeline.py` uses `gemini_analyzer` singleton for Stage 3 (Risk Assessment)
+5. `ai_service.py` provides legacy Azure OpenAI fallback via `AsyncAzureOpenAI` (lazy import)
+
+### Fallback Logic
+- Priority 1: Vertex AI (if `VERTEX_PROJECT_ID` set + SDK installed)
+- Priority 2: Consumer Gemini API (if `GEMINI_API_KEY` set)
+- Priority 3: None → `RuntimeError("No AI backend available")`
+- `REQUIRE_VERTEX_AI=true` blocks consumer fallback (enterprise compliance)
+- Azure OpenAI: separate path in `ai_service.py`, not used by main pipeline
+
+**Status: No broken links. Provider chain is fully functional.**
