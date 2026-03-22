@@ -68,16 +68,16 @@ This codebase was written by Claude Opus across multiple sessions. Many function
 - [x] SUPPORT-12: Check for any UI components (modals, sidebars, settings pages) in the dashboard that exist but arent reachable from navigation. Wire them into React Router.
 
 ## PHASE 5: HARDEN
-- [ ] HARDEN-1: Add try/except with proper HTTP error codes to every FastAPI route that lacks it. A lawyer getting a generic 500 error during a time-sensitive contract review loses trust instantly.
-- [ ] HARDEN-2: Add Pydantic input validation to every endpoint that lacks it — especially analyze-full (text cant be empty), redline (original_text required), and auth (email format, password strength).
-- [ ] HARDEN-3: Add type hints to every Python function in backend/app/services/ that is missing them.
-- [ ] HARDEN-4: Add loading/error/empty states to every dashboard component that makes an API call. Currently some components show blank screen on error.
-- [ ] HARDEN-5: Verify CORS is configured correctly — DEBUG=false must use explicit CORS_ORIGINS list (not allow_origin_regex which only matches localhost). Check main.py lines 310-321.
-- [ ] HARDEN-6: Verify no API keys or secrets are hardcoded anywhere in the codebase. Check all .ts, .tsx, .py files. Flag any found.
-- [ ] HARDEN-7: Verify rate limiting (slowapi) is correctly applied to all public endpoints. The @limiter.limit decorator requires the first parameter named `request` to be a Starlette Request object, NOT a Pydantic model. Check every endpoint with @limiter.limit.
-- [ ] HARDEN-8: Verify the token blacklist (Redis-backed with in-memory fallback) works correctly for logout. Check token_service.py.
-- [ ] HARDEN-9: Verify Row-Level Security (RLS) middleware (tenant_context.py) correctly sets PostgreSQL session vars from JWT claims on every request.
-- [ ] HARDEN-10: Verify the Word Add-in CSP headers in ContraRed-PoC/netlify.toml allow connections to the correct API URL (https://contrared.onrender.com).
+- [x] HARDEN-1: Add try/except with proper HTTP error codes to every FastAPI route that lacks it. A lawyer getting a generic 500 error during a time-sensitive contract review loses trust instantly.
+- [x] HARDEN-2: Add Pydantic input validation to every endpoint that lacks it — especially analyze-full (text cant be empty), redline (original_text required), and auth (email format, password strength).
+- [x] HARDEN-3: Add type hints to every Python function in backend/app/services/ that is missing them.
+- [x] HARDEN-4: Add loading/error/empty states to every dashboard component that makes an API call. Currently some components show blank screen on error.
+- [x] HARDEN-5: Verify CORS is configured correctly — DEBUG=false must use explicit CORS_ORIGINS list (not allow_origin_regex which only matches localhost). Check main.py lines 310-321.
+- [x] HARDEN-6: Verify no API keys or secrets are hardcoded anywhere in the codebase. Check all .ts, .tsx, .py files. Flag any found.
+- [x] HARDEN-7: Verify rate limiting (slowapi) is correctly applied to all public endpoints. The @limiter.limit decorator requires the first parameter named `request` to be a Starlette Request object, NOT a Pydantic model. Check every endpoint with @limiter.limit.
+- [x] HARDEN-8: Verify the token blacklist (Redis-backed with in-memory fallback) works correctly for logout. Check token_service.py.
+- [x] HARDEN-9: Verify Row-Level Security (RLS) middleware (tenant_context.py) correctly sets PostgreSQL session vars from JWT claims on every request.
+- [x] HARDEN-10: Verify the Word Add-in CSP headers in ContraRed-PoC/netlify.toml allow connections to the correct API URL (https://contrared.onrender.com).
 
 ## PHASE 6: FINAL VERIFICATION
 - [ ] VERIFY-1: Run `cd backend && python -c "from main import app; print('Backend imports OK')"` — verify zero import errors.
