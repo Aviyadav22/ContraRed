@@ -86,6 +86,15 @@
 - Word Add-in uses insertOoxml() for both violations (replace) and missing clauses (after)
 - No broken links. Pipeline is fully wired.
 
+## Iteration 9 — AUDIT-9: Disconnected Functions
+**Task:** Create DISCONNECTED_FUNCTIONS.md listing unreachable functions.
+**Files Changed:** DISCONNECTED_FUNCTIONS.md (created), REFACTOR_PRD.md (checked off)
+**What I learned:**
+- Only 6 backend functions are truly disconnected (no callers): suggest_fix_with_playbook, classify_batch, get_playbook_by_industry, get_default_playbook_data, get_requery_instruction, normalize_for_search
+- Word Add-in has ~10 API methods that are dashboard-only (intentional, not bugs)
+- ForgotPassword.tsx uses a stub instead of calling the backend endpoint (gap to fix)
+- The codebase is remarkably well-wired for its size. The disconnected functions are minor and represent planned features or optimizations not yet integrated.
+
 ## Iteration 8 — AUDIT-8: Async Task System
 **Task:** Map TaskQueue, AnalysisJob lifecycle, frontend polling.
 **What I learned:** TaskQueue uses Redis lists (or in-memory dict fallback). JobStatus: QUEUED→RUNNING→COMPLETED/FAILED. Frontend polls GET /documents/jobs/{job_id}. Fully wired.

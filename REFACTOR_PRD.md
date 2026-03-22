@@ -32,7 +32,7 @@ This codebase was written by Claude Opus across multiple sessions. Many function
 - [x] AUDIT-6: Map the AI provider chain — vertex_client.py attempts Vertex AI → falls back to consumer Gemini API. gemini_analyzer.py wraps the calls. Identify any broken links in provider initialization or fallback logic. Add to AUDIT_MAP.md
 - [x] AUDIT-7: Map the redline generation pipeline — AI suggests fix → redline_implementer.py generates OOXML Track Changes → Word Add-in applies via insertOoxml(). Identify if the surgical word-level diff (using SequenceMatcher) is correctly wired through all code paths. Add to AUDIT_MAP.md
 - [x] AUDIT-8: Map the async task system — workers/tasks.py TaskQueue (Redis-backed with in-memory fallback) → AnalysisJob lifecycle (QUEUED→RUNNING→COMPLETED/FAILED) → frontend polls GET /documents/{id}/status. Identify any broken links. Add to AUDIT_MAP.md
-- [ ] AUDIT-9: Create a DISCONNECTED_FUNCTIONS.md listing every function that exists but is not reachable from any user action. For each one, write your best guess of where it should plug in based on its name, parameters, and the contract review workflow it seems to serve.
+- [x] AUDIT-9: Create a DISCONNECTED_FUNCTIONS.md listing every function that exists but is not reachable from any user action. For each one, write your best guess of where it should plug in based on its name, parameters, and the contract review workflow it seems to serve.
 
 ## PHASE 2: WIRE THE DOCUMENT ANALYSIS PIPELINE
 - [ ] ANALYZE-1: Verify document upload exists end-to-end: dashboard Documents.tsx upload button → POST /documents/upload → document stored in DB. If any link is broken, wire it.
