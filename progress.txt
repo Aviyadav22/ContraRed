@@ -85,3 +85,7 @@
 - Missing clause handling: generate_insert_only_ooxml() with InsertLocation.after
 - Word Add-in uses insertOoxml() for both violations (replace) and missing clauses (after)
 - No broken links. Pipeline is fully wired.
+
+## Iteration 8 — AUDIT-8: Async Task System
+**Task:** Map TaskQueue, AnalysisJob lifecycle, frontend polling.
+**What I learned:** TaskQueue uses Redis lists (or in-memory dict fallback). JobStatus: QUEUED→RUNNING→COMPLETED/FAILED. Frontend polls GET /documents/jobs/{job_id}. Fully wired.

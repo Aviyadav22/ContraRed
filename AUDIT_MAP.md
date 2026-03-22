@@ -552,3 +552,35 @@ Word Add-in (taskpane.ts)                    Backend (documents.py + redline_imp
 - Match confidence tracked: exact (1.0) > normalized > fuzzy (<1.0)
 
 **Status: Fully wired end-to-end. No broken links.**
+
+---
+
+## AUDIT-8: Async Task System (workers/tasks.py)
+
+### Architecture
+```
+POST /documents/analyze-async (documents.py)
+  → TaskQueue.enqueue(AnalysisJob) → 202 Accepted + job_id
+  → Background: analysis_pipeline.run() → stores results in Document
+  → Frontend polls: GET /documents/jobs/{job_id}
+  → TaskQueue.get_job_status() → { status, progress, results }
+```
+
+### Components
+- `JobStatus` enum: QUEUED → RUNNING → COMPLETED/FAILED
+- `AnalysisJob` dataclass: job_id, document_id, user_id, contract_text, playbook info
+- `TaskQueue` class: Redis-backed with in-memory fallback
+  - `enqueue()` → push to Redis list or in-memory dict
+  - `get_job_status()` → fetch from Redis hash or in-memory dict
+- `task_queue` singleton instance
+
+### Graceful Degradation
+- With Redis: uses Redis lists for queuing, Redis hashes for job state
+- Without Redis: in-memory dict stores jobs, async execution (no separate worker)
+
+### Frontend Integration
+- `POST /documents/analyze-async` in documents.py creates job and enqueues
+- `GET /documents/jobs/{job_id}` in documents.py polls status
+- Dashboard `BatchUpload.tsx` uses batch-analyze (similar pattern)
+
+**Status: Fully wired. Redis fallback works correctly.**
