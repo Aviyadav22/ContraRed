@@ -378,3 +378,56 @@ No service functions were found without at least one route calling them. All 37 
 
 **Orphaned components: NONE** — All 19 pages routed in App.tsx.
 **Notable gap:** ForgotPassword.tsx has a TODO — not wired to backend `/auth/forgot-password` endpoint.
+
+---
+
+## AUDIT-4: Word Add-in (2 core files)
+
+### api.ts — ContraRedAPI Class (28 public methods)
+
+**Auth (6):** `register`, `login`, `getCurrentUser`, `isLoggedIn`, `getUser`, `logout`
+**Document Analysis (7):** `listDocuments`, `generateRedlineZDR`, `analyzeWithAI`, `analyzeClause`, `researchClause`, `generateClause`, `generateFix`
+**Playbook CRUD (8):** `listPlaybooks`, `getPlaybook`, `createPlaybook`, `updatePlaybook`, `deletePlaybook`, `togglePlaybookPublish`, `addRule`, `updateRule`, `deleteRule`
+**Clause/Template (4):** `listClauses`, `createClause`, `listTemplates`, `downloadTemplate`
+**Utilities (3):** `exportReport`, `healthCheck`
+
+### taskpane.ts — Core Functions
+
+**Exported (5):** `scanDocument`, `highlightAIText`, `applyAIRedline`, `applyAllRedlines`, `exportReport`
+
+**Key Internal Functions:**
+| Function | What it does in Word | Called by |
+|----------|---------------------|-----------|
+| `handleLogin()` | Auth flow → show main panel | #loginBtn click |
+| `scanDocument()` | Full contract AI analysis → risk cards | #scanBtn click |
+| `scanSelection()` | Analyze selected text only | #scanSelectionBtn click |
+| `highlightAIText()` | Highlight risk clause in document (3-tier search) | Risk card Highlight button |
+| `applyAIRedline()` | Apply fix as Track Changes via insertOoxml | Risk card Apply button |
+| `applyAllRedlines()` | Batch-apply all unfixed redlines | #applyAllBtn click |
+| `undoRedlineFix()` | Revert applied Track Changes | Risk card Undo button |
+| `exportReport()` | Download DOCX risk report | #exportReportBtn click |
+| `toggleNegotiationMode()` | Enable accept/counter/escalate UI | #negotiationBtn click |
+| `createAIRedlineCard()` | Build risk card HTML with all buttons | displayAIResults() |
+| `findTextInDocument()` | Search doc with fuzzy/exact/regex | highlightAIText() |
+| `loadPlaybooks()` | Populate playbook dropdown | showMainPanel() |
+| `toggleTemplatePicker()` | Show/hide template library | #templateBtn click |
+| `applyTemplate()` | Insert template text into document | Template selection |
+
+### Key Call Chains
+1. **Scan:** `#scanBtn` → `scanDocument()` → `api.analyzeWithAI()` → `displayAIResults()` → `renderRedlineList()`
+2. **Fix:** Risk card → `api.generateFix()` → preview diff → `applyAIRedline()` → `api.generateRedlineZDR()` → `insertOoxml()` → Track Changes in Word
+3. **Negotiate:** `#negotiationBtn` → `toggleNegotiationMode()` → Accept/Counter/Escalate buttons → `recordNegotiationDecision()`
+
+### API Methods Not Called from taskpane.ts
+| Method | Status |
+|--------|--------|
+| `getCurrentUser()` | Not called — user info from cached `getUser()` |
+| `generateClause()` | Not called — no UI for clause generation in add-in |
+| `getPlaybook()` | Not called — detail view not implemented |
+| `updatePlaybook()` | Not called — edit not implemented in add-in |
+| `deletePlaybook()` | Not called — delete not implemented in add-in |
+| `togglePlaybookPublish()` | Not called — publish toggle not in add-in |
+| `addRule/updateRule/deleteRule()` | Not called — rule CRUD not in add-in |
+| `listClauses/createClause()` | Not called — clause library not in add-in |
+
+**Note:** These API methods exist because the add-in codebase shares the API client pattern with the dashboard. They're available for future add-in features but playbook/clause management is intentionally dashboard-only.

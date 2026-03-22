@@ -41,3 +41,14 @@
 - Analytics.tsx has 4 sub-tabs (overview, portfolio, team, reports) -- very feature-rich.
 - All components use @tanstack/react-query for data fetching -- consistent pattern.
 - useFocusTrap hook used for modal accessibility in Playbooks.tsx.
+
+## Iteration 4 — AUDIT-4: Word Add-in Functions
+**Task:** Map all api.ts methods and taskpane.ts functions.
+**Files Changed:** AUDIT_MAP.md (appended), REFACTOR_PRD.md (checked off)
+**What I learned:**
+- api.ts has 28 public methods. 10 are not called from taskpane.ts (playbook CRUD, clause library, getCurrentUser, generateClause). These are shared with dashboard pattern but intentionally dashboard-only features.
+- taskpane.ts has 5 exported functions + ~30 internal functions. All are called via event handlers or other functions.
+- The scan flow is: scanDocument() -> api.analyzeWithAI() -> displayAIResults() -> renderRedlineList() -> createAIRedlineCard()
+- The fix flow is: Generate Fix button -> api.generateFix() -> word diff preview -> Apply button -> api.generateRedlineZDR() -> insertOoxml()
+- Negotiation mode is fully wired: toggleNegotiationMode() -> accept/counter/escalate buttons -> recordNegotiationDecision()
+- The bug: exportReport() uses this.accessToken which doesn't exist. Should use cookie-based auth. Fix in Phase 3.
