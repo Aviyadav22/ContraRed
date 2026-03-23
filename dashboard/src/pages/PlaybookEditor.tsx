@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import {
-    getPlaybook, addRule, deleteRule,
+    getPlaybook, addRule, updateRule, deleteRule,
     listTiers, upsertTiers,
     listConditions, createCondition, deleteCondition, addOverride, deleteOverride,
     listDependencies, createDependency, deleteDependency,
@@ -87,6 +87,7 @@ export default function PlaybookEditor() {
         detection_patterns: [],
     });
     const [patternInput, setPatternInput] = useState('');
+    const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
     const [expandedRuleId, setExpandedRuleId] = useState<string | null>(null);
     const [tierDrafts, setTierDrafts] = useState<Record<number, { position_text: string; guidance_notes: string; risk_level_at_tier: string }>>({});
 
@@ -178,6 +179,19 @@ export default function PlaybookEditor() {
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['playbook', id] }),
     });
 
+    const updateRuleMutation = useMutation({
+        mutationFn: ({ ruleId, data }: { ruleId: string; data: Partial<CreateRuleData> }) =>
+            updateRule(id!, ruleId, data),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['playbook', id] });
+            setShowAddRule(false);
+            setEditingRuleId(null);
+            setNewRule({ clause_type: '', primary_position: '', risk_level: 'yellow', match_type: 'exact', is_deal_breaker: false, detection_patterns: [] });
+            setPatternInput('');
+        },
+        onError: () => alert('Failed to update rule.'),
+    });
+
     const upsertTiersMutation = useMutation({
         mutationFn: (ruleId: string) => {
             const tiersPayload = [1, 2, 3, 4].map(level => ({
@@ -191,6 +205,7 @@ export default function PlaybookEditor() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['tiers', id, expandedRuleId] });
         },
+        onError: () => alert('Failed to save tiers. Please try again.'),
     });
 
     const createConditionMutation = useMutation({
@@ -212,11 +227,13 @@ export default function PlaybookEditor() {
             setShowAddCondition(false);
             setNewCondition({ name: '', description: '', condition_type: 'counterparty_type', operator: 'equals', condition_value: '{}', is_active: true, priority: 0 });
         },
+        onError: () => alert('Failed to create condition.'),
     });
 
     const deleteConditionMutation = useMutation({
         mutationFn: (conditionId: string) => deleteCondition(id!, conditionId),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['conditions', id] }),
+        onError: () => alert('Failed to delete condition.'),
     });
 
     const addOverrideMutation = useMutation({
@@ -259,11 +276,13 @@ export default function PlaybookEditor() {
             setShowAddDep(false);
             setNewDep({ source_rule_id: '', target_rule_id: '', trigger_condition: 'source_is_red', effect: 'escalate_risk', effect_params: '{}', is_active: true });
         },
+        onError: () => alert('Failed to create dependency.'),
     });
 
     const deleteDepMutation = useMutation({
         mutationFn: (depId: string) => deleteDependency(id!, depId),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['dependencies', id] }),
+        onError: () => alert('Failed to delete dependency.'),
     });
 
     const createSnapshotMutation = useMutation({
@@ -273,6 +292,7 @@ export default function PlaybookEditor() {
             setShowCreateSnapshot(false);
             setSnapshotSummary('');
         },
+        onError: () => alert('Failed to create snapshot.'),
     });
 
     const rollbackMutation = useMutation({
@@ -281,6 +301,7 @@ export default function PlaybookEditor() {
             queryClient.invalidateQueries({ queryKey: ['playbook', id] });
             queryClient.invalidateQueries({ queryKey: ['versions', id] });
         },
+        onError: () => alert('Rollback failed. Your playbook was not changed.'),
     });
 
     // ══════════════════════════════════════════════════════════════════════
@@ -385,7 +406,7 @@ export default function PlaybookEditor() {
             {/* Add Rule Panel */}
             {showAddRule && (
                 <div className="bg-white rounded-xl border border-slate-200 p-7 mb-6">
-                    <h3 className="text-base font-bold text-slate-900 mb-5">New Detection Rule</h3>
+                    <h3 className="text-base font-bold text-slate-900 mb-5">{editingRuleId ? 'Edit Rule' : 'New Detection Rule'}</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label className={labelClass}>Clause Type</label>
@@ -480,17 +501,25 @@ export default function PlaybookEditor() {
                     </div>
                     <div className="flex justify-end gap-3 mt-6 pt-5 border-t border-slate-100">
                         <button
-                            onClick={() => setShowAddRule(false)}
+                            onClick={() => { setShowAddRule(false); setEditingRuleId(null); setNewRule({ clause_type: '', primary_position: '', risk_level: 'yellow', match_type: 'exact', is_deal_breaker: false, detection_patterns: [] }); setPatternInput(''); }}
                             className="px-5 py-2.5 text-sm font-medium text-slate-500 bg-transparent border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
                         >
                             Cancel
                         </button>
                         <button
-                            onClick={() => addRuleMutation.mutate(newRule)}
-                            disabled={!newRule.clause_type || !newRule.primary_position || addRuleMutation.isPending}
+                            onClick={() => {
+                                if (editingRuleId) {
+                                    updateRuleMutation.mutate({ ruleId: editingRuleId, data: newRule });
+                                } else {
+                                    addRuleMutation.mutate(newRule);
+                                }
+                            }}
+                            disabled={!newRule.clause_type || !newRule.primary_position || addRuleMutation.isPending || updateRuleMutation.isPending}
                             className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors disabled:opacity-50"
                         >
-                            {addRuleMutation.isPending ? 'Adding...' : 'Add Rule'}
+                            {editingRuleId
+                                ? (updateRuleMutation.isPending ? 'Saving...' : 'Save Rule')
+                                : (addRuleMutation.isPending ? 'Adding...' : 'Add Rule')}
                         </button>
                     </div>
                 </div>
@@ -523,6 +552,19 @@ export default function PlaybookEditor() {
                                         tiers={isExpanded ? tiers : undefined}
                                         tierDrafts={tierDrafts}
                                         onToggleExpand={() => handleExpandRule(rule.id)}
+                                        onEdit={() => {
+                                            setEditingRuleId(rule.id);
+                                            setNewRule({
+                                                clause_type: rule.clause_type,
+                                                primary_position: rule.primary_position,
+                                                risk_level: rule.risk_level,
+                                                match_type: rule.match_type,
+                                                is_deal_breaker: rule.is_deal_breaker,
+                                                detection_patterns: [...rule.detection_patterns],
+                                            });
+                                            setPatternInput('');
+                                            setShowAddRule(true);
+                                        }}
                                         onDelete={() => {
                                             if (confirm('Delete this rule?')) {
                                                 deleteRuleMutation.mutate(rule.id);
@@ -1188,6 +1230,7 @@ interface RuleRowProps {
     tiers: RuleTier[] | undefined;
     tierDrafts: Record<number, { position_text: string; guidance_notes: string; risk_level_at_tier: string }>;
     onToggleExpand: () => void;
+    onEdit: () => void;
     onDelete: () => void;
     onSyncTiers: () => void;
     onTierChange: (level: number, field: string, value: string) => void;
@@ -1197,7 +1240,7 @@ interface RuleRowProps {
 
 function RuleRow({
     rule, riskLevel, isExpanded, tiersLoading, tiers, tierDrafts,
-    onToggleExpand, onDelete, onSyncTiers, onTierChange, onSaveTiers, tiersSaving,
+    onToggleExpand, onEdit, onDelete, onSyncTiers, onTierChange, onSaveTiers, tiersSaving,
 }: RuleRowProps) {
     // Sync tier drafts when tiers finish loading
     const prevTiersRef = useState<RuleTier[] | undefined>(undefined);
@@ -1246,6 +1289,12 @@ function RuleRow({
                     </div>
                 </td>
                 <td className="px-6 py-4 text-right">
+                    <button
+                        onClick={(e) => { e.stopPropagation(); onEdit(); }}
+                        className="text-[13px] font-semibold text-blue-600 bg-transparent border-none cursor-pointer hover:text-blue-700 mr-3"
+                    >
+                        Edit
+                    </button>
                     <button
                         onClick={(e) => { e.stopPropagation(); onDelete(); }}
                         className="text-[13px] font-semibold text-red-600 bg-transparent border-none cursor-pointer hover:text-red-700"

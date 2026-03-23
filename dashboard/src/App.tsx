@@ -2,6 +2,7 @@ import React, { Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { isAuthenticated, isAdmin } from '@/api/client';
+import ErrorBoundary from '@/components/ErrorBoundary';
 
 const Landing = React.lazy(() => import('@/pages/Landing'));
 const Login = React.lazy(() => import('@/pages/Login'));
@@ -60,6 +61,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Suspense fallback={<div className="flex flex-col items-center justify-center min-h-screen" style={{ backgroundColor: '#FAFAF9' }}><div className="text-2xl font-bold mb-4" style={{ color: '#C0392B' }}>ContraRed</div><div className="animate-spin rounded-full h-8 w-8 border-2 border-slate-300" style={{ borderTopColor: '#C0392B' }}></div></div>}>
+          <ErrorBoundary>
           <Routes>
             {/* Public routes */}
             <Route path="/" element={<Landing />} />
@@ -88,6 +90,7 @@ export default function App() {
             {/* Catch-all 404 */}
             <Route path="*" element={<NotFound />} />
           </Routes>
+          </ErrorBoundary>
         </Suspense>
       </BrowserRouter>
     </QueryClientProvider>
