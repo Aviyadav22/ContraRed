@@ -1501,3 +1501,133 @@ detection_mode = "keywords_only":
 2. If new AI fields are empty, system falls back to regex-only behavior
 3. Version snapshots capture whatever fields exist — versioning is schema-agnostic (confirmed in PLAYBOOK-4)
 4. `from_playbook_rules()` checks for new fields before old ones
+
+## Iteration 32 — PLAYBOOK-8: Web Research + AI-Native Playbook Proposal
+**Task:** Web search for industry patterns, then propose tiered evaluation + backward compatibility + UX.
+
+### Industry Research Findings
+
+**1. AI-Generated Negotiation Playbooks (2026 trend)**
+Analysts predict zero-touch contracting for low-risk agreements, surgical redlining at 95% accuracy, and AI-generated negotiation playbooks matching firm style. Harvey's Word Add-In runs "Playbooks" using natural language prompts — directly relevant to ContraRed.
+
+**2. LLM + Rule Engine Hybrid (emerging pattern)**
+Brain.co proposes "LLM-Generated Rules Engines" — LLMs transform unstructured documents into MECE rule sets, providing accountability trails for regulated industries. This validates ContraRed's tiered approach (regex pre-filter + AI evaluation).
+
+**3. Multi-Agent Legal Systems**
+Research on multi-agent LLM systems for legal tasks shows agents decomposing contract review into specialized sub-tasks. ContraRed's 5-stage pipeline aligns with this but isn't yet agent-based.
+
+**4. Self-Improving Systems**
+Leading platforms feature self-improving systems that refine clause suggestions and risk detection over time based on user feedback. ContraRed doesn't yet have a feedback loop.
+
+### Comprehensive Proposal
+
+#### 1. Tiered Evaluation Architecture
+
+```
+┌─────────────────────────────────────────────────┐
+│ TIER 1: Keyword Pre-Filter (< 100ms)            │
+│ • Run regex detection_patterns if present        │
+│ • Mark candidate clauses for AI evaluation       │
+│ • Skip this tier if detection_mode = "ai_only"   │
+└──────────────────────┬──────────────────────────┘
+                       ▼
+┌─────────────────────────────────────────────────┐
+│ TIER 2: AI Evaluation (2-5 seconds)              │
+│ • Inject risk_description + signals into prompt  │
+│ • Evaluate each candidate against rule criteria  │
+│ • If no Tier 1 candidates, evaluate full contract│
+│ • Skip this tier if detection_mode = "keywords"  │
+└──────────────────────┬──────────────────────────┘
+                       ▼
+┌─────────────────────────────────────────────────┐
+│ TIER 3: Verification (< 500ms)                   │
+│ • HallucinationGuard verifies AI quotes          │
+│ • ConfidenceScorer applies 5-factor scoring      │
+│ • Jurisdiction overrides applied                 │
+│ • Conditions engine applies deal-context rules   │
+└─────────────────────────────────────────────────┘
+```
+
+**Benefits:**
+- Tier 1 reduces AI token usage by 60-80% (only flagged clauses go to AI)
+- Tier 2 catches risks that regex misses (novel phrasing, contextual risks)
+- Tier 3 maintains quality gates regardless of detection method
+
+#### 2. Backward Compatibility Strategy
+
+**Rule 1: Never break existing playbooks.**
+- All new fields are nullable with sensible defaults
+- `detection_mode` defaults to "ai_with_keywords" — existing regex patterns continue working
+- If `risk_description` is empty, system falls back to regex-only behavior
+- Version snapshots are schema-agnostic (confirmed in PLAYBOOK-4)
+
+**Rule 2: Gradual migration, not big bang.**
+- Phase 1: Add columns, no behavior change
+- Phase 2: Auto-populate `risk_description` from existing rules using AI (one-time batch job)
+- Phase 3: New rules created via dashboard use AI-native fields by default
+- Phase 4: Old regex-only rules remain indefinitely — no forced migration
+
+**Rule 3: Both paths produce identical output.**
+- Whether a risk is found by regex or AI, the output is the same `RuleMatch` object
+- Confidence scoring adjusts based on detection path but the UI doesn't distinguish
+- Users don't need to know or care about the detection method
+
+#### 3. Dashboard UX Proposal
+
+**Current flow:**
+```
+Clause Type [text] → Risk Level [dropdown] → Match Type [dropdown]
+→ Detection Patterns [chip input] → Suggested Fix [text]
+```
+
+**Proposed flow:**
+```
+┌─────────────────────────────────────────────────┐
+│ STEP 1: What are you looking for?               │
+│                                                  │
+│ Clause Type: [dropdown from taxonomy]            │
+│ Risk Description: [textarea]                     │
+│   "Describe what makes this clause risky..."     │
+│                                                  │
+│ Example: "Look for liability clauses where       │
+│ the vendor bears unlimited financial exposure    │
+│ with no cap on aggregate damages"               │
+└──────────────────────┬──────────────────────────┘
+                       ▼
+┌─────────────────────────────────────────────────┐
+│ STEP 2: What should good look like?              │
+│                                                  │
+│ Acceptable Position: [textarea]                  │
+│   "Describe what a good clause looks like..."    │
+│                                                  │
+│ Fallback Position: [textarea]                    │
+│   "Minimum you'd accept..."                     │
+│                                                  │
+│ Risk Level: [RED/YELLOW/GREEN toggle]            │
+│ ☐ Deal Breaker                                  │
+└──────────────────────┬──────────────────────────┘
+                       ▼
+┌─────────────────────────────────────────────────┐
+│ STEP 3: Advanced (optional, collapsed)           │
+│                                                  │
+│ Detection Mode: [AI Only │ AI+Keywords │ Legacy] │
+│ Keywords: [chip input — only if AI+Keywords]     │
+│ Example Clauses: [link from ClauseLibrary]       │
+│ Jurisdiction Notes: [text]                       │
+└─────────────────────────────────────────────────┘
+```
+
+**Key UX principles:**
+- Natural language FIRST, keywords OPTIONAL
+- Step-by-step wizard reduces cognitive load
+- Advanced settings collapsed by default
+- ClauseLibrary integration for examples
+- Live preview: "AI would flag THIS clause because..."
+
+### Sources
+- [Ten AI Predictions for 2026 — Legal](https://natlawreview.com/article/ten-ai-predictions-2026-what-leading-analysts-say-legal-teams-should-expect)
+- [Legal AI's Next Phase: Built With Lawyers](https://natlawreview.com/article/legal-ais-next-phase-built-lawyers-measured-practice)
+- [LLM-Generated Rules Engines for Regulated Industries](https://brain.co/blog/llm-generated-rules-engines-executable-if-then-logic-for-llm-explainability-in-regulated-industries)
+- [Best AI Contract Review Tools 2026](https://www.legalfly.com/post/9-best-ai-contract-review-software-tools-for-2025)
+- [Harvey Legal AI — Playbooks](https://www.spellbook.legal/learn/legal-ai-tools)
+- [Multi-Agent LLM Legal Systems](https://www.oaepublish.com/articles/aiagent.2025.06)
