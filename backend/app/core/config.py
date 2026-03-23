@@ -39,7 +39,10 @@ class Settings(BaseSettings):
             )
         return v
 
-    # Redis
+    # Redis — STRONGLY RECOMMENDED for production
+    # Enables: AI result caching (20-40% cost savings), token blacklist persistence
+    # Free tier: Upstash (https://upstash.com) — $0/month for 10K commands/day
+    # Set: REDIS_URL=redis://default:password@hostname:port
     REDIS_URL: str = ""
 
     # JWT Authentication

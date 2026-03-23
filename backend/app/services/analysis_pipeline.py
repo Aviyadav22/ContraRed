@@ -338,6 +338,10 @@ class AnalysisPipeline:
         if not self._is_likely_contract(contract_text):
             warnings.append("⚠️ This document may not be a legal agreement. Analysis results should be reviewed with this in mind.")
 
+        # Check if document looks like a partial/fragment
+        if self._is_likely_fragment(contract_text):
+            warnings.append("⚠️ This document appears to be a fragment or partial section. 'Missing clause' warnings may be inaccurate — clauses could exist in the full document.")
+
         # ---- Stage 1: EXTRACTION (deterministic, CPU-bound → thread pool) ----
         try:
             s1_start = time.monotonic()
@@ -928,6 +932,20 @@ class AnalysisPipeline:
         text_lower = text[:5000].lower()
         matches = sum(1 for pattern in indicators if re.search(pattern, text_lower))
         return matches >= 2  # At least 2 different indicator groups
+
+    @staticmethod
+    def _is_likely_fragment(text: str) -> bool:
+        """Detect if text is likely a document fragment rather than a complete contract."""
+        text_lower = text.lower().strip()
+        # Fragments typically lack standard contract elements
+        has_parties = bool(re.search(r'\b(between|party|parties|agreement)\b', text_lower[:500]))
+        has_signature = bool(re.search(r'\b(witness|signed|executed|signature)\b', text_lower[-500:]))
+        has_definitions = bool(re.search(r'\bdefinitions?\b', text_lower[:2000]))
+        # If missing most structural elements AND short, likely a fragment
+        structural_score = sum([has_parties, has_signature, has_definitions])
+        if structural_score <= 1 and len(text) < 5000:
+            return True
+        return False
 
     @staticmethod
     def _find_cross_references(
