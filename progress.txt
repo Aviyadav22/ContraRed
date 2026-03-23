@@ -642,3 +642,91 @@ Many Word documents use **bold** or __underline__ to indicate defined terms with
 - **ENHANCE**: Fix inline definition boundary, increase term name length limit
 - **REPLACE**: Nothing — defined term extraction is a textbook regex use case
 - **Integration with AI is correct**: Resolver output feeds into AI prompts via `to_prompt_context()`, giving AI the definitions it needs for contextual analysis
+
+## Iteration 20 — REGEX-6: jurisdiction_detector.py Full Audit (1203 lines)
+**Task:** Read all 1203 lines of `backend/app/services/jurisdiction_detector.py`.
+**File:** `backend/app/services/jurisdiction_detector.py` (1203 lines)
+
+### Architecture Overview
+Three major components:
+1. **JurisdictionProfiles** (lines 19-630): 11 jurisdiction profiles with detailed legal context
+2. **JurisdictionDetector** (lines 776-926): Regex-based detection of governing law from contract text
+3. **Jurisdiction Rule Overrides** (lines 930-1198): Per-jurisdiction risk adjustments for specific rules
+
+### Jurisdiction Profiles (11 total)
+India (IN), Delaware (DE-US), New York (NY-US), California (CA-US), England & Wales (GB-EW), Singapore (SG), UAE-DIFC (AE-DIFC), UAE Onshore (AE), Germany (DE), France (FR), Hong Kong (HK), Australia (AU), Japan (JP)
+
+**Wait — that's 13 profiles, not 11.** Docstring says "10+" which is technically accurate but undersells.
+
+Each profile contains:
+- Key statutes (4-8 per jurisdiction)
+- Indemnification standard
+- Non-compete enforceability
+- Arbitration framework
+- Data protection law
+- Special considerations (4-5 per jurisdiction)
+- Legal system type (common_law/civil_law/hybrid)
+
+**Quality assessment of legal content**: EXCELLENT. The profiles contain accurate, specific legal citations (statute numbers, case names, section references). This is high-value content that would be expensive to replicate. Examples:
+- India S.27 non-compete void
+- California BPC §16600
+- Germany HGB §74-75a Karenzentschädigung
+- Cavendish v Makdessi [2015] UKSC 67
+
+### Detection Patterns (8 patterns, lines 714-755)
+1. `governed by the laws of [X]`
+2. `subject to [X] law`
+3. `jurisdiction of [X]`
+4. `arbitration in [X]`
+5. `laws of the State/Commonwealth/Republic/Kingdom of [X]`
+6. `construed in accordance with [X] law`
+7. `under the laws of [X]`
+8. `[X] law shall apply`
+
+**Alias map** (lines 636-707): 65+ aliases mapping city/country/state names to profile codes.
+
+### Classification: KEEP
+
+**This is a model regex use case.** Governing law clauses follow EXTREMELY predictable patterns ("governed by the laws of [X]"). Regex is faster, cheaper, and more reliable than AI for extracting the jurisdiction NAME. The VALUE is in the jurisdiction profiles that inject legal context into AI prompts.
+
+### Critical Findings
+
+**1. Alias collisions (lines 674, 678)**
+- "dubai" → AE-DIFC, but "uae" → AE (onshore). A contract saying "governed by the laws of Dubai" would get DIFC law, but the contract might mean onshore Dubai (non-DIFC). This is a legal trap — DIFC and onshore Dubai have completely different legal systems (common law vs civil law).
+- "adgm" → AE (onshore). This is WRONG. ADGM (Abu Dhabi Global Market) is a common-law free zone like DIFC, NOT onshore UAE civil law. Should have its own profile or map to a common-law profile.
+
+**2. Default jurisdiction is India (line 789)**
+`default_jurisdiction: str = "IN"` — when no governing law is detected, ContraRed assumes Indian law. This is reasonable for an India-based startup's initial market, but could mislead international users. The confidence=0.3 is correctly low, but the default still injects Indian-specific legal context into AI prompts.
+
+**3. Substring matching is overly greedy (lines 907-914)**
+`_resolve_name()` does substring matching: `if alias in lower or lower in alias`. This means:
+- "new" would match "new york" and "new delhi" and "new south wales" — first match wins
+- "german" would match "germany" ✓
+- But "south" would match "new south wales" → Australia, even if the contract mentions "South Africa"
+These short-string collisions could cause incorrect jurisdiction detection.
+
+**4. Missing major jurisdictions**
+Not covered: Canada (Ontario/BC), Texas, Massachusetts, China (PRC), South Korea, Brazil, South Africa, Nigeria, Saudi Arabia, Netherlands, Switzerland, Ireland. For enterprise clients like Intellect Design Arena who deal with global contracts, this is a gap.
+
+**5. Jurisdiction rule overrides are comprehensive (lines 943-1130)**
+8 jurisdictions with overrides, total 25 rule overrides. Highlights:
+- India: non_compete → GREEN (S.27 void), 8 overrides
+- California: non_compete → SUPPRESS (BPC §16600), 3 overrides
+- Germany: unlimited_liability → RED (AGB control), 3 overrides
+- England: unlimited_liability → RED (UCTA S.2), 3 overrides
+
+**6. `apply_jurisdiction_overrides` mutates input (lines 1147-1198)**
+The function modifies RuleMatch objects IN PLACE (`match.risk_level = new_risk`, `match.primary_position = ov.primary_position`). This is a side-effect pattern that could cause bugs if the same matches are used elsewhere after being mutated. Should return copies instead.
+
+**7. `to_prompt_context()` is well-designed (lines 42-65)**
+Generates structured text for AI prompt injection with key statutes, legal standards, and special considerations. This is the correct architecture — feed the AI domain knowledge it wouldn't otherwise have about jurisdiction-specific rules.
+
+**8. Pattern greedy match `.{3,80}?` (line 717)**
+The lazy quantifier `?` helps, but the pattern `(.{3,80}?)` after "laws of" could match partial phrases: "governed by the laws of the State of New York and the federal laws of the United States" might only capture "the State of New" due to the comma/period/semicolon boundary.
+
+### Verdict: KEEP
+- **KEEP**: All detection patterns, jurisdiction profiles, alias map, rule overrides
+- **FIX**: ADGM alias mapping (wrong jurisdiction), substring matching greedy bug
+- **ENHANCE**: Add missing major jurisdictions (Canada, China, Switzerland, Netherlands)
+- **REPLACE**: Nothing — jurisdiction detection from standard legal language is a perfect regex task
+- **The jurisdiction profiles are extremely high-value content** — accurate legal citations that would cost significant legal research to recreate
