@@ -149,7 +149,7 @@ class AIAnalyzeRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=500000)
     playbook_id: Optional[str] = None
     filename: Optional[str] = Field(default="untitled.docx", max_length=255)
-    party_side: Optional[str] = Field(default="buyer", pattern=r"^(buyer|seller|neutral)$")
+    party_side: Optional[str] = Field(default="seller", pattern=r"^(buyer|seller|neutral)$")
 
 
 class AIRedlineItem(BaseModel):
@@ -692,6 +692,7 @@ async def analyze_full_ai(
     # Load playbook rules if specified
     playbook_rules = []
     playbook_name = "Default"
+    playbook = None
 
     if body.playbook_id:
         try:
@@ -701,6 +702,11 @@ async def analyze_full_ai(
                 playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
         except Exception as e:
             logger.error("Error loading playbook: %s", e)
+
+    # Use playbook's party_side if set and user didn't explicitly choose
+    effective_party_side = body.party_side or "seller"
+    if not body.party_side and playbook and hasattr(playbook, 'party_side') and playbook.party_side:
+        effective_party_side = playbook.party_side
 
     try:
         # Sanitize playbook name before passing to AI
@@ -715,7 +721,7 @@ async def analyze_full_ai(
                     contract_text=body.text,
                     playbook_rules=playbook_rules,
                     playbook_name=playbook_name,
-                    party_side=body.party_side or "buyer",
+                    party_side=effective_party_side,
                 ),
                 timeout=120.0,
             )

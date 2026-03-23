@@ -220,7 +220,7 @@ class GeminiAnalyzer:
         playbook_rules: Optional[List[Dict]] = None,
         playbook_name: str = "Default",
         jurisdiction_override: Optional[str] = None,
-        party_side: str = "buyer",
+        party_side: str = "seller",
     ) -> AIAnalysisResult:
         """
         Perform full AI analysis of a contract.
@@ -258,7 +258,10 @@ class GeminiAnalyzer:
         rules_text = self.format_playbook_rules(playbook_rules or [])
 
         # Sanitize user-supplied inputs before prompt interpolation
+        truncation_warning = None
         safe_contract_text = _sanitize_for_prompt(contract_text, max_length=200000)
+        if len(contract_text) > 200000:
+            truncation_warning = f"Document truncated: Only the first ~{200000 // 1000}K characters ({200000 // 4000} pages) were analyzed. Later sections may contain unreviewed risks."
         safe_playbook_name = _sanitize_for_prompt(playbook_name, max_length=200)
 
         # --- Phase 4: Build V2 structured prompts ---
@@ -274,8 +277,8 @@ class GeminiAnalyzer:
         )
 
         try:
-            # Combine system prompt and user prompt
-            full_prompt = f"{system_prompt}\n\n{user_prompt}"
+            # Use clear delimiters for stronger prompt hierarchy separation
+            full_prompt = f"<SYSTEM_INSTRUCTIONS>\n{system_prompt}\n</SYSTEM_INSTRUCTIONS>\n\n<USER_REQUEST>\n{user_prompt}\n</USER_REQUEST>"
 
             # Run in thread pool since Gemini SDK is sync, with timeout
             loop = asyncio.get_running_loop()
@@ -306,6 +309,10 @@ class GeminiAnalyzer:
 
             # Parse JSON from response
             result = self._parse_response(response_text)
+
+            # Attach truncation warning if document was truncated
+            if truncation_warning:
+                result.executive_summary.insert(0, truncation_warning)
 
             # Attach jurisdiction metadata
             result.jurisdiction_code = jurisdiction_result.detected_jurisdiction
@@ -497,6 +504,7 @@ class GeminiAnalyzer:
         surrounding_context: str = "",
         playbook_rules: Optional[List[Dict[str, Any]]] = None,
         jurisdiction_override: Optional[str] = None,
+        defined_terms: str = "",
     ) -> Dict[str, Any]:
         """
         Generate exact replacement/insertion text for a specific risk.
@@ -542,6 +550,7 @@ class GeminiAnalyzer:
             jurisdiction_name=j_name,
             surrounding_context=safe_context,
             playbook_guidance=playbook_guidance,
+            defined_terms=defined_terms,
         )
 
         try:

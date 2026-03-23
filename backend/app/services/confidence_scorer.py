@@ -241,16 +241,16 @@ class ConfidenceScorer:
         Factor 2: Rule Corroboration (25%).
 
         Both regex AND AI agree -> 1.0
-        Only AI flagged -> 0.5 (plausible but not confirmed by rules)
-        Only regex matched -> 0.6 (pattern exists, AI didn't flag = maybe benign)
+        Only AI flagged -> 0.7 (AI-only findings should not be penalized heavily)
+        Only regex matched -> 0.5 (pattern exists, AI didn't flag = maybe benign)
         Neither -> 0.0
         """
         if regex_matched and ai_flagged:
             return 1.0
         if ai_flagged and not regex_matched:
-            return 0.5
+            return 0.7  # AI-only findings should not be penalized heavily
         if regex_matched and not ai_flagged:
-            return 0.6
+            return 0.5  # regex without AI confirmation should be suspicious
         return 0.0
 
     @staticmethod

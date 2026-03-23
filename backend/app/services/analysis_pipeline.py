@@ -302,7 +302,7 @@ class AnalysisPipeline:
         contract_text: str,
         playbook_rules: Optional[List[Dict[str, Any]]] = None,
         playbook_name: str = "Default",
-        party_side: str = "buyer",
+        party_side: str = "seller",
     ) -> PipelineResult:
         """
         Run the full 5-stage pipeline.
@@ -680,7 +680,7 @@ class AnalysisPipeline:
         classification: PipelineClassificationResult,
         playbook_rules: Optional[List[Dict[str, Any]]],
         playbook_name: str,
-        party_side: str = "buyer",
+        party_side: str = "seller",
     ) -> Tuple[List[RawRedline], List[str], int]:
         """
         Full AI analysis using GeminiAnalyzer.
@@ -1083,6 +1083,7 @@ class AnalysisPipeline:
         surrounding_context: str = "",
         playbook_rules: Optional[List[Dict]] = None,
         jurisdiction_override: Optional[str] = None,
+        defined_terms: str = "",
     ) -> Dict[str, Any]:
         """Generate exact replacement text via the unified pipeline.
 
@@ -1096,6 +1097,7 @@ class AnalysisPipeline:
             surrounding_context=surrounding_context,
             playbook_rules=playbook_rules,
             jurisdiction_override=jurisdiction_override,
+            defined_terms=defined_terms,
         )
 
     async def research_clause(
