@@ -812,3 +812,98 @@ Both files are **textbook KEEP** — text normalization and structural extractio
 1. **Table content not extracted from DOCX** (structure_extractor.py line 90) — enterprise contracts with fee tables, SLA matrices, scope tables will have those sections invisible to analysis. P1 issue.
 2. **Smart quote normalization vs defined_terms_resolver** — potential pattern mismatch if pipeline normalization order changes. Low risk currently but fragile.
 3. **`import re` inside method** (structure_extractor.py line 248) — cosmetic anti-pattern.
+
+## Iteration 22 — REGEX-8: confidence_scorer.py Full Audit (339 lines)
+**Task:** Read all 339 lines (not "250+" as PRD states) of `backend/app/services/confidence_scorer.py`. Document the scoring formula and the regex+AI bias.
+**File:** `backend/app/services/confidence_scorer.py` (339 lines)
+
+### Architecture Overview
+5-factor weighted scoring model for every AI-generated redline:
+
+| Factor | Weight | Source |
+|---|---|---|
+| Text Verification | 30% | HallucinationGuard match confidence |
+| Rule Corroboration | 25% | Did regex AND AI both flag this? |
+| Playbook Alignment | 20% | How specific is the triggering playbook rule? |
+| Model Confidence | 15% | AI's self-reported certainty |
+| Cross-References | 10% | Do related rules corroborate? |
+
+**Output levels**: HIGH (≥0.75), MEDIUM (0.50-0.74), LOW (<0.50)
+
+### The Regex+AI Bias — Detailed Analysis
+
+**Factor 2: Rule Corroboration (lines 238-254)** — This is the core of the PRD's concern:
+
+```
+regex + AI agree  → 1.0
+AI only           → 0.5
+regex only        → 0.6
+neither           → 0.0
+```
+
+**The bias**: AI-only findings get 0.5 (50%), while regex+AI gets 1.0. This means:
+- **Impact**: The 25% weight on this factor means AI-only findings lose 0.25 × 0.5 = **0.125 points** (12.5%) compared to regex+AI findings.
+- **Real example**: An AI finding a novel risk not in any regex pattern starts with a 0.125 penalty. If text verification is high (0.99) and model confidence is high (0.85), the total score would be: 0.30×0.99 + 0.25×0.5 + 0.20×0.3 + 0.15×0.85 + 0.10×0.3 = 0.297 + 0.125 + 0.06 + 0.1275 + 0.03 = **0.6395** → MEDIUM.
+- **With regex corroboration**, same finding: 0.297 + 0.25 + 0.06 + 0.1275 + 0.03 = **0.7645** → HIGH.
+- **The gap: 0.125 points separates MEDIUM from HIGH** for identical AI quality.
+
+**Is this bias justified?**
+- **Argument FOR**: Regex corroboration is a positive signal. If both systems agree, confidence should be higher.
+- **Argument AGAINST**: In an AI-first system, the AI may detect risks that NO regex covers (e.g., a novel force majeure carve-out, an unusual IP provision). Penalizing AI-only findings means novel, legitimate risks get lower visibility in the UI (collapsed by default at LOW, shown with verification badge at MEDIUM).
+- **Recommendation**: Change AI-only from 0.5 to 0.7. The corroboration bonus should be a BOOST for regex+AI agreement, not a PENALTY for AI-only findings.
+
+### Other Factor Analysis
+
+**Factor 1: Text Verification (lines 228-236)**
+Direct pass-through of HallucinationGuard confidence. Clean and correct. This is the most important factor at 30% weight — ensures the AI's quoted text actually exists in the contract.
+
+**Factor 3: Playbook Alignment (lines 256-287)**
+Scoring logic:
+- No playbook rule → 0.3 (baseline)
+- Has primary_position (>10 chars) → +0.3
+- Has fallback_position (>10 chars) → +0.15
+- Is deal_breaker → +0.1
+- Has verification_prompt (>10 chars) → +0.15
+- **Maximum: 1.0** (0.3 + 0.3 + 0.15 + 0.1 + 0.15)
+
+**Issue**: The `len(str(primary)) > 10` check is too low. A primary_position of "Fix this" (8 chars) wouldn't count, but "Fix this now" (12 chars) would. Both are equally vague. The threshold should check for QUALITY, not just LENGTH. But length is the best heuristic available without AI.
+
+**Factor 4: Model Confidence (lines 289-298)**
+AI self-reported confidence. Default is 0.4 (conservative) when AI doesn't report. **Issue**: Does Gemini actually return a confidence score? If not, this factor is always 0.4, meaning 15% of the score is a constant. Need to verify in gemini_analyzer.py.
+
+**Factor 5: Cross-References (lines 300-338)**
+Hardcoded CORROBORATION_MAP with 9 rule pairs. Each corroborating rule adds 0.25.
+**Issues**:
+1. Only 9 of 78 rules have corroboration pairs defined. The other 69 rules always get the 0.3 baseline.
+2. Rule names must match EXACTLY: "Unlimited Liability" in the map vs whatever `related_rule_names` contains. If the pipeline passes rule IDs instead of names, this never matches.
+3. The map is asymmetric: "Perpetual Confidentiality" corroborates with "Non-Solicitation Clause", but "Non-Solicitation Clause" doesn't list "Perpetual Confidentiality" as a corroborator.
+
+### Proposed New Scoring Model
+
+For an AI-first system, the weights should shift:
+
+| Factor | Current | Proposed | Rationale |
+|---|---|---|---|
+| Text Verification | 30% | 35% | Most important — does the quote exist? |
+| Rule Corroboration | 25% | 15% | Bonus, not primary signal |
+| Playbook Alignment | 20% | 15% | Playbook migration may change this |
+| Model Confidence | 15% | 20% | AI is primary analyzer |
+| Cross-References | 10% | 15% | Contextual corroboration is valuable |
+
+And for Rule Corroboration scores:
+```
+regex + AI agree  → 1.0  (unchanged)
+AI only           → 0.7  (up from 0.5)
+regex only        → 0.5  (down from 0.6 — regex without AI should be suspicious)
+neither           → 0.0  (unchanged)
+```
+
+### Classification: KEEP (with rebalancing)
+The 5-factor model architecture is sound. The weights and individual factor scores need rebalancing for an AI-first system, but the framework should be preserved.
+
+### Critical Findings Summary
+1. **AI-only penalty of 0.125 points** (12.5%) can push legitimate novel findings from HIGH to MEDIUM visibility
+2. **Model confidence factor may be constant 0.4** if Gemini doesn't return confidence scores
+3. **Cross-reference map covers only 9/78 rules** and uses exact string matching
+4. **Asymmetric corroboration pairs** — relationship isn't bidirectional
+5. **Weight auto-normalization** (lines 106-109) is a good safety measure
