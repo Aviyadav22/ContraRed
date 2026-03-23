@@ -114,7 +114,30 @@ class StructureExtractor:
             
             full_text_parts.append(clean_text)
             current_offset += len(clean_text) + 1  # +1 for newline
-        
+
+        # Extract text from tables (fee schedules, SLA matrices, etc.)
+        for table_idx, table in enumerate(doc.tables):
+            for row in table.rows:
+                row_texts = []
+                for cell in row.cells:
+                    cell_text = normalize_text(cell.text)
+                    if cell_text:
+                        row_texts.append(cell_text)
+                if row_texts:
+                    combined = " | ".join(row_texts)
+                    node_hash = self._hash_paragraph(combined)
+                    node = ContractNode(
+                        id=node_hash,
+                        text=combined,
+                        original_text=" | ".join(cell.text for cell in row.cells),
+                        style=f"Table {table_idx + 1}",
+                        section_index=current_section,
+                        start_offset=current_offset,
+                    )
+                    contract_map.nodes.append(node)
+                    full_text_parts.append(combined)
+                    current_offset += len(combined) + 1
+
         # Store metadata
         contract_map.full_text = "\n".join(full_text_parts)
         contract_map.metadata = {

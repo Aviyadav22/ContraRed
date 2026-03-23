@@ -164,10 +164,10 @@ class ScopeAnalyzer:
     ]
 
     ONE_SIDED_INDICATORS = [
-        r"\b(the\s+(company|vendor|provider|licensor|employer)\s+shall\s+not)\b",
-        r"\b(the\s+(customer|client|licensee|employee)\s+shall)\b",
+        r"\b(the\s+(company|vendor|provider|licensor|employer|supplier|seller|consultant|contractor|service\s+provider|disclosing\s+party|indemnifying\s+party)\s+shall\s+not)\b",
+        r"\b(the\s+(customer|client|licensee|employee|buyer|purchaser|subscriber|end\s+user|recipient|receiving\s+party|indemnified\s+party)\s+shall)\b",
         r"\b(you\s+(agree|shall|will|must))\b",
-        r"\b(solely\s+at\s+(the|our)\s+discretion)\b",
+        r"\b(solely\s+at\s+(the|our|its)\s+discretion)\b",
     ]
 
     # Financial cap patterns
@@ -180,7 +180,7 @@ class ScopeAnalyzer:
     PERPETUAL_PATTERNS = [
         r"\b(perpetual(ly)?|indefinite(ly)?|forever|in\s+perpetuity)\b",
         r"\b(survive\s+(?:indefinitely|in\s+perpetuity|forever))\b",
-        r"\b(irrevocable)\b",
+        # Removed: r"\b(irrevocable)\b" — irrevocable ≠ perpetual (licenses can be irrevocable with fixed terms)
     ]
 
     FIXED_TERM_PATTERN = r"(\d+)\s*(months?|years?|days?|weeks?)"

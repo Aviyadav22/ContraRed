@@ -675,8 +675,8 @@ _JURISDICTION_ALIASES: Dict[str, str] = {
     "uae": "AE",
     "united arab emirates": "AE",
     "abu dhabi": "AE",
-    "adgm": "AE",
-    "abu dhabi global market": "AE",
+    "adgm": "AE-DIFC",  # Changed: ADGM is common-law like DIFC, NOT onshore UAE civil law
+    "abu dhabi global market": "AE-DIFC",  # Changed: same reason
     # Germany
     "germany": "DE",
     "federal republic of germany": "DE",
