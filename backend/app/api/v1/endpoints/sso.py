@@ -25,6 +25,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.models.audit_log import log_audit_event
 from app.core.security import create_access_token, create_refresh_token, decode_token
+from app.core.config import settings
 from app.core.permissions import require_permission
 from app.services import sso_service
 from app.services.token_service import get_token_blacklist
@@ -32,6 +33,25 @@ from app.api.v1.endpoints.auth import limiter
 from app.api.v1.endpoints.billing import require_tier
 
 logger = logging.getLogger(__name__)
+
+ALLOWED_REDIRECT_ORIGINS = [
+    "https://contrared-dashboard.netlify.app",
+    "https://contrared-addin.netlify.app",
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://localhost:3000",
+    "https://localhost:5173",
+]
+
+
+def _validate_redirect_uri(uri: str) -> bool:
+    """Validate redirect URI against allowlist to prevent open redirect."""
+    if not uri:
+        return True  # Will use default callback
+    from urllib.parse import urlparse
+    parsed = urlparse(uri)
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    return origin in ALLOWED_REDIRECT_ORIGINS or origin in settings.CORS_ORIGINS
 
 router = APIRouter()
 
@@ -81,10 +101,12 @@ class SSOLoginResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 def _get_client_ip(request: Request) -> Optional[str]:
-    """Get real client IP, respecting X-Forwarded-For."""
+    """Get real client IP, only trusting X-Forwarded-For from known proxies."""
     forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    if forwarded and request.client:
+        trusted_hosts = [h.strip() for h in settings.TRUSTED_PROXY_HOSTS.split(",") if h.strip()]
+        if request.client.host in trusted_hosts:
+            return forwarded.split(",")[0].strip()
     return request.client.host if request.client else None
 
 
@@ -106,6 +128,9 @@ async def sso_authorize(
     The client calls this endpoint; the response is a redirect to the IdP.
     After authentication, the IdP redirects back to /sso/callback.
     """
+    if redirect_uri and not _validate_redirect_uri(redirect_uri):
+        raise HTTPException(status_code=400, detail="Invalid redirect URI")
+
     if not sso_service.is_sso_available():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

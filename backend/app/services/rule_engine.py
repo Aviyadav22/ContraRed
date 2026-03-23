@@ -18,6 +18,24 @@ import logging
 import re
 import hashlib
 from typing import List, Optional, Dict, Any
+
+
+def _safe_compile_regex(pattern: str, timeout_ms: int = 100) -> re.Pattern:
+    """Compile regex with basic catastrophic backtracking detection."""
+    # Check for common ReDoS patterns
+    redos_patterns = [
+        r'\(.*\+\).*\+',      # (a+)+
+        r'\(.*\*\).*\*',      # (a*)*
+        r'\(.*\+\).*\*',      # (a+)*
+        r'\(.*\{.*\}\).*\+',  # (a{1,})+
+    ]
+    for rdp in redos_patterns:
+        if re.search(rdp, pattern):
+            raise ValueError(f"Potentially unsafe regex pattern (ReDoS risk): {pattern[:50]}")
+    # Also limit pattern length
+    if len(pattern) > 500:
+        raise ValueError(f"Regex pattern too long ({len(pattern)} chars, max 500)")
+    return re.compile(pattern, re.IGNORECASE)
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -659,12 +677,11 @@ class RuleEngine:
                     elif match_type == "fuzzy":
                         # Word boundary matching without full regex
                         safe_patterns.append(r"\b" + re.escape(pattern))
-                    else:  # regex - use as-is but validate
-                        # Test compile to catch bad regex
-                        re.compile(pattern, re.IGNORECASE)
+                    else:  # regex - use as-is but validate (with ReDoS protection)
+                        _safe_compile_regex(pattern)
                         safe_patterns.append(pattern)
-                except re.error as e:
-                    # Skip invalid regex patterns instead of crashing
+                except (re.error, ValueError) as e:
+                    # Skip invalid/unsafe regex patterns instead of crashing
                     logger.warning("Invalid regex pattern '%s' in rule %s: %s", pattern, rule.id, e)
                     continue
             

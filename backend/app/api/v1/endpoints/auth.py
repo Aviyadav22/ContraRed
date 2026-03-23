@@ -61,10 +61,14 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=F
 
 
 def _get_client_ip(request: Request) -> Optional[str]:
-    """Get real client IP, respecting X-Forwarded-For from reverse proxy."""
+    """Get real client IP, only trusting X-Forwarded-For from known proxies."""
+    from app.core.config import settings
     forwarded = request.headers.get("X-Forwarded-For")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
+    if forwarded and request.client:
+        # Only trust X-Forwarded-For if request comes from a trusted proxy
+        trusted_hosts = [h.strip() for h in settings.TRUSTED_PROXY_HOSTS.split(",") if h.strip()]
+        if request.client.host in trusted_hosts:
+            return forwarded.split(",")[0].strip()
     return request.client.host if request.client else None
 
 
@@ -980,12 +984,29 @@ async def forgot_password(
     return {"message": "If an account exists with this email, a password reset link has been sent."}
 
 
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str = Field(..., min_length=8)
+
+    @field_validator('new_password')
+    @classmethod
+    def validate_password_complexity(cls, v: str) -> str:
+        if not re.search(r'[A-Z]', v):
+            raise ValueError('Password must contain at least one uppercase letter')
+        if not re.search(r'[a-z]', v):
+            raise ValueError('Password must contain at least one lowercase letter')
+        if not re.search(r'\d', v):
+            raise ValueError('Password must contain at least one digit')
+        if not re.search(r'[!@#$%^&*(),.?":{}|<>]', v):
+            raise ValueError('Password must contain at least one special character')
+        return v
+
+
 @router.post("/reset-password")
 @limiter.limit("5/minute")
 async def reset_password(
     request: Request,
-    token: str = Body(...),
-    new_password: str = Body(..., min_length=8),
+    data: ResetPasswordRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -994,7 +1015,7 @@ async def reset_password(
     The token must be a password_reset type JWT issued by /forgot-password.
     """
     # Decode the reset token
-    token_data = decode_token(token, expected_type="password_reset")
+    token_data = decode_token(data.token, expected_type="password_reset")
     if token_data is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1012,7 +1033,14 @@ async def reset_password(
         )
 
     # Update password
-    user.password_hash = get_password_hash(new_password)
+    user.password_hash = get_password_hash(data.new_password)
+
+    # Blacklist the reset token to prevent reuse
+    try:
+        blacklist = await get_token_blacklist()
+        await blacklist.revoke(token_data.jti, ttl=3600)  # 1 hour (matches token expiry)
+    except Exception as bl_err:
+        logger.warning("Failed to blacklist reset token: %s", bl_err)
 
     await log_audit_event(
         db, user=user, action="password_reset_completed", resource_type="auth",

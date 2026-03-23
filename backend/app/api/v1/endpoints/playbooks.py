@@ -11,9 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select, or_, delete
 from sqlalchemy.orm import selectinload
 
+import re
+
 from app.db.session import get_db
 from app.models.user import User
 from app.services.playbook_cache import invalidate_playbook_cache
+from app.services.rule_engine import _safe_compile_regex
 from app.models.playbook import (
     Playbook, PlaybookRule, PlaybookCategory, RiskLevel,
     PlaybookRuleTier, PlaybookCondition, PlaybookRuleOverride,
@@ -741,7 +744,15 @@ async def add_rule(
     
     if playbook.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Only the creator can add rules")
-    
+
+    # Validate regex patterns before storing
+    if rule_data.match_type == "regex":
+        for pattern in rule_data.detection_patterns:
+            try:
+                _safe_compile_regex(pattern)
+            except (re.error, ValueError) as e:
+                raise HTTPException(status_code=400, detail=f"Invalid regex pattern: {e}")
+
     # Validate risk level
     try:
         risk_level = RiskLevel(rule_data.risk_level.lower())
