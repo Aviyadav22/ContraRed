@@ -3948,3 +3948,11 @@ create_snapshot() → SELECT playbook + rules + tiers + conditions + overrides +
 - Playbook loading: ✓ 4-5 queries acceptable for scan frequency
 - No raw SQL joins found — all ORM-based ✓
 - DB query performance is NOT a bottleneck — AI call (10-60s) dominates total time
+
+## Iteration 73 — PERF-4: Concurrent Batch Analysis Audit
+- Semaphore(3) limits concurrent analyses — safe for Gemini free tier (15 RPM) ✓
+- Individual file failure: correctly contained, no cascading failures ✓
+- All-error batch shows "partial_failure" not "failed" — misleading
+- Background task killed on server restart — no graceful shutdown
+- Playbook rules loaded as subset (missing fallback_position, is_deal_breaker)
+- No per-user fairness — one user's 10-file batch can starve another user
