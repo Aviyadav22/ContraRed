@@ -3421,3 +3421,74 @@ Rate limits are configured elsewhere (in endpoint decorators), not in Settings. 
 
 ### Verdict
 Config security is STRONG. The 3 critical secrets have startup validation. No hardcoded credentials. Auto-generated debug keys. ZERO_DATA_RETENTION default is excellent. Main concerns: localhost CORS default, preview model versions.
+
+## Iteration 63 — SEC-2: main.py CORS + Middleware Audit (429 lines)
+**Task:** Is CORS wildcard? Is it properly restricted? Are middleware layers correct?
+
+### CORS Configuration (lines 310-321)
+```python
+if settings.DEBUG:
+    _cors_kwargs["allow_origin_regex"] = r"https?://(localhost|127\.0\.0\.1)(:\d+)?"
+else:
+    _cors_kwargs["allow_origins"] = settings.CORS_ORIGINS
+```
+- **DEBUG mode**: Regex allows ANY localhost origin on any port ✓ (correct for development)
+- **Production**: Uses explicit origin list from `settings.CORS_ORIGINS` ✓ (NOT wildcard `*`)
+- `allow_credentials=True` ✓ (required for HttpOnly cookies)
+- `allow_methods`: Explicit list of 6 methods ✓ (no wildcard)
+- `allow_headers`: Explicit list including `X-CSRF-Token` ✓
+
+**Assessment: CORS is properly restricted. NOT wildcard in production.** ✓
+
+### Middleware Stack (bottom to top execution order)
+1. **GZipMiddleware** (line 329) — compresses responses ≥500 bytes ✓
+2. **ProxyHeadersMiddleware** (line 325) — trusts reverse proxy for client IP ✓
+3. **CORSMiddleware** (line 321) — origin validation ✓
+4. **RequestLoggingMiddleware** (line 308) — audit trail, skips health checks ✓
+5. **SecurityHeadersMiddleware** (line 305) — comprehensive headers ✓
+6. **TenantContextMiddleware** (line 302) — RLS session vars from JWT ✓
+7. **MaxBodySizeMiddleware** (line 298) — 25MB request limit ✓
+
+### Security Headers (lines 79-108) — EXCELLENT
+| Header | Value | Assessment |
+|---|---|---|
+| X-Content-Type-Options | nosniff | ✓ Prevents MIME sniffing |
+| X-Frame-Options | DENY | ✓ Prevents clickjacking |
+| X-XSS-Protection | 0 | ✓ Modern best practice (disable legacy) |
+| HSTS | max-age=63072000; includeSubDomains; preload | ✓ 2-year HSTS |
+| Referrer-Policy | strict-origin-when-cross-origin | ✓ |
+| Cache-Control | no-store | ✓ No caching of sensitive data |
+| Permissions-Policy | camera=(), microphone=(), geolocation=(), payment=() | ✓ |
+| CSP | Restrictive default-src 'self' | ✓ |
+| X-Permitted-Cross-Domain-Policies | none | ✓ |
+
+### Additional Security Features
+- **PII redaction in logs** (lines 16-49): Emails, JWTs, API keys, long contract text all redacted ✓
+- **PII redaction in error responses** (lines 140-149): Client never sees raw stack traces in production ✓
+- **PII redaction in Sentry events** (lines 165-173): Request bodies and user emails stripped ✓
+- **Global exception handler** (lines 235-268): Catches all unhandled errors, returns generic message in production ✓
+- **Max body size: 25MB** (line 278): Prevents large upload attacks ✓
+- **API docs disabled in production** (lines 224-226): docs_url/redoc_url/openapi_url all None ✓
+
+### Critical Findings
+
+**1. Global exception handler manually adds CORS headers (lines 263-266)**
+```python
+origin = request.headers.get("origin")
+if origin and origin in settings.CORS_ORIGINS:
+    response.headers["access-control-allow-origin"] = origin
+```
+Exception handlers bypass CORSMiddleware, so CORS headers must be added manually. This is correctly implemented — only whitelisted origins get CORS headers on error responses. ✓
+
+**2. CSP `frame-ancestors 'none'` conflicts with Word Add-in (line 91)**
+The Word Add-in runs in an iframe. `frame-ancestors 'none'` would block this. However, the CSP is on the BACKEND API responses, not the add-in's HTML. The add-in's Netlify deployment has its own headers. The API's CSP preventing framing of API responses is correct. ✓
+
+**3. `send_default_pii=False` for Sentry (line 181)**
+Explicitly disables default PII collection. Combined with `_before_send` filter, this is belt-and-suspenders for privacy. ✓
+
+**4. Health endpoints are unauthenticated (lines 340-428)**
+`/health`, `/health/db`, `/health/deep` — all public. The deep health check exposes service status (DB connected, Redis status, AI provider config). A pentester could enumerate which services are available.
+**Risk**: Low — no secrets exposed, just operational status. But could help an attacker understand the infrastructure.
+
+### Verdict
+**main.py security is EXCELLENT** — among the best-secured FastAPI applications. CORS properly restricted, comprehensive security headers, PII redaction in logs+errors+Sentry, max body size, API docs disabled in production.
