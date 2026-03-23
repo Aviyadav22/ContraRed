@@ -3956,3 +3956,68 @@ create_snapshot() → SELECT playbook + rules + tiers + conditions + overrides +
 - Background task killed on server restart — no graceful shutdown
 - Playbook rules loaded as subset (missing fallback_position, is_deal_breaker)
 - No per-user fairness — one user's 10-file batch can starve another user
+
+## Iteration 74 — PERF-5: Cold Start + Response Times Audit
+
+### Render.com Cold Start
+Render.com free tier spins down after 15 minutes of inactivity. When a request arrives:
+1. **Container startup**: ~5-10s (Python runtime + dependency loading)
+2. **FastAPI app initialization**: Lifespan events (main.py:190-217):
+   - `init_db()` — creates DB engine + runs connection test
+   - `get_token_blacklist()` — connects to Redis (or creates in-memory fallback)
+3. **First request**: Module imports trigger lazy loading of services
+4. **Total cold start estimate**: **15-30 seconds**
+
+**Impact on user experience:**
+- Lawyer opens Word Add-in → health check fires → 15-30s before "connected" status
+- First scan after inactivity → login might timeout (120s frontend timeout covers this)
+- **Mitigation**: The frontend health check (api.ts `healthCheck()`) runs at startup. If it fails (cold start), the user sees "offline" status but can retry.
+
+### Response Time Breakdown (Warm Server)
+
+| Operation | Expected Time | Bottleneck |
+|---|---|---|
+| Health check (`/health`) | <50ms | None (no DB) |
+| Login | 200-500ms | bcrypt hash (intentionally slow) |
+| List playbooks | 100-300ms | DB query + selectinload |
+| Full contract scan (20pg) | **10-30s** | Gemini Pro API call |
+| Full contract scan (50pg) | **30-60s** | Gemini Pro API call |
+| Generate fix | **2-5s** | Gemini Flash API call |
+| Generate clause | **3-8s** | Gemini Flash API call |
+| Research clause | **5-15s** | Gemini Flash API call |
+| Apply redline (OOXML) | **200-500ms** | CPU (SequenceMatcher + XML gen) |
+| Selection scan | **5-15s** | Gemini Flash API call |
+| Export report | 1-3s | DOCX generation in memory |
+
+### Should SSE/WebSocket Replace Polling for Long Scans?
+
+**Current approach**: Single HTTP request with 90s backend timeout + 120s frontend timeout. No polling — the request hangs until complete. The skeleton loader provides cosmetic progress.
+
+**Analysis**:
+- For scans < 60s (majority of 20-page contracts): Single request works fine
+- For scans 60-90s (50-page contracts): Works but user anxiety is high
+- For scans > 90s (very large contracts): Backend timeout kills the request. User sees "timed out."
+
+**SSE/WebSocket would provide:**
+1. Real-time stage progress: "Stage 1 complete (50ms)... Stage 3 in progress (15s)..."
+2. Token count updates: "Processed 25,000 tokens..."
+3. Partial results: Show first findings while AI continues
+4. Graceful timeout: Instead of hard timeout, show "Analysis still running" with running results
+
+**Recommendation**: SSE is simpler than WebSocket and sufficient:
+```
+Event: stage_update
+Data: {"stage": "risk_assessment", "progress": 0.4, "partial_results": [...]}
+```
+But this is a P2 optimization — the current approach works for the typical use case.
+
+### Render.com Spin-Down Mitigation Options
+1. **Cron ping** (free): External service pings `/health` every 14 minutes to prevent spin-down
+2. **Render paid tier** ($7/month): Always-on instance, no spin-down
+3. **Keep-alive middleware**: Add a background task that self-pings (doesn't work — requires incoming request)
+
+### Summary
+- Cold start: 15-30s on Render free tier — acceptable for initial deployment, should upgrade to paid for production
+- Warm response: AI calls dominate (10-60s), all other operations < 500ms
+- SSE for progress: P2 nice-to-have, not blocking for launch
+- Current 90s/120s timeout pairing: sufficient for 50-page contracts

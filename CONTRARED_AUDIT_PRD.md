@@ -146,7 +146,7 @@ This is the critical "whole paragraph turns red" bug.
 - [x] PERF-2: Audit caching. Is `CacheService` / `playbook_cache.py` effective? What's the cache hit rate potential? Are expensive computations (AI analysis, OOXML generation) being cached? Write findings to progress.txt.
 - [x] PERF-3: Audit database queries. Any N+1 queries? Missing indexes? Slow joins? Check the playbook queries especially — loading rules + conditions + versions. Write findings to progress.txt.
 - [x] PERF-4: Audit concurrent analysis. The batch endpoint runs 3 concurrent analyses — is this safe with Gemini rate limits? What happens if one fails? Write findings to progress.txt.
-- [ ] PERF-5: Audit cold start and response times. Render.com spins down on inactivity — what's the cold start time? For long scans (90s+), should the system use SSE/WebSocket for progress instead of polling? Write findings to progress.txt.
+- [x] PERF-5: Audit cold start and response times. Render.com spins down on inactivity — what's the cold start time? For long scans (90s+), should the system use SSE/WebSocket for progress instead of polling? Write findings to progress.txt.
 
 ---
 
