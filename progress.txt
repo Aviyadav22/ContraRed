@@ -1926,3 +1926,87 @@ Even when Tier 1/2 returns a tight range, Track Changes is enabled BEFORE the OO
 - **Trust destruction**: A lawyer seeing their carefully drafted clause destroyed would immediately distrust the tool
 - **Frequency**: 30-50% of fix applications (any time Tier 3 activates)
 - **Undo exists** but requires the user to notice the damage and click Undo
+
+## Iteration 37 — OOXML-5: body.search() 255-Character Limit Analysis
+**Task:** Document the 255-char limit, what happens with long clauses, and how it interacts with range precision.
+
+### The 255-Character Limit
+**File:** `ContraRed-PoC/src/taskpane/taskpane.ts`, line 889
+```typescript
+const WORD_SEARCH_LIMIT = 255;
+```
+
+The Word JavaScript API `body.search()` method has a hard 255-character limit on the search string. This is a Microsoft API constraint, not a ContraRed limitation.
+
+### Current Handling (lines 892-894)
+```typescript
+const tier1Text = searchText.length <= WORD_SEARCH_LIMIT
+    ? searchText
+    : searchText.slice(0, WORD_SEARCH_LIMIT);
+```
+For text longer than 255 chars, the code truncates to the FIRST 255 characters and searches for that substring.
+
+### What Happens with Long Clauses
+
+**Scenario 1: Unique first 255 chars (WORKS)**
+Clause: "The Vendor hereby agrees to indemnify, defend, and hold harmless the Client..." (500 chars)
+→ First 255 chars are searched
+→ If unique in the document, Tier 1 finds the right location
+→ BUT: the returned range covers only the first 255 chars, NOT the full 500-char clause
+→ `insertOoxml(replace)` replaces only those 255 chars
+→ The remaining 245 chars of the clause remain in the document UNCHANGED
+→ **Result: partial replacement — first half replaced, second half orphaned**
+
+**Scenario 2: Non-unique first 255 chars (WRONG MATCH)**
+In an agreement with multiple indemnification clauses, each starting with similar boilerplate:
+→ "The Vendor hereby agrees to indemnify..." appears in Section 5.1 AND Section 8.3
+→ Tier 1 returns `items[0]` — the FIRST occurrence (line 900)
+→ If the AI flagged Section 8.3, the fix gets applied to Section 5.1
+→ **Result: wrong clause modified — potentially changing a clause that was correct**
+
+**Scenario 3: First 255 chars don't match (FALLTHROUGH)**
+AI quoted text has minor differences in the first 255 chars:
+→ Tier 1 fails → Tier 2 tries normalized (first 150 chars)
+→ Tier 2 also fails → Tier 3 (Fuse.js fuzzy) on paragraphs
+→ Falls to paragraph-level range → ROOT CAUSE #1 from OOXML-4
+→ **Result: entire paragraph replaced**
+
+### Interaction with Range Precision
+
+| Clause Length | Tier 1 Behavior | Range Covers | Problem |
+|---|---|---|---|
+| ≤255 chars | Full text search | Full clause | ✓ No issue |
+| 256-510 chars | First 255 chars | First 255 chars only | Partial replacement — second half orphaned |
+| >510 chars | First 255 chars | First 255 chars only | Large orphaned tail + possible wrong match |
+| Any length, no match | Falls to Tier 3 | Entire paragraph | Paragraph destroyed (OOXML-4) |
+
+### How Common Are Long Clauses?
+
+Enterprise contracts routinely have clauses exceeding 255 characters:
+- **Indemnification clauses**: 400-1500 chars (multi-party, carve-outs, procedures)
+- **Limitation of liability**: 300-800 chars (caps, exclusions, super-caps)
+- **Confidentiality definitions**: 500-2000 chars (categories, exceptions, marking requirements)
+- **Force majeure**: 400-1200 chars (event lists, notification, termination triggers)
+- **Data protection**: 500-1500 chars (GDPR/DPDP compliance, processor obligations)
+
+**Estimated impact**: 40-60% of flagged clauses in enterprise contracts exceed 255 chars.
+
+### Critical Findings
+
+**1. Partial replacement creates orphaned text (PRIMARY)**
+When Tier 1 matches the first 255 chars of a 500-char clause, `insertOoxml(replace)` only replaces the first 255 chars. The remaining 245 chars stay in the document, creating a grammatically broken paragraph.
+
+**2. No verification that the full text matches (line 900)**
+Confidence is set to 0.9 for truncated matches, but there's no check that the characters AFTER position 255 also match. The code assumes the first 255 chars are sufficient to uniquely identify the clause.
+
+**3. Tier 2 truncates even further to 150 chars (line 904)**
+```typescript
+const normalizedSearch = searchText.replace(/[^\w\s]/g, '').trim().slice(0, 150);
+```
+This reduces search precision even more, increasing wrong-match risk.
+
+### Proposed Mitigations
+1. **Split-and-verify**: Search first 255 chars, then verify the found range extends to contain the remaining text by loading and comparing
+2. **Paragraph-then-narrow**: First identify which paragraph contains the clause, then use `paragraph.search()` for the specific sub-phrase being changed
+3. **Use `range.expandTo()`**: After finding the first 255 chars, expand the range to encompass the full clause text by checking adjacent content
+4. **Multiple search passes**: Search for the first 255 chars, then search for chars 200-455, then verify both ranges are in the same paragraph
