@@ -3492,3 +3492,14 @@ Explicitly disables default PII collection. Combined with `_before_send` filter,
 
 ### Verdict
 **main.py security is EXCELLENT** — among the best-secured FastAPI applications. CORS properly restricted, comprehensive security headers, PII redaction in logs+errors+Sentry, max body size, API docs disabled in production.
+
+## Iteration 64 — SEC-3: auth.py Full Security Audit
+### CRITICAL
+1. **Password reset missing complexity validation** (auth.py:988) — only min_length=8, unlike registration which requires uppercase+lowercase+digit+special
+2. **X-Forwarded-For trusted without validation** (auth.py:63-68) — TRUSTED_PROXY_HOSTS exists but NOT checked. Attackers can bypass rate limiting.
+
+### HIGH
+3. **Password reset token reusable** — NOT blacklisted after use; can reset password multiple times within 1-hour expiry
+4. **MFA brute-force** — 10/min rate limit but no per-token attempt counter; 50 attempts in 5-min window
+
+### POSITIVE: bcrypt, token rotation, concurrent session limits, CSRF, account lockout, IP anomaly detection all well-implemented

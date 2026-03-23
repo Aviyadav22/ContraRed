@@ -131,7 +131,7 @@ This is the critical "whole paragraph turns red" bug.
 
 - [x] SEC-1: Read `backend/app/core/config.py`. Audit: are any secrets hardcoded? Are there dangerous defaults (e.g., JWT_SECRET defaulting to "changeme")? Are all env vars validated on startup? Write findings to progress.txt.
 - [x] SEC-2: Read `backend/main.py`. Audit CORS configuration. Is it `*` (wildcard) or properly restricted to the dashboard and add-in origins? Are all middleware layers correct? Write findings to progress.txt.
-- [ ] SEC-3: Read `backend/app/api/v1/endpoints/auth.py`. Audit the auth flow: JWT token generation, validation, expiry, refresh. Are tokens properly scoped? Can a user access another user's data? Write findings to progress.txt.
+- [x] SEC-3: Read `backend/app/api/v1/endpoints/auth.py`. Audit the auth flow: JWT token generation, validation, expiry, refresh. Are tokens properly scoped? Can a user access another user's data? Write findings to progress.txt.
 - [ ] SEC-4: Audit ALL API endpoints for authorization. Are there any accidentally public routes that should require auth? Any endpoints missing `current_user` dependency? Write findings to progress.txt.
 - [ ] SEC-5: Audit input validation across all endpoints. SQL injection risk (raw SQL queries)? XSS risk (user content rendered in HTML)? Prompt injection (contract text sent to Gemini could contain "Ignore previous instructions...")? Write findings to progress.txt.
 - [ ] SEC-6: Audit rate limiting. Are expensive AI endpoints rate-limited? Can someone burn through Gemini API credits by spamming scans? Write findings to progress.txt.
