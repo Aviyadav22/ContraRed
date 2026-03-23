@@ -730,3 +730,85 @@ The lazy quantifier `?` helps, but the pattern `(.{3,80}?)` after "laws of" coul
 - **ENHANCE**: Add missing major jurisdictions (Canada, China, Switzerland, Netherlands)
 - **REPLACE**: Nothing — jurisdiction detection from standard legal language is a perfect regex task
 - **The jurisdiction profiles are extremely high-value content** — accurate legal citations that would cost significant legal research to recreate
+
+## Iteration 21 — REGEX-7: text_normalizer.py + structure_extractor.py Audit
+**Task:** Read both files in full. Document preprocessing steps. Confirm KEEP.
+**Files:** `backend/app/services/text_normalizer.py` (140 lines), `backend/app/services/structure_extractor.py` (299 lines)
+
+### text_normalizer.py (140 lines) — KEEP
+
+**`normalize_text()`** (lines 12-92): Critical preprocessing before regex matching:
+1. Non-breaking space → regular space ✓
+2. Smart quotes (6 variants) → straight quotes ✓ (including German „ and ‟)
+3. Soft hyphens → removed ✓
+4. Dashes (5 variants: en, em, hyphen, non-breaking, minus) → standard hyphen ✓
+5. Ellipsis → three dots ✓
+6. Zero-width characters (5 types) → removed ✓
+7. Newline normalization (CRLF/CR → LF) ✓
+8. Whitespace collapse (multiple spaces → single) ✓
+9. NFC Unicode normalization ✓
+10. Line-level stripping ✓
+
+**`normalize_for_search()`** (lines 95-109): Aggressive search normalization (lowercase + collapse whitespace). Correctly noted as "disconnected" in previous audit — used for comparison, not display.
+
+**Inline tests** (lines 112-139): 5 manual assertion tests at module level (only run when executed directly). Good for verification.
+
+**Critical findings:**
+1. **Em dash normalization breaks legal citations**: `—` → `-`. Legal text often uses em dashes: "Section 8 — Indemnification". Converting to `Section 8 - Indemnification` changes the document's visual formatting when sent back to the user. However, this only affects internal matching; the original text is preserved separately.
+
+2. **Smart quote normalization could break defined_terms_resolver**: The defined_terms_resolver uses `\u201c` and `\u201d` in its regex patterns (lines 111, 118, 126, etc.). But `normalize_text()` converts these to straight quotes BEFORE matching. This means the defined_terms_resolver's smart quote patterns will NEVER match — they're dead code. The resolver should only use straight quote patterns since text is pre-normalized.
+   **Wait** — checking: `rule_engine.evaluate()` calls `normalize_text()` first (line 407), but `defined_terms_resolver.resolve()` does NOT call `normalize_text()`. The resolver operates on raw text. So smart quote patterns in the resolver ARE needed. But there's a risk: if the pipeline normalizes text before passing to the resolver, smart quotes would be stripped and the patterns would fail.
+
+3. **No tab handling**: `\t` is collapsed to space by `[ \t]+` → ` `, but tab-indented contract sections would lose their indentation signals.
+
+### structure_extractor.py (299 lines) — KEEP
+
+**`StructureExtractor`** class with two entry points:
+- `extract_from_docx(file_bytes)` — uses python-docx to parse DOCX binary
+- `extract_from_text(text)` — fallback for raw text (Word Add-in sends body.text)
+
+**`ContractMap`** data model:
+- List of `ContractNode` objects, each with SHA-256 hash, text, style, section index, offset
+- Hash-based drift detection: if clause text changes between analysis and redlining, hash mismatch alerts the system
+
+**`extract_from_docx` (lines 68-126):**
+- Iterates `doc.paragraphs` — each paragraph gets normalized, hashed, and tracked
+- Section boundaries detected by "Heading" in style name (line 99)
+- **Issue**: Only `doc.paragraphs` is iterated — text inside TABLES, TEXT BOXES, HEADERS, FOOTERS is NOT extracted. Enterprise contracts often have key terms in tables (fee schedules, SLA matrices, scope of work tables). This is a significant content gap.
+- **Issue**: `para.style.name if para.style else "Normal"` — python-docx may return None for styles, but the fallback to "Normal" means heading detection fails silently for documents with custom/missing styles.
+
+**`extract_from_text` (lines 128-177):**
+- Flat structure (all `section_index=0`) — no heading detection from raw text
+- Uses `_split_into_paragraphs()` for smart splitting
+
+**`_split_into_paragraphs` (lines 195-240):**
+- Double newlines → explicit paragraph breaks
+- Single newlines → heuristic: numbered items, bullet points, ALL CAPS trigger new paragraph
+- **Issue**: `import re` inside method body (line 248) — this works but is an anti-pattern (re is already imported at module level in text_normalizer, but NOT imported at the top of structure_extractor). Minor.
+
+**`_looks_like_new_paragraph` (lines 242-261):**
+- Numbered: `1.`, `(1)`, `(a)`, `(i)`, `1)` ✓
+- Bullet: `•-*►▪` ✓
+- ALL CAPS heading ✓
+- **Missing**: "ARTICLE I", "Section 2.1", "SCHEDULE A" — these section markers may not always trigger this heuristic if they don't match the patterns exactly.
+
+**`extract_contract_structure` convenience function (lines 265-298):**
+- Routes to DOCX or text extraction based on content_type
+- Falls back to UTF-8 decode of binary content
+- Raises ValueError if no input — correct behavior
+
+**SHA-256 hashing (lines 179-193):**
+- Full SHA-256 hex digest (64 chars) used as drift anchor
+- Hashes normalized text — means minor whitespace changes won't break anchoring ✓
+- **Trade-off**: Full SHA-256 is deterministic but sensitive to ANY text difference. If normalization changes even slightly between versions, all hashes break. This is acceptable for single-session drift detection.
+
+### Combined Verdict: KEEP
+Both files are **textbook KEEP** — text normalization and structural extraction are preprocessing tasks that:
+1. Have no semantic component (pure text manipulation)
+2. Are faster and more reliable with deterministic code than AI
+3. Serve as the input layer for everything downstream
+
+### Findings Summary
+1. **Table content not extracted from DOCX** (structure_extractor.py line 90) — enterprise contracts with fee tables, SLA matrices, scope tables will have those sections invisible to analysis. P1 issue.
+2. **Smart quote normalization vs defined_terms_resolver** — potential pattern mismatch if pipeline normalization order changes. Low risk currently but fragile.
+3. **`import re` inside method** (structure_extractor.py line 248) — cosmetic anti-pattern.
