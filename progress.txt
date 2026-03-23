@@ -1112,3 +1112,45 @@ The `create_from_template` endpoint passes `created_by=str(current_user.id)` to 
 8. **Publish**: POST /{id}/marketplace/publish → Make available to community
 9. **Fork**: POST /marketplace/{id}/fork → Copy playbook with rules+tiers (not conditions/deps)
 10. **Apply**: Loaded by analysis_pipeline via `from_playbook_rules()` → compiled to regex → run
+
+## Iteration 27 — PLAYBOOK-3: playbook_cache.py + playbook_conditions_engine.py Audit
+**Files:** `playbook_cache.py` (158 lines), `playbook_conditions_engine.py` (650 lines)
+
+### playbook_cache.py (158 lines)
+Simple in-memory LRU-style cache for RuleEngine instances and rule dicts.
+
+**Architecture:**
+- `_engine_cache`: (playbook_id, updated_at) → RuleEngine — avoids re-compiling regex
+- `_rules_dict_cache`: (playbook_id, updated_at) → list of rule dicts — for prompt injection
+- `_MAX_CACHE_SIZE = 64` — FIFO eviction when full
+- `invalidate_playbook_cache()` — called on update/delete from endpoints
+
+**Key function**: `load_playbook()` (lines 108-157) — async DB loader with eager-loading of rules_list, access control checks. This is the primary entry point for the analysis pipeline.
+
+**Findings:**
+1. **FIFO eviction is not LRU** (line 55): `_engine_cache.pop(next(iter(_engine_cache)))` removes the OLDEST entry, not the least recently USED. A frequently-used playbook could be evicted if 64 other playbooks are loaded. For production with many orgs, this could cause cache thrashing.
+2. **Cache key uses `updated_at.isoformat()`** (line 45): If `updated_at` has different microsecond precision between queries, the key won't match and cache is useless. Unlikely with PostgreSQL but possible with different DB backends.
+3. **No thread safety**: Module-level dicts without locks. With async concurrency, two coroutines could simultaneously try to evict+insert, potentially corrupting the dict. In practice, Python's GIL prevents this for dict operations, but it's not guaranteed for async scenarios.
+
+### playbook_conditions_engine.py (650 lines)
+Sophisticated conditional logic engine — the most well-engineered service file in the codebase.
+
+**Architecture:**
+- `DealContext` dataclass: counterparty_type, deal_size, jurisdiction, contract_side, custom_fields
+- `ConditionsEngine` with 3-step pipeline:
+  1. `evaluate_conditions()` — filter conditions that match deal context
+  2. `apply_overrides()` — mutate/suppress RuleMatch objects based on overrides
+  3. `process()` — async full pipeline (load from DB → evaluate → apply)
+
+**Condition evaluators:**
+- String fields: equals, not_equals, in, not_in, contains
+- Numeric fields: equals, not_equals, greater_than, less_than, between
+- Custom fields: equals, not_equals, contains, in, not_in
+
+**Findings:**
+1. **This is entirely deterministic — no regex, no AI** — it's pure conditional logic based on structured metadata. Classification: KEEP.
+2. **`apply_overrides` uses `copy.copy()` not `copy.deepcopy()`** (line 208): Shallow copy means nested mutable objects (like `analysis_notes` list in RuleMatch) are shared between original and copy. If the override adds to `analysis_notes`, it modifies the original too.
+3. **Excellent logging**: Every condition evaluation, override application, and suppression is logged at INFO/DEBUG level. This is important for audit trails in legal software.
+4. **Deal size comparison uses `==` for floats** (line 498): `context_value == threshold` for floating-point comparison is unreliable. Should use approximate comparison for deal sizes.
+5. **Priority ordering is correct**: Higher priority conditions are evaluated first and their overrides applied first. If two conditions match and both override the same rule, the higher-priority one wins because it's applied first and subsequent overrides overwrite it. Wait — actually it's the OPPOSITE. Since both are applied sequentially, the LOWER priority condition's override overwrites the higher priority one. **This is a bug** — the last override wins, but it should be the highest-priority one.
+6. **Well-documented**: Extensive docstrings, clear type hints, defensive error handling. This is production-quality code.
