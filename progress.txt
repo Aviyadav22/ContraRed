@@ -393,3 +393,83 @@ Several rules appear in BOTH `rule_engine.py` DEFAULT_RULES and `rules_library.p
 3. **False negative risk**: Patterns only catch English-language keywords. Non-English contracts or paraphrased clauses are missed entirely.
 4. **primary_position quality**: The suggested positions are well-written from a legal perspective — they represent reasonable negotiation positions. This is high-quality content that should be preserved even as detection migrates to AI.
 5. **Inconsistency**: Some rules have `fallback_position`, most don't. Only 6 rules are marked `is_deal_breaker=True`.
+
+## Iteration 17 — REGEX-3: clause_classifier.py Full Audit (968 lines)
+**Task:** Read all 968 lines of `backend/app/services/clause_classifier.py`. Document the clause type classifier.
+**File:** `backend/app/services/clause_classifier.py` (968 lines)
+
+### Architecture Overview
+The clause classifier is a **separate system from the rule engine**. While rule_engine.py detects RISKS, clause_classifier.py classifies CLAUSE TYPES (is this an indemnification clause, a governing law clause, etc.). It's Stage 2 of the pipeline.
+
+**Key design**: Two-tier pattern matching:
+1. **Heading patterns** — match section headings (strong signal, 0.6 base score)
+2. **Body patterns** — match clause body text (0.2 each, max 0.6)
+3. **Weight multiplier** — per-rule priority (1.0-1.3)
+4. **AI fallback** — clauses with confidence < 0.5 are flagged `needs_ai_review=True`
+
+### Taxonomy: 30 Clause Types in 8 Groups + UNKNOWN
+- Formation (5): definitions, recitals, entire_agreement, amendments, severability
+- Term (6): duration, auto_renewal, termination_for_cause, termination_for_convenience, cure_period, survival
+- Financial (5): payment_terms, late_payment, price_escalation, taxes, audit_rights
+- Liability (4): liability_cap, consequential_damages, indemnification_scope, insurance
+- IP (3): ip_ownership, license_grant, ip_indemnification
+- Confidentiality (4): confidentiality_obligations, confidentiality_exceptions, data_protection, breach_notification
+- Governance (4): governing_law, jurisdiction, arbitration, force_majeure
+- Restrictive (3): non_compete, non_solicitation, exclusivity
+- UNKNOWN (1): fallback
+
+**Actual count: 34 types** (30 named + UNKNOWN), not exactly "30" as the docstring claims.
+**Classifier rules: 30** `_ClassifierRule` instances (one per type except UNKNOWN).
+
+### Classification: KEEP (with enhancements)
+**This classifier should MOSTLY be KEPT.** Here's why:
+
+1. **It classifies, not assesses risk.** "Is this an indemnification clause?" is a categorization task where keyword matching is fast and effective. This is fundamentally different from "Is this indemnification clause risky?"
+
+2. **The AI fallback is well-designed.** Ambiguous clauses (confidence < 0.5) are already flagged for AI review. This is the right architecture.
+
+3. **Section splitting is structural** — `_split_into_sections()` (lines 876-963) uses numbered headings, ALL CAPS, and article markers. This is the correct approach; AI would be overkill for section splitting.
+
+### Critical Findings
+
+**1. Scoring ceiling creates false ambiguity (lines 835-853)**
+- Heading match: 0.6
+- Body matches: 0.2 each, capped at 0.6
+- Max possible: 0.6 + 0.6 = 1.2, but confidence capped at 1.0 (line 872)
+- With weights (up to 1.3): max = 1.2 × 1.3 = 1.56, capped to 1.0
+- **Issue**: A clause with NO heading (common in contracts) starts at 0.0 heading score. Maximum from body alone = 0.6 × weight. For weight=1.0, body-only max is 0.6 — meaning body-only classification is ALWAYS flagged as ambiguous if < 0.5 threshold needs 3 body matches. This means contracts with inline clauses (no headings) will flood the AI with "ambiguous" classifications, wasting tokens.
+
+**2. `_split_into_sections` heading detection too rigid (lines 886-902)**
+- Only detects: numbered (`1.`, `2.1`), ARTICLE/SECTION N, SCHEDULE A, Roman numerals, ALL CAPS
+- Misses: Bold text (common in Word documents — but text extraction loses formatting), "Part X", "Appendix", "Addendum"
+- **Indian contracts**: Often use "(a)", "(b)", "(i)", "(ii)" sub-numbering which won't be detected as headings
+- ALL CAPS detection requires minimum 6 chars (line 929: `len(stripped) > 5`) — misses short headings like "SLA" or "TERM"
+
+**3. Taxonomy gaps — 30 types vs 78 rules**
+The classifier has 30 types, but the rules library has 78 rules. Missing clause types in classifier:
+- No SaaS/Technology types (SLA, data portability, security standards, API rights)
+- No compliance types (anti-bribery, sanctions, regulatory)
+- No assignment/change of control types
+- No transition assistance type
+- No insolvency/bankruptcy type
+- This means ~20+ rules from rules_library.py detect clauses that the classifier can't even categorize
+
+**4. `UNKNOWN` maps to `ClauseGroup.FORMATION` (line 128)**
+When a clause can't be classified, its group defaults to FORMATION. This is misleading — an unclassifiable clause about data breach notifications would appear under "Formation" in the UI.
+
+**5. No de-duplication of section splits**
+If a contract has "1. DEFINITIONS" followed by "1.1 Defined Terms", both are detected as separate sections with separate headings. The sub-section gets classified independently, potentially splitting a single logical clause into fragments.
+
+**6. Singleton at module level (line 967)**
+`clause_classifier = ClauseClassifier()` — compiled at import time. Good for performance (regex compiled once), but means rules can't be customized per-tenant without creating new instances.
+
+### Pattern Quality Assessment
+- **Heading patterns**: Generally well-crafted with appropriate `\b` boundaries
+- **Body patterns**: More complex regex with lookaheads; good coverage of legal phrasing
+- **Smart quote handling** (line 214): `["\u201c]\w+["\u201d]` — correctly handles Unicode smart quotes in definitions. Good.
+- **Negative lookahead** (line 282): `\bterm\b(?!\s+(?:sheet|inati))` — prevents "termination" or "term sheet" from matching "Duration/term" heading. Smart.
+
+### Verdict: KEEP but enhance
+- **KEEP**: Entire classifier architecture, heading/body pattern approach, AI fallback
+- **ENHANCE**: Add missing clause types (SaaS, compliance, assignment), fix UNKNOWN group mapping, improve section splitting for Indian contracts
+- **REPLACE**: Nothing — clause classification is a categorization task well-suited to keyword matching
