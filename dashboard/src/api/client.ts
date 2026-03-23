@@ -627,7 +627,8 @@ export interface MarketplaceItem {
 
 export async function browseMarketplace(category?: string): Promise<MarketplaceItem[]> {
     const qs = category ? `?category=${encodeURIComponent(category)}` : '';
-    return request(`/playbooks/marketplace/browse${qs}`);
+    const res = await request<{ items: MarketplaceItem[] }>(`/playbooks/marketplace/browse${qs}`);
+    return Array.isArray(res) ? res : (res.items ?? []);
 }
 
 export async function publishToMarketplace(playbookId: string, tags: string[]): Promise<MarketplaceItem> {
