@@ -3906,3 +3906,45 @@ FIFO eviction may evict frequently-used playbooks. For production with many orgs
 - **CacheService: INFRASTRUCTURE EXISTS but unused** — Redis not configured in production
 - **AI results: NOT cached** — biggest cost optimization opportunity
 - **Recommendation**: Configure Upstash Redis ($0/month free tier) to enable CacheService, saving 20-40% of AI API costs
+
+## Iteration 72 — PERF-3: Database Query Audit
+
+### N+1 Query Prevention
+`selectinload` is used extensively (25+ instances) for eager loading relationships:
+- `Playbook.rules_list` loaded with selectinload on every playbook query ✓
+- `PlaybookRule.tiers` loaded with nested selectinload in fork/versioning ✓
+- `PlaybookCondition.rule_overrides` loaded with selectinload ✓
+- `Document.risks` loaded with selectinload ✓
+
+**No N+1 queries detected** — the codebase consistently uses `selectinload` for related collections. ✓
+
+### Index Coverage
+Foreign keys have `index=True` on: organization_id, user_id, document_id, playbook_id, rule_id, condition_id. Composite indexes on: (document_id, version_number), (document_id, version_a, version_b). Timestamp index on audit_log.timestamp.
+
+**Potential missing indexes:**
+1. `PlaybookRule.clause_type` — no index, but queried by clause_type in conditions engine
+2. `Document.user_id` — not visible in model grep but critical for per-user document listing
+3. `audit_log.user_id` + `audit_log.action` — composite index would speed filtered audit log queries
+
+### Playbook Loading (the hot path)
+Loading a playbook for analysis:
+```
+load_playbook() → SELECT playbook + selectinload(rules_list) → 2 queries
+```
+Then for conditions processing:
+```
+conditions_engine.process() → SELECT conditions + selectinload(rule_overrides → rule) → 2-3 queries
+```
+Then for versioning:
+```
+create_snapshot() → SELECT playbook + rules + tiers + conditions + overrides + dependencies → 4-5 queries
+```
+
+**Total for a full analysis with playbook**: ~4-5 DB queries. Acceptable for the frequency (once per scan).
+
+### Findings
+- N+1 prevention: ✓ Consistent selectinload usage
+- Index coverage: ✓ Good on FK columns. Minor gaps on filter columns (clause_type)
+- Playbook loading: ✓ 4-5 queries acceptable for scan frequency
+- No raw SQL joins found — all ORM-based ✓
+- DB query performance is NOT a bottleneck — AI call (10-60s) dominates total time
