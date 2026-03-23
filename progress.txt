@@ -1154,3 +1154,46 @@ Sophisticated conditional logic engine — the most well-engineered service file
 4. **Deal size comparison uses `==` for floats** (line 498): `context_value == threshold` for floating-point comparison is unreliable. Should use approximate comparison for deal sizes.
 5. **Priority ordering is correct**: Higher priority conditions are evaluated first and their overrides applied first. If two conditions match and both override the same rule, the higher-priority one wins because it's applied first and subsequent overrides overwrite it. Wait — actually it's the OPPOSITE. Since both are applied sequentially, the LOWER priority condition's override overwrites the higher priority one. **This is a bug** — the last override wins, but it should be the highest-priority one.
 6. **Well-documented**: Extensive docstrings, clear type hints, defensive error handling. This is production-quality code.
+
+## Iteration 28 — PLAYBOOK-4: playbook_versioning.py Audit (650 lines)
+**Task:** Read all 650 lines. Document versioning system and backward compatibility for schema migration.
+**File:** `backend/app/services/playbook_versioning.py` (650 lines)
+
+### Architecture
+Full version control system with 4 operations:
+1. **create_snapshot** — Serializes complete playbook state (rules+tiers+conditions+overrides+dependencies) to JSONB
+2. **get_versions / get_version** — Retrieve version history
+3. **diff_versions** — Field-level diff between two snapshots (rules added/removed/modified, conditions, dependencies)
+4. **rollback** — Full state restoration from snapshot, preserving original UUIDs
+
+### Schema Migration Implications
+**If we migrate from regex-based `detection_patterns` to AI-native fields:**
+
+1. **Snapshots store `detection_patterns` as-is** (line 82): `_serialize_rule` captures the full JSONB, so old snapshots will always contain the old schema. This is correct — snapshots are immutable history.
+
+2. **Rollback recreates from snapshot** (lines 525-543): Rollback uses `rule_data.get("detection_patterns")` directly, so old snapshots with regex patterns will restore correctly. New snapshots with AI-native fields will also work because the rollback uses `.get()` with defaults for all new fields.
+
+3. **Diff compares field values** (lines 149-184): `_diff_rule` compares all fields including `detection_patterns`. If the schema changes shape (from `{"patterns": [...]}` to `{"risk_description": "..."}`), the diff will show both as changed, which is correct behavior.
+
+4. **Backward compatibility is good**: The versioning system is schema-agnostic — it serializes whatever fields exist and restores them. Adding new fields to PlaybookRule won't break existing snapshots because `_serialize_rule` captures all fields, and rollback uses `.get()` with defaults.
+
+### Critical Findings
+
+1. **Rollback is a destructive operation without undo** (lines 424-642): The rollback deletes ALL current rules, conditions, dependencies, then recreates from snapshot. If the rollback fails midway (e.g., DB error after deletes but before inserts), the playbook is left EMPTY. The entire operation should be wrapped in a savepoint/nested transaction.
+   - Actually, it IS in a transaction (line 634: `await db.commit()`). If any step fails before commit, the transaction rolls back. But `db.commit()` is a single point of no return — the delete+insert is atomic. **This is actually correct.**
+
+2. **Snapshot size concern**: A playbook with 200 rules, each with 4 tiers, plus 50 conditions with overrides, serialized as JSONB, could be 100KB+ per snapshot. With 100 versions, that's 10MB+ per playbook just for version history. No retention policy exists to prune old versions.
+
+3. **Original UUIDs are preserved on rollback** (line 522): `new_rule_id = UUID(rule_data["id"])` reuses the original UUID from the snapshot. This means:
+   - **Good**: External references (analytics, audit logs) remain valid
+   - **Risk**: If a rule was deleted and a new one created with a different UUID, rollback would recreate the old UUID, potentially conflicting with the new one. The explicit DELETE before INSERT prevents this.
+
+4. **Diff doesn't compare condition modifications** (lines 398-403): Conditions are only checked for added/removed, not modified. If a condition's `operator` or `condition_value` changes between versions, the diff won't show it. Rules have field-level diff via `_diff_rule`, but conditions don't have an equivalent `_diff_condition`.
+
+5. **`_build_snapshot` includes `playbook.rules` JSONB** (line 134): This captures the legacy `Playbook.rules` JSONB field in the snapshot, even though it's not used. This is harmless but adds to snapshot size.
+
+### Verdict: Well-engineered, production-ready versioning
+- Schema migration won't break versioning — it's schema-agnostic
+- Rollback is properly atomic via transaction
+- Missing: version retention policy, condition-level diff
+- No regex or AI dependency — purely structural
