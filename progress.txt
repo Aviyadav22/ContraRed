@@ -1197,3 +1197,93 @@ Full version control system with 4 operations:
 - Rollback is properly atomic via transaction
 - Missing: version retention policy, condition-level diff
 - No regex or AI dependency — purely structural
+
+## Iteration 29 — PLAYBOOK-5: PlaybookEditor.tsx + Playbooks.tsx Audit
+**Files:** `dashboard/src/pages/PlaybookEditor.tsx` (1337 lines), `dashboard/src/pages/Playbooks.tsx` (282 lines)
+
+### Playbooks.tsx (282 lines) — List View
+Clean, well-structured list page with:
+- React Query for data fetching, mutations for create/delete/publish
+- Inline delete confirmation (InlineConfirm component)
+- Admin vs non-admin UI gating (`isAdmin()`)
+- Focus trap on create modal (accessibility ✓)
+- Loading/error/empty states ✓
+
+**No issues found.** This is solid production code.
+
+### PlaybookEditor.tsx (1337 lines) — Rule Creation UX
+5-tab editor: Rules, Conditions, Dependencies, History, Analytics
+
+**Current UX for Creating Rules:**
+Users currently enter:
+1. **Clause Type** — text input (e.g., "Unlimited Liability")
+2. **Risk Level** — dropdown (Critical/Warning/Safe)
+3. **Match Type** — dropdown (Exact Match / Fuzzy Match / Regex)
+4. **Deal Breaker** — checkbox
+5. **Suggested Fix** (labeled "Suggested Fix" but maps to `primary_position`) — text input
+6. **Detection Patterns** — one-at-a-time text input with Add button, displayed as removable chips
+
+**What should users enter instead (for AI-native)?**
+The current UX forces users to think in regex patterns. For an AI-native system, they should instead enter:
+1. **Risk Description** — "What makes this clause risky?" (natural language)
+2. **Acceptable Position** — "What would a good version of this clause look like?"
+3. **Fallback Position** — "What's the minimum we'd accept?"
+4. **Clause Context** — "What type of clause does this apply to?"
+5. **Severity/Risk Level** — unchanged dropdown
+6. **Deal Breaker** — unchanged checkbox
+7. **Example Good Clauses** — reference text from clause library
+8. **Example Bad Clauses** — what triggers this rule
+
+The detection_patterns chip input would be replaced with a natural language textarea.
+
+### Critical Findings
+
+**1. `confirm()` for delete (line 527)**
+```javascript
+if (confirm('Delete this rule?')) {
+    deleteRuleMutation.mutate(rule.id);
+}
+```
+Uses browser `confirm()` — this is blocking, ugly, and doesn't match the styled InlineConfirm used in Playbooks.tsx. Inconsistent UX.
+
+**2. `useState` used as ref for tier sync (lines 1203-1208)**
+```javascript
+const prevTiersRef = useState<RuleTier[] | undefined>(undefined);
+if (isExpanded && tiers && tiers !== prevTiersRef[0]...) {
+    prevTiersRef[0] = tiers;
+    Promise.resolve().then(onSyncTiers);
+}
+```
+This is a creative hack using `useState` as a ref (mutating the state array directly without setState). It works but:
+- Mutating state directly is an anti-pattern in React
+- `Promise.resolve().then(onSyncTiers)` to avoid setState during render is fragile
+- Should use `useRef` and `useEffect` instead
+
+**3. Condition value input is raw JSON (line 100)**
+```javascript
+condition_value: '{}',
+```
+Users must type raw JSON for condition values like `{"value": "fortune_500"}` or `{"min": 100000, "max": 500000}`. This is extremely unfriendly for non-technical legal users. Needs a structured form that adapts based on condition_type and operator.
+
+**4. Dependency effect_params is raw JSON (line 120)**
+Same issue — users type raw JSON for dependency parameters.
+
+**5. No edit capability for existing rules**
+The Add Rule form exists, but there's NO edit form. Users must delete and re-create rules to change them. The PUT endpoint exists in the backend (update_rule), but the frontend doesn't expose it.
+
+**6. No rollback confirmation (line 279)**
+Rollback mutation fires directly — no confirmation dialog for a destructive operation that replaces all current rules.
+
+**7. Analytics tab is empty**
+`TABS` includes 'analytics' but no `renderAnalyticsTab()` function exists. The tab likely shows nothing or crashes.
+
+**8. Pattern display truncated (line 1240)**
+Rule table shows only first 3 patterns with "+N more". But there's no way to see all patterns without expanding to tiers view, which doesn't show patterns. Users can't review their full pattern list after creation.
+
+### Proposed AI-Native UX Changes
+1. Replace "Detection Patterns" chip input with "Risk Description" textarea
+2. Add "Acceptable Position" field (maps to `primary_position`)
+3. Add "Example risky clauses" textarea for training examples
+4. Replace "Match Type" dropdown with "Detection Mode" toggle: AI-only / AI+Keywords / Keywords-only
+5. Replace raw JSON inputs with structured forms for conditions and dependencies
+6. Add inline edit capability for existing rules
