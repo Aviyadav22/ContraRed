@@ -312,3 +312,84 @@
 5. **from_playbook_rules uses rule.clause_type as the name** (line 705): `name=rule.clause_type` — this means the rule name shown to users is the clause_type, not the rule's actual title. Could cause confusing UI labels.
 
 6. **Normalized text dedup is too aggressive** (lines 556-566): If two genuinely different clauses have the same normalized text (e.g., two "governing law" clauses in different sections), only the first is kept. This is a false-negative risk for contracts with repeated standard language.
+
+## Iteration 16 — REGEX-2: rules_library.py Full Audit (75→78 rules)
+**Task:** Read all 1634 lines of `backend/app/services/rules_library.py`. Document every rule definition.
+**File:** `backend/app/services/rules_library.py` (1634 lines)
+
+### Critical Finding: Rule Count Mismatch
+- Module docstring says "75 rules", ALL_RULES comment says "76 total"
+- **Actual count: 78 rules** across 11 categories
+- Header comments also wrong: Operational says "9 rules" but has 11; SaaS says "6 rules" but has 7
+- Breakdown: Formation(5) + Term(7) + Financial(8) + Liability(8) + IP(7) + Confidentiality(8) + Reps&Warranties(6) + Restrictive(5) + Governance(6) + Operational(11) + SaaS(7) = **78**
+
+### Rule Type Distribution
+- **RulePattern (simple regex):** 40 rules — keyword detection only
+- **SmartRule (with escalation/de-escalation):** 38 rules — context-aware regex with negative patterns and risk adjustment
+- **Total regex patterns across all rules:** ~390+ individual regex patterns
+
+### Classification by Category
+
+**1. Formation & Structure (5 rules) — ALL KEEP**
+- definitions_clause (GREEN), recitals_clause (GREEN), entire_agreement (GREEN), amendments_clause (YELLOW/SmartRule), severability (GREEN)
+- These detect structural/boilerplate clauses. Regex is fast and correct. AI adds no value.
+
+**2. Term & Termination (7 rules) — KEEP 3, REPLACE 4**
+- KEEP: contract_duration (GREEN), cure_period (GREEN), survival_clause (GREEN) — structural detection
+- REPLACE: auto_renewal (SmartRule), termination_for_cause (SmartRule), termination_for_convenience (SmartRule), transition_assistance (YELLOW) — these need AI to evaluate whether terms are reasonable in context
+
+**3. Financial (8 rules) — KEEP 3, REPLACE 5**
+- KEEP: taxes_clause (YELLOW), currency_clause (GREEN), price_escalation (YELLOW) — keyword detection adequate
+- REPLACE: payment_terms (SmartRule), late_payment (SmartRule), set_off_rights (SmartRule), audit_rights (YELLOW), most_favored_nation (SmartRule) — need AI to evaluate reasonableness of financial terms in context of deal size
+
+**4. Liability & Indemnification (8 rules) — KEEP 1, REPLACE 7**
+- KEEP: liability_cap (SmartRule, GREEN base) — detecting existence of a cap is structural
+- REPLACE: unlimited_liability (SmartRule/RED), consequential_damages (SmartRule), broad_indemnification (SmartRule), indemnification_procedure (YELLOW), third_party_claims (YELLOW), limitation_period (SmartRule), insurance_requirement (SmartRule) — all require legal judgment about adequacy
+
+**5. Intellectual Property (7 rules) — KEEP 2, REPLACE 5**
+- KEEP: background_ip (YELLOW), moral_rights (YELLOW) — keyword detection sufficient for flagging
+- REPLACE: ip_assignment (SmartRule/RED), ip_ownership (SmartRule), license_grant (SmartRule), ip_indemnification (YELLOW), open_source (SmartRule) — AI needed to understand scope and implications
+
+**6. Confidentiality & Data (8 rules) — KEEP 4, REPLACE 4**
+- KEEP: confidentiality_exceptions (GREEN), confidentiality_term (YELLOW), return_of_materials (GREEN), cross_border_transfer (YELLOW) — pattern-based detection is appropriate
+- REPLACE: confidentiality_obligations (SmartRule), data_protection (SmartRule), data_processing_agreement (YELLOW), breach_notification (SmartRule) — AI needed to evaluate adequacy of protections
+
+**7. Reps & Warranties (6 rules) — KEEP 3, REPLACE 3**
+- KEEP: general_reps_warranties (GREEN), authority_rep (GREEN), compliance_warranty (GREEN) — boilerplate detection
+- REPLACE: as_is_disclaimer (SmartRule/RED), service_level (YELLOW), non_infringement (YELLOW) — AI needed to evaluate scope and adequacy
+
+**8. Restrictive Covenants (5 rules) — KEEP 1, REPLACE 4**
+- KEEP: reverse_engineering (YELLOW) — very specific technical terms
+- REPLACE: non_compete (SmartRule), non_solicitation (SmartRule), customer_non_solicitation (YELLOW), exclusive_dealing (SmartRule) — all need AI to evaluate scope, duration, geography, reasonableness
+
+**9. Governance & Disputes (6 rules) — KEEP 4, REPLACE 2**
+- KEEP: governing_law (GREEN), mediation (GREEN), injunctive_relief (GREEN), jury_waiver (YELLOW) — structural/boilerplate
+- REPLACE: jurisdiction_clause (YELLOW), arbitration (SmartRule) — AI needed to evaluate favorability of jurisdiction/seat
+
+**10. Operational (11 rules, header says 9) — KEEP 5, REPLACE 6**
+- KEEP: assignment_restriction (YELLOW), notice_provision (GREEN), anti_bribery (YELLOW), sanctions_compliance (YELLOW), regulatory_compliance (GREEN) — keyword detection adequate
+- REPLACE: force_majeure (SmartRule), change_of_control (SmartRule), subcontracting (YELLOW), business_continuity (YELLOW), counterparty_insolvency (SmartRule), payment_escalation_cap (SmartRule) — AI needed for contextual evaluation
+
+**11. SaaS / Technology (7 rules, header says 6) — KEEP 3, REPLACE 4**
+- KEEP: acceptable_use (GREEN), api_rights (YELLOW), security_standards (YELLOW) — keyword detection to flag presence
+- REPLACE: sla_terms (YELLOW), sla_credits (YELLOW), data_portability (SmartRule), insurance_adequacy (SmartRule) — AI needed to evaluate whether terms are adequate
+
+### Aggregate Classification
+| Classification | Count |
+|---|---|
+| **KEEP** | 34 (44%) |
+| **REPLACE-WITH-AI** | 44 (56%) |
+| **REMOVE** | 0 |
+
+### Duplicate Rule IDs Between DEFAULT_RULES and rules_library.py
+Several rules appear in BOTH `rule_engine.py` DEFAULT_RULES and `rules_library.py` ALL_RULES:
+- unlimited_liability, broad_indemnification, ip_assignment, auto_renewal, assignment_restriction, non_compete, exclusive_dealing, confidentiality_term, non_solicitation, reverse_engineering, governing_law, notice_provision
+- The expanded versions in rules_library.py are generally SmartRule upgrades of the original RulePattern versions
+- Since RuleEngine defaults to `use_expanded=True`, the rules_library.py versions are used in production
+
+### Quality Assessment of Regex Patterns
+1. **Well-crafted patterns**: The SmartRule escalation/de-escalation system is sophisticated. Context-aware risk adjustment is a smart bridge between pure regex and AI.
+2. **False positive risk**: Some patterns are too broad. E.g., `\b(offset)\b` in set_off_rights would match any document mentioning "offset" in any context. `\b(background)\b` in recitals_clause would match any mention of "background".
+3. **False negative risk**: Patterns only catch English-language keywords. Non-English contracts or paraphrased clauses are missed entirely.
+4. **primary_position quality**: The suggested positions are well-written from a legal perspective — they represent reasonable negotiation positions. This is high-quality content that should be preserved even as detection migrates to AI.
+5. **Inconsistency**: Some rules have `fallback_position`, most don't. Only 6 rules are marked `is_deal_breaker=True`.
