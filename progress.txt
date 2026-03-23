@@ -1702,3 +1702,80 @@ The backend generates CORRECT word-level OOXML. The "whole paragraph turns red" 
 3. Even though the OOXML has word-level diffs, Word treats the entire replaced range as revised
 
 The fix is in the frontend range precision, not the backend OOXML.
+
+## Iteration 34 — OOXML-2: findTextInDocument() Audit (lines 884-963 of taskpane.ts)
+**Task:** Document the 3-tier search strategy and range precision.
+
+### 3-Tier Search Strategy
+
+**Tier 1: Exact match via `body.search()` (lines 891-901)**
+- Word API caps search text at 255 characters
+- If text > 255 chars: truncates to first 255 and searches
+- Returns first match (items[0])
+- Confidence: 1.0 (exact) or 0.9 (truncated)
+- **Range precision: TIGHT** — `body.search()` returns a Range of exactly the found text
+
+**Tier 2: Normalized match (lines 903-913)**
+- Strips ALL punctuation: `searchText.replace(/[^\w\s]/g, '')`
+- Truncates to first 150 chars
+- Searches with matchCase: false
+- Confidence: 0.8
+- **Range precision: MODERATE** — normalized text may match a substring within a paragraph
+
+**Tier 3: Fuzzy match via Fuse.js on paragraphs (lines 915-960)**
+- Loads ALL paragraphs from document
+- Fuse.js threshold: 0.25 (75% similarity minimum)
+- Minimum fuzzy confidence: 0.6
+- **Range precision: PARAGRAPH-LEVEL** — `matchedParagraph.paragraph.getRange()` returns the ENTIRE paragraph range (line 955)
+- **THIS IS THE ROOT CAUSE OF "WHOLE PARAGRAPH TURNS RED"**
+
+### Range Precision Analysis by Tier
+
+| Tier | Search Method | Range Returned | Precision |
+|---|---|---|---|
+| 1 (Exact) | `body.search(text)` | Exact text range | TIGHT ✓ |
+| 2 (Normalized) | `body.search(normalized)` | Exact text range | TIGHT ✓ |
+| 3 (Fuzzy) | `paragraph.getRange()` | Full paragraph | PARAGRAPH ✗ |
+
+### Critical Findings
+
+**1. Tier 3 fuzzy returns PARAGRAPH range — confirmed root cause (line 955)**
+```typescript
+const range = matchedParagraph.paragraph.getRange();
+```
+When Tier 3 activates, the returned range is the entire paragraph. When `insertOoxml(ooxml, Word.InsertLocation.replace)` is called on this range (in `applyAIRedline()`), it replaces the ENTIRE paragraph with the OOXML. Even though the OOXML has word-level diffs, Word treats the whole operation as a revision.
+
+**2. Tier 1 truncation at 255 chars causes partial matching (line 893-894)**
+```typescript
+const tier1Text = searchText.length <= WORD_SEARCH_LIMIT
+    ? searchText
+    : searchText.slice(0, WORD_SEARCH_LIMIT);
+```
+If the target text is 500 chars and the first 255 match a different clause, Tier 1 returns the WRONG range. Confidence is 0.9 (not 1.0) but this is still treated as a valid match.
+
+**3. Tier 2 strips ALL punctuation (line 904)**
+```typescript
+const normalizedSearch = searchText.replace(/[^\w\s]/g, '').trim().slice(0, 150);
+```
+This removes periods, commas, semicolons, quotes, parentheses. "Section 8.2(a)" becomes "Section 82a". This could match different text. Also, for legal text heavy with punctuation, the normalized version may be too generic.
+
+**4. Tier 1 always takes first match (line 900)**
+```typescript
+return { range: exactResults.items[0], ... };
+```
+If the same text appears multiple times in the document (common: "shall indemnify and hold harmless"), the FIRST occurrence is always selected. This could be the wrong instance.
+
+**5. Fuse.js threshold 0.25 = 75% minimum (line 932)**
+Combined with MIN_FUZZY_CONFIDENCE of 0.6, effectively needs 60% confidence to accept. This is quite lenient — a paragraph sharing only 60% words with the search text could match. In legal documents with similar boilerplate paragraphs, false matches are likely.
+
+**6. No search prioritization for multiple Tier 1 matches**
+If `body.search()` returns multiple matches (items.length > 1), only the first is used. The code should prioritize by:
+- Document position (nearest to the risk's known position)
+- Surrounding context
+- Exact vs partial match
+
+### Summary
+- **Tier 1 and 2**: Range is tight (exact search text match) ✓
+- **Tier 3**: Range is paragraph-level — THIS is the "whole paragraph turns red" bug
+- **Prevalence**: Tier 3 activates when AI quotes don't match document text exactly (common with LLMs)
+- **Fix direction**: Tier 3 should `paragraph.search()` within the matched paragraph to get a tighter range
