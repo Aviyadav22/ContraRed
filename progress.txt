@@ -3083,3 +3083,87 @@ Buttons inside risk cards (Generate Fix, Apply, Highlight, Research) are created
 - Office.js tracked objects managed via Word.run automatic tracking ✓
 - Minor: `DocumentSelectionChanged` handler not cleaned on page unload
 - Minor: `appliedFixesMap` grows unbounded across scan sessions
+
+## Iteration 56 — ADDIN-8: api.ts Full Audit (602 lines)
+**Task:** Token handling, error retry logic, timeout configuration. Is the API client production-ready?
+
+### Token Handling: SECURE (HttpOnly cookies)
+- **No tokens stored in JavaScript** — tokens are HttpOnly cookies set by the server (line 312 comment)
+- `isLoggedIn()` checks for stored user profile (not token) as a proxy indicator
+- CSRF token read from cookie: `getCsrfToken()` (line 168) — added to state-changing requests
+- **Login flow**: POST form-urlencoded to /auth/login → server sets cookies → only user profile stored in localStorage
+
+### Error Retry Logic: PARTIAL
+- **401 retry**: On 401 response, attempts cookie-based refresh once, then retries original request with new CSRF token (lines 234-268). If refresh fails → logs out. ✓
+- **No retry for 429 (rate limit)**: Error thrown immediately. No exponential backoff. ✗
+- **No retry for 500/503 (server error)**: Error thrown immediately. ✗
+- **No retry for network errors**: `Failed to fetch` thrown immediately. ✗
+- `isRefreshing` flag prevents concurrent refresh attempts ✓
+
+### Timeout Configuration
+- **AbortController timeout: 120 seconds (2 minutes)** (line 210)
+- Applied to ALL requests uniformly — same timeout for quick health checks and long AI analysis
+- Clear error message: "Request timed out after 2 minutes" ✓
+- Timeout cleanup in `finally` block ✓
+
+### Critical Findings
+
+**1. Login sends credentials as form-urlencoded (line 295-303)**
+```typescript
+const formData = new URLSearchParams();
+formData.append('username', email);
+formData.append('password', password);
+```
+Uses `application/x-www-form-urlencoded` instead of JSON. This is for OAuth2 compatibility (FastAPI's `OAuth2PasswordRequestForm`). The password is in the request body, not the URL. With HTTPS this is fine, but form-urlencoded is slightly less secure than JSON because some proxies log form bodies.
+
+**2. Health check bypasses the `request()` method (lines 591-596)**
+```typescript
+async healthCheck(): Promise<{ status: string; version: string }> {
+    const baseUrl = API_BASE_URL.replace('/api/v1', '');
+    const response = await fetch(`${baseUrl}/health`);
+```
+Health check uses raw `fetch` without:
+- Timeout (AbortController not used)
+- CSRF token
+- Credentials (no `credentials: 'include'`)
+- Error message parsing
+This means the health check could hang indefinitely on a slow/down server.
+
+**3. `exportReport()` also bypasses `request()` method (line ~530)**
+Uses raw `fetch` with some error handling but no timeout, no CSRF (actually it does add CSRF manually), and returns a blob directly. Acceptable for file downloads.
+
+**4. Error message extraction is robust (lines 271-277)**
+```typescript
+const detail = error.detail;
+const message = typeof detail === 'object' && detail?.message
+    ? detail.message
+    : typeof detail === 'string' ? detail : `HTTP ${response.status}`;
+```
+Handles both `{detail: "string"}` and `{detail: {message: "string"}}` formats from the backend. ✓
+
+**5. CSRF token handling is correct (lines 168-204)**
+- Reads `csrf_token` from document cookie
+- Adds `X-CSRF-Token` header on POST/PUT/DELETE
+- Refreshes CSRF token after auth refresh (line 247-248)
+- **But**: If CSRF cookie is missing (e.g., first visit), requests proceed without it. The backend must validate CSRF — the client doesn't enforce its presence.
+
+**6. No request deduplication**
+If the same API call is made twice in rapid succession (e.g., double-click on scan), both requests are sent. The `request()` method has no deduplication layer. This relates to the ADDIN-3 finding about missing debounce guards.
+
+**7. 120s timeout is too long for subtask calls**
+Fix generation (2-10s expected) and clause analysis (2-10s) share the same 120s timeout as full contract analysis (10-60s). A user waiting 120s for a fix generation knows something is wrong after 30s.
+
+### Production Readiness Assessment
+| Criterion | Status | Notes |
+|---|---|---|
+| Token security | ✓ GOOD | HttpOnly cookies, no JS token storage |
+| CSRF protection | ✓ GOOD | Token in header for state-changing requests |
+| Auth refresh | ✓ GOOD | Single-attempt refresh with retry |
+| Error parsing | ✓ GOOD | Handles multiple backend error formats |
+| Timeout | ⚠️ PARTIAL | 120s for all — too long for subtasks |
+| Retry (429) | ✗ MISSING | No backoff for rate limits |
+| Retry (5xx) | ✗ MISSING | No retry for server errors |
+| Health check | ⚠️ WEAK | No timeout, no credentials |
+
+### Verdict
+The API client is **production-functional but not production-hardened**. Auth/CSRF handling is solid. Missing: request retry with backoff, per-endpoint timeouts, health check robustness.
