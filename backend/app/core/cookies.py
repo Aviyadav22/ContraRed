@@ -100,8 +100,9 @@ def validate_csrf(request: Request) -> bool:
     csrf_cookie = request.cookies.get("csrf_token")
     csrf_header = request.headers.get("X-CSRF-Token")
 
-    # If no CSRF cookie is set, the request is using Bearer auth (no CSRF needed)
+    # If no CSRF cookie is set, only bypass CSRF if request has a valid Bearer token
     if not csrf_cookie:
-        return True
+        auth_header = request.headers.get("Authorization", "")
+        return auth_header.startswith("Bearer ")
 
     return csrf_cookie == csrf_header

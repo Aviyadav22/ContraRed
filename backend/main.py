@@ -384,7 +384,8 @@ async def deep_health_check(response: Response):
             "latency_ms": round((_time.time() - db_start) * 1000, 1),
         }
     except Exception as e:
-        checks["database"] = {"status": "error", "detail": str(e)[:200]}
+        logger.error("Deep health check - database error: %s", e)
+        checks["database"] = {"status": "error", "detail": "Database connection failed"}
         overall = "unhealthy"
 
     # 2. Redis (non-critical — degrades gracefully)
@@ -400,7 +401,8 @@ async def deep_health_check(response: Response):
         else:
             checks["redis"] = {"status": "disconnected", "detail": "Degraded — caching disabled"}
     except Exception as e:
-        checks["redis"] = {"status": "disconnected", "detail": str(e)[:200]}
+        logger.warning("Deep health check - redis error: %s", e)
+        checks["redis"] = {"status": "disconnected", "detail": "Redis connection failed"}
 
     # 3. AI Provider (non-critical)
     try:
@@ -413,7 +415,8 @@ async def deep_health_check(response: Response):
             ai_status = "not_configured"
         checks["ai_provider"] = {"status": ai_status}
     except Exception as e:
-        checks["ai_provider"] = {"status": "error", "detail": str(e)[:200]}
+        logger.warning("Deep health check - AI provider error: %s", e)
+        checks["ai_provider"] = {"status": "error", "detail": "AI provider check failed"}
 
     total_ms = round((_time.time() - start) * 1000, 1)
 
