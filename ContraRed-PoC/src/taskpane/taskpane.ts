@@ -883,7 +883,8 @@ function hideLoginError(): void {
  */
 async function findTextInDocument(
   searchText: string,
-  context: Word.RequestContext
+  context: Word.RequestContext,
+  expectedPosition?: number  // approximate paragraph index from AI analysis for position awareness
 ): Promise<{ range: Word.Range | null; method: 'exact' | 'normalized' | 'fuzzy' | 'none'; confidence: number }> {
   const body = context.document.body;
   const WORD_SEARCH_LIMIT = 255;
@@ -897,6 +898,68 @@ async function findTextInDocument(
   await context.sync();
 
   if (exactResults.items.length > 0) {
+    // P0 #3: 255-char long clause handling — verify full text matches when truncated
+    if (searchText.length > WORD_SEARCH_LIMIT && exactResults.items.length > 0) {
+      // For each candidate match, expand range and verify full text
+      for (const candidate of exactResults.items) {
+        try {
+          // Load the paragraph text and check if full text is contained
+          const parentParagraph = candidate.paragraphs.getFirst();
+          parentParagraph.load('text');
+          await context.sync();
+          const paraText = parentParagraph.text;
+          // Normalize whitespace for comparison
+          const normalizedSearch = searchText.replace(/\s+/g, ' ').trim();
+          const normalizedPara = paraText.replace(/\s+/g, ' ').trim();
+          if (normalizedPara.includes(normalizedSearch) || normalizedSearch.includes(normalizedPara)) {
+            // Full text confirmed — select best match with position awareness
+            return { range: candidate, method: 'exact', confidence: 1.0 };
+          }
+        } catch {
+          // If expansion fails, fall through
+        }
+      }
+      // If no candidate fully matched, still use best candidate (truncated match)
+      // but with lower confidence — fall through to pick best by position
+    }
+
+    // P0 #2: Position awareness — pick closest match when multiple results
+    if (exactResults.items.length > 1 && expectedPosition !== undefined) {
+      try {
+        // Load paragraph info for each result to determine position
+        const paragraphs = body.paragraphs;
+        paragraphs.load('items/text');
+        await context.sync();
+
+        let bestIdx = 0;
+        let bestDist = Infinity;
+
+        for (let ri = 0; ri < exactResults.items.length; ri++) {
+          const resultRange = exactResults.items[ri];
+          // Find which paragraph contains this result by checking paragraph containment
+          const resultParent = resultRange.paragraphs.getFirst();
+          resultParent.load('text');
+          await context.sync();
+
+          // Find paragraph index by matching text
+          for (let pi = 0; pi < paragraphs.items.length; pi++) {
+            if (paragraphs.items[pi].text === resultParent.text) {
+              const dist = Math.abs(pi - expectedPosition);
+              if (dist < bestDist) {
+                bestDist = dist;
+                bestIdx = ri;
+              }
+              break;
+            }
+          }
+        }
+
+        return { range: exactResults.items[bestIdx], method: 'exact', confidence: searchText.length <= WORD_SEARCH_LIMIT ? 1.0 : 0.9 };
+      } catch {
+        // If position detection fails, fall back to first match
+      }
+    }
+
     return { range: exactResults.items[0], method: 'exact', confidence: searchText.length <= WORD_SEARCH_LIMIT ? 1.0 : 0.9 };
   }
 
@@ -2324,7 +2387,51 @@ async function highlightAIRedlines(redlines: AIRedlineItem[]): Promise<void> {
 }
 
 /**
+ * Compute word-level diffs between original and replacement text.
+ * Uses a greedy LCS-like approach to identify keep/replace/delete/insert operations.
+ * Returns operations suitable for surgical Word API search+replace.
+ */
+function computeWordDiffs(original: string, replacement: string): Array<{type: 'keep'|'replace'|'delete'|'insert', oldText: string, newText: string}> {
+  const origWords = original.split(/(\s+)/);
+  const replWords = replacement.split(/(\s+)/);
+  const diffs: Array<{type: 'keep'|'replace'|'delete'|'insert', oldText: string, newText: string}> = [];
+  let i = 0, j = 0;
+  while (i < origWords.length && j < replWords.length) {
+    if (origWords[i] === replWords[j]) {
+      diffs.push({type: 'keep', oldText: origWords[i], newText: replWords[j]});
+      i++; j++;
+    } else {
+      // Find next matching word in both sequences (look ahead up to 10 tokens)
+      let foundOrig = -1, foundRepl = -1;
+      for (let k = i + 1; k < Math.min(i + 10, origWords.length); k++) {
+        if (origWords[k] === replWords[j]) { foundOrig = k; break; }
+      }
+      for (let k = j + 1; k < Math.min(j + 10, replWords.length); k++) {
+        if (replWords[k] === origWords[i]) { foundRepl = k; break; }
+      }
+      if (foundOrig >= 0 && (foundRepl < 0 || foundOrig - i <= foundRepl - j)) {
+        // Delete words from original until match
+        for (let k = i; k < foundOrig; k++) diffs.push({type: 'delete', oldText: origWords[k], newText: ''});
+        i = foundOrig;
+      } else if (foundRepl >= 0) {
+        // Insert words from replacement until match
+        for (let k = j; k < foundRepl; k++) diffs.push({type: 'insert', oldText: '', newText: replWords[k]});
+        j = foundRepl;
+      } else {
+        diffs.push({type: 'replace', oldText: origWords[i], newText: replWords[j]});
+        i++; j++;
+      }
+    }
+  }
+  while (i < origWords.length) { diffs.push({type: 'delete', oldText: origWords[i++], newText: ''}); }
+  while (j < replWords.length) { diffs.push({type: 'insert', oldText: '', newText: replWords[j++]}); }
+  return diffs;
+}
+
+/**
  * Apply an AI-suggested fix using Track Changes.
+ * Primary approach: surgical word-level search+replace (avoids OOXML paragraph destruction).
+ * Fallback: OOXML insertOoxml if surgical approach fails.
  */
 async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, fixText?: string): Promise<void> {
   // Fix #10: Don't fall back to recommendation as literal replacement text
@@ -2343,52 +2450,178 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, 
 
   // Office webview doesn't support window.confirm() — proceed directly
 
+  // P1 #27: Loading indicator — disable all apply buttons on this card
+  const cardApplyBtns = cardElement.querySelectorAll('.btn-primary') as NodeListOf<HTMLButtonElement>;
+  cardApplyBtns.forEach(btn => { btn.disabled = true; });
+  cardElement.classList.add('applying');
+  // Add a visual applying indicator
+  let applyingIndicator: HTMLElement | null = null;
   try {
-    // Fetch OOXML BEFORE entering Word.run to avoid context timeout
-    const redlineResponse = await api.generateRedlineZDR(
-      currentAIAnalysis?.document_id || 'ai-doc',
-      redline.id,
-      redline.original_text,
-      textToApply,
-      undefined,
-      redline.redline_type || 'violation'
-    );
+    applyingIndicator = document.createElement('div');
+    applyingIndicator.className = 'applying-indicator';
+    applyingIndicator.style.cssText = 'padding:6px 8px;background:#DBEAFE;border-radius:6px;margin:4px 0;font-size:11px;color:#1E40AF;text-align:center;';
+    applyingIndicator.textContent = 'Applying fix to document...';
+    cardElement.appendChild(applyingIndicator);
+  } catch { /* indicator is non-critical */ }
 
-    await Word.run(async (context) => {
-      // Enable tracked changes before applying edits (requires WordApi 1.4+)
+  try {
+    let surgicalSuccess = false;
+
+    // PRIMARY APPROACH: Surgical word-level search+replace (P0 #1 + #5)
+    // This avoids OOXML paragraph destruction and double-tracked revisions
+    if (redline.redline_type !== 'missing') {
       try {
-        context.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+        await Word.run(async (context) => {
+          // Enable tracked changes before applying edits (requires WordApi 1.4+)
+          try {
+            context.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+            await context.sync();
+          } catch (trackErr) {
+            log.warn('Could not enable ChangeTrackingMode:', trackErr);
+          }
+
+          const result = await findTextInDocument(redline.original_text, context);
+
+          if (!result.range) {
+            // Will fall through to OOXML fallback
+            throw new Error('SURGICAL_NO_RANGE');
+          }
+
+          // Compute word-level diffs between original and replacement
+          const diffs = computeWordDiffs(redline.original_text, textToApply);
+
+          // Check if there are actual changes to apply
+          const hasChanges = diffs.some(d => d.type !== 'keep');
+          if (!hasChanges) {
+            log.warn('No differences found between original and fix text');
+            throw new Error('SURGICAL_NO_DIFFS');
+          }
+
+          // Collect non-whitespace-only change operations for surgical replacement
+          const changeOps = diffs.filter(d => d.type !== 'keep' && d.oldText.trim() !== '' || (d.type === 'insert' && d.newText.trim() !== ''));
+
+          // For each replacement/deletion, search within the found range and apply
+          // Process in REVERSE order to avoid position shifting
+          const reversedOps = [...changeOps].reverse();
+
+          for (const op of reversedOps) {
+            if (op.type === 'replace' && op.oldText.trim()) {
+              // Search for the old word within the clause range
+              const searchResults = result.range.search(op.oldText, { matchCase: true, matchWholeWord: false });
+              searchResults.load('items');
+              await context.sync();
+
+              if (searchResults.items.length > 0) {
+                // Replace with new text — Word natively tracks this change
+                searchResults.items[searchResults.items.length - 1].insertText(op.newText, Word.InsertLocation.replace);
+                await context.sync();
+              }
+            } else if (op.type === 'delete' && op.oldText.trim()) {
+              // Search for the word to delete within the clause range
+              const searchResults = result.range.search(op.oldText, { matchCase: true, matchWholeWord: false });
+              searchResults.load('items');
+              await context.sync();
+
+              if (searchResults.items.length > 0) {
+                searchResults.items[searchResults.items.length - 1].delete();
+                await context.sync();
+              }
+            } else if (op.type === 'insert' && op.newText.trim()) {
+              // For insertions, find preceding context and insert after it
+              // Look backwards in diffs for the nearest 'keep' or 'replace' to use as anchor
+              const opIdx = diffs.indexOf(op);
+              let anchorText = '';
+              for (let ai = opIdx - 1; ai >= 0; ai--) {
+                const prev = diffs[ai];
+                if ((prev.type === 'keep' || prev.type === 'replace') && prev.oldText.trim()) {
+                  anchorText = prev.type === 'keep' ? prev.oldText : prev.newText;
+                  break;
+                }
+              }
+              if (anchorText.trim()) {
+                const anchorResults = result.range.search(anchorText, { matchCase: true, matchWholeWord: false });
+                anchorResults.load('items');
+                await context.sync();
+                if (anchorResults.items.length > 0) {
+                  anchorResults.items[anchorResults.items.length - 1].insertText(op.newText, Word.InsertLocation.after);
+                  await context.sync();
+                }
+              }
+            }
+          }
+
+          // Add a comment explaining the redline
+          try {
+            result.range.insertComment(`ContraRed: ${redline.explanation || redline.rule_name || 'AI-suggested revision'}`);
+            await context.sync();
+          } catch (commentErr) {
+            log.warn('Could not insert comment:', commentErr);
+          }
+
+          surgicalSuccess = true;
+          log.info(`Surgical replace succeeded for: ${redline.rule_name}`);
+        });
+      } catch (surgicalErr) {
+        const errMsg = surgicalErr instanceof Error ? surgicalErr.message : String(surgicalErr);
+        if (!errMsg.includes('SURGICAL_')) {
+          log.warn('Surgical replace failed, falling back to OOXML:', surgicalErr);
+        } else {
+          log.info('Surgical approach not applicable, using OOXML fallback');
+        }
+        surgicalSuccess = false;
+      }
+    }
+
+    // FALLBACK: OOXML approach (for 'missing' type or when surgical fails)
+    if (!surgicalSuccess) {
+      // Fetch OOXML BEFORE entering Word.run to avoid context timeout
+      const redlineResponse = await api.generateRedlineZDR(
+        currentAIAnalysis?.document_id || 'ai-doc',
+        redline.id,
+        redline.original_text,
+        textToApply,
+        undefined,
+        redline.redline_type || 'violation'
+      );
+
+      await Word.run(async (context) => {
+        // Enable tracked changes before applying edits (requires WordApi 1.4+)
+        try {
+          context.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+          await context.sync();
+        } catch (trackErr) {
+          log.warn('Could not enable ChangeTrackingMode:', trackErr);
+        }
+
+        const result = await findTextInDocument(redline.original_text, context);
+
+        if (!result.range) {
+          showToastOnCard(cardElement, 'Could not locate this clause — text may have been modified');
+          return;
+        }
+
+        // Apply the Track Changes OOXML (fallback path)
+        if (redline.redline_type === 'missing') {
+          result.range.insertOoxml(redlineResponse.ooxml, Word.InsertLocation.after);
+        } else {
+          result.range.insertOoxml(redlineResponse.ooxml, Word.InsertLocation.replace);
+        }
         await context.sync();
-      } catch (trackErr) {
-        log.warn('Could not enable ChangeTrackingMode:', trackErr);
-        // Office webview doesn't support window.confirm() — proceed without track changes
-      }
 
-      const result = await findTextInDocument(redline.original_text, context);
-
-      if (!result.range) {
-        showToastOnCard(cardElement, 'Could not locate this clause — text may have been modified');
-        return;
-      }
-
-      // Apply the Track Changes OOXML
-      if (redline.redline_type === 'missing') {
-        result.range.insertOoxml(redlineResponse.ooxml, Word.InsertLocation.after);
-      } else {
-        result.range.insertOoxml(redlineResponse.ooxml, Word.InsertLocation.replace);
-      }
-      await context.sync();
-
-      // After applying the fix, add a comment explaining the redline
-      try {
+        // After applying the fix, add a comment explaining the redline
+        try {
           result.range.insertComment(`ContraRed: ${redline.explanation || redline.rule_name || 'AI-suggested revision'}`);
           await context.sync();
-      } catch (commentErr) {
-          // Comments require WordApi 1.4 — graceful fallback
+        } catch (commentErr) {
           log.warn('Could not insert comment:', commentErr);
-      }
+        }
 
-      // Store precise location info for undo targeting
+        log.info(`OOXML fallback applied for: ${redline.rule_name}`);
+      });
+    }
+
+    // Store precise location info for undo targeting (runs after either path)
+    await Word.run(async (context) => {
       let paragraphIndex = -1;
       try {
         const body = context.document.body;
@@ -2411,19 +2644,38 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, 
       } catch (locErr) {
         log.warn('Could not store fix location for undo:', locErr);
       }
-
-      // Mark as fixed and store the applied text for undo
-      fixedRisks.add(redline.id);
-      cardElement.classList.add('fixed');
-      cardElement.dataset.appliedFix = textToApply;
-      saveScanState();
-
-      // Show re-scan button so user can verify the fix
-      const reScanBtn = cardElement.querySelector('.rescan-btn') as HTMLElement;
-      if (reScanBtn) reScanBtn.style.display = 'inline-flex';
     });
+
+    // Mark as fixed and store the applied text for undo
+    fixedRisks.add(redline.id);
+    cardElement.classList.add('fixed');
+    cardElement.dataset.appliedFix = textToApply;
+    saveScanState();
+
+    // Show re-scan button so user can verify the fix
+    const reScanBtn = cardElement.querySelector('.rescan-btn') as HTMLElement;
+    if (reScanBtn) reScanBtn.style.display = 'inline-flex';
+
+    // P1 #27: Show success state
+    if (applyingIndicator) {
+      applyingIndicator.style.background = '#D1FAE5';
+      applyingIndicator.style.color = '#065F46';
+      applyingIndicator.textContent = 'Fix applied successfully';
+      setTimeout(() => applyingIndicator?.remove(), 3000);
+    }
   } catch (error) {
     showToastOnCard(cardElement, 'Fix failed: ' + (error instanceof Error ? error.message : String(error) || 'Unknown error'));
+    // P1 #27: Show failure state
+    if (applyingIndicator) {
+      applyingIndicator.style.background = '#FEE2E2';
+      applyingIndicator.style.color = '#991B1B';
+      applyingIndicator.textContent = 'Fix failed — see error above';
+      setTimeout(() => applyingIndicator?.remove(), 5000);
+    }
+  } finally {
+    // P1 #27: Re-enable buttons
+    cardApplyBtns.forEach(btn => { btn.disabled = false; });
+    cardElement.classList.remove('applying');
   }
 }
 
