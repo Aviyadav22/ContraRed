@@ -4141,3 +4141,50 @@ But this is a P2 optimization — the current approach works for the typical use
 | Two users, same doc | Independent sessions, no cross-contamination | ✓ Safe |
 | Same user, double scan | Frontend guards ✓, backend allows if bypassed | ⚠️ Low |
 | Close Word mid-scan | Quota consumed, result discarded, previous state restored | ⚠️ Low |
+
+## Iteration 78 — EDGE-4: Playbook Edge Cases
+
+### Playbook with 0 Rules
+**Expected**: Analysis still runs using built-in defaults or generic AI analysis.
+**Actual**: ✓ CORRECT
+- `RuleEngine.__init__` (rule_engine.py:339-348): If `rules=None` or empty, loads `ALL_RULES` (78 built-in rules) or `DEFAULT_RULES` (13 rules)
+- `format_playbook_rules()` (gemini_analyzer.py:193-194): Returns "No specific playbook rules provided. Apply standard commercial contract best practices."
+- Pipeline Stage 2 still runs with default rules, Stage 3 AI uses generic best practices
+- **Net result**: Analysis works correctly, just less customized
+
+### Playbook with 200 Rules (Performance)
+**Expected**: Slower regex stage, larger AI prompt, but functional.
+**Actual**: ⚠️ PERFORMANCE CONCERN
+- **Stage 2 (Regex)**: 200 rules × 5 patterns each = 1,000 regex matches against full text. For 50K-char contract, each `re.finditer()` is O(n). Total: ~50M character operations. Estimated: 200-500ms. Acceptable.
+- **Stage 3 (AI prompt)**: 200 rules × ~50 tokens each = 10,000 tokens for rules context alone. Combined with 50K-token contract = 60K+ input tokens. Within Gemini Pro's 1M context but output quality may degrade — AI may rush through later rules.
+- **Prompt instruction**: "Evaluate EACH rule against the contract" — 200 rules is a lot to evaluate exhaustively. AI may skip or combine rules.
+- `max_output_tokens = 32,768` — sufficient for 200 rule evaluations if AI is terse.
+- **No pagination or batching** of rules — all 200 sent in one prompt.
+
+### Rule That Matches Every Clause (False Positive Storm)
+**Expected**: Many matches but deduplication prevents flooding.
+**Actual**: ⚠️ PARTIALLY HANDLED
+- A rule with pattern `\b(the|and|or|shall)\b` would match every sentence
+- `_remove_overlapping_matches()` (rule_engine.py:515-547): Deduplicates within same rule using 100-char proximity. Reduces overlapping matches to one per "region" ✓
+- `_dedupe_cross_rule_matches()` (rule_engine.py:549-566): Deduplicates across rules by normalized text ✓
+- BUT: A broad pattern could still generate 50-100 matches after dedup (one per paragraph)
+- **Frontend**: No pagination on risk list — 100 risk cards would make the UI unusable
+- **AI impact**: Stage 3 receives these as "regex-corroborated" findings, potentially inflating confidence scores for noise
+
+### Conflicting Rules (GREEN vs RED for Same Clause)
+**Expected**: Higher-risk rating should take precedence, or both shown with explanation.
+**Actual**: ⚠️ NO CONFLICT RESOLUTION
+- If two rules match the same clause — one GREEN, one RED — BOTH redlines are created
+- `_dedupe_cross_rule_matches()` deduplicates by EXACT text match. If the expanded text differs slightly (different sentence boundaries), both are kept.
+- **AI analysis**: AI may independently assign different risk levels to the same clause based on different playbook rules. Both appear in the redline list.
+- **User sees**: Two risk cards for the same clause, one saying GREEN ("standard provision") and one saying RED ("uncapped liability"). Confusing.
+- **No priority system**: No mechanism to say "if Rule A matches, suppress Rule B for the same text"
+- **Playbook dependencies** (cross-clause dependencies in PLAYBOOK-3) could handle this, but they operate on DIFFERENT rules affecting DIFFERENT clauses, not conflicting assessments of the SAME clause.
+
+### Summary
+| Edge Case | Handled? | Impact |
+|---|---|---|
+| 0 rules | ✓ | Falls back to defaults |
+| 200 rules | ⚠️ | Prompt may be too large, AI may skip rules |
+| False positive storm | ⚠️ | Dedup helps but UI can't handle 100 cards |
+| Conflicting rules | ✗ | Both shown — confusing contradictory ratings |
