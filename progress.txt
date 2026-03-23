@@ -4236,3 +4236,9 @@ But this is a P2 optimization — the current approach works for the typical use
 
 ## Iteration 80 — FINAL-1: Created PRIORITY_MATRIX.md
 45 total findings: 9 P0 (~52h), 19 P1 (~53h), 17 P2 (~124h). Total ~229 hours estimated effort.
+
+## Iteration 81 — FINAL-2: Created ARCHITECTURAL_DECISIONS.md
+Three key decisions requiring human input:
+1. Regex vs AI migration — recommend Option B (Gradual Hybrid, 12 weeks)
+2. Playbook schema migration — additive nullable fields, backward compatible
+3. Text replacement fix — recommend Option A (Surgical search+replace, 16h) — BLOCKS LAUNCH

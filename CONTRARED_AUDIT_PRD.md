@@ -168,7 +168,7 @@ This is the critical "whole paragraph turns red" bug.
   **P2 (First month):** optimization, cleanup, nice-to-haves.
   For each issue: description, impact, estimated effort (hours), files affected, recommended approach.
 
-- [ ] FINAL-2: Create ARCHITECTURAL_DECISIONS.md documenting the 3 key decisions that need human input:
+- [x] FINAL-2: Create ARCHITECTURAL_DECISIONS.md documenting the 3 key decisions that need human input:
   1. **Regex vs AI migration** — recommended approach, migration order, backward compatibility strategy, estimated cost/timeline.
   2. **Playbook schema migration** — new schema design, data migration plan, dashboard UX changes, backward compatibility.
   3. **Text replacement fix** — recommended option (A/B/C from OOXML-10), implementation plan, testing strategy.
