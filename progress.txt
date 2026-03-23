@@ -1037,3 +1037,78 @@ This is the regex dependency point. Migration to AI-native requires changing thi
 2. **`risk_level_at_tier` is String not Enum** — allows invalid values
 3. **`tags` default=list** — passes type not instance (technically wrong)
 4. **Schema is enterprise-grade** — 9 tables with tiers/conditions/dependencies/versions/marketplace
+
+## Iteration 26 — PLAYBOOK-2: playbooks.py Endpoints Audit (1507 lines)
+**Task:** Read all 1507 lines (not "1200+" as PRD states). Trace CRUD lifecycle.
+**File:** `backend/app/api/v1/endpoints/playbooks.py` (1507 lines)
+
+### Route Inventory — 25 endpoints
+
+**Playbook CRUD (5):** GET /, POST /, GET /{id}, PUT /{id}, DELETE /{id}, POST /{id}/publish
+**Rule CRUD (4):** POST /{id}/rules, PUT /{id}/rules/{rid}, DELETE /{id}/rules/{rid}, POST /{id}/rules/reorder
+**Templates (2):** GET /templates/browse, POST /templates/{id}/create
+**Marketplace (5):** GET /marketplace/browse, POST /marketplace/{id}/fork, POST /marketplace/{id}/rate, PUT /marketplace/{id}/rate, POST /{id}/marketplace/publish
+**Tiers (2):** GET /{id}/rules/{rid}/tiers, PUT /{id}/rules/{rid}/tiers (bulk upsert)
+**Conditions (3):** GET /{id}/conditions, POST /{id}/conditions, DELETE /{id}/conditions/{cid}
+**Overrides (2):** POST /{id}/conditions/{cid}/overrides, DELETE /{id}/conditions/{cid}/overrides/{oid}
+**Dependencies (3):** GET /{id}/dependencies, POST /{id}/dependencies, DELETE /{id}/dependencies/{did}
+**Versions (5):** GET /{id}/versions, POST /{id}/versions, GET /{id}/versions/{vid}, GET /{id}/versions/diff/{a}/{b}, POST /{id}/versions/{vid}/rollback
+
+### Critical Findings
+
+**1. Rule creation stores regex patterns directly from user input (line 761)**
+```python
+detection_patterns={"patterns": rule_data.detection_patterns, "match_type": rule_data.match_type}
+```
+No validation of the regex patterns before storage. Combined with the ReDoS vulnerability in `from_playbook_rules()` (rule_engine.py:663), a user can:
+1. Create a rule with `match_type: "regex"` and pattern `(a+)+$`
+2. The pattern is stored in DB
+3. When another user loads this playbook for analysis, the regex is compiled and causes CPU exhaustion
+**Severity: P0 security issue** — remote DoS via crafted playbook rule
+
+**2. Access control inconsistency**
+- `list_playbooks` (line 121): Shows public + own + org playbooks ✓
+- `get_playbook` (line 533): Checks public OR own OR org ✓
+- `update_playbook` (line 591): Checks `created_by == current_user.id` — **only creator, not org admins**
+- `delete_playbook` (line 651): Same — **only creator**
+- **Problem**: If the creator leaves the organization, no one can update/delete their playbooks. Org admins should have override access.
+
+**3. Fork doesn't copy conditions, dependencies, or versions (lines 397-424)**
+`fork_playbook()` copies rules and tiers but NOT:
+- Conditions (PlaybookCondition)
+- Rule overrides (PlaybookRuleOverride)
+- Dependencies (PlaybookRuleDependency)
+- Versions (PlaybookVersion)
+This means forked playbooks lose their conditional logic, which could be the most valuable part.
+
+**4. Rating aggregation race condition (lines 477-479)**
+```python
+total = (mp.avg_rating or 0) * (mp.rating_count or 0) + data.rating
+mp.rating_count = (mp.rating_count or 0) + 1
+mp.avg_rating = total / mp.rating_count
+```
+Two concurrent ratings could both read the same `avg_rating` and `rating_count`, causing the aggregate to be wrong. Should use `F()` expressions or a CTE for atomic update.
+
+**5. No pagination on tier/condition/dependency/version list endpoints**
+`list_tiers`, `list_conditions`, `list_dependencies` all return ALL items without pagination. For a playbook with 200+ conditions or dependencies, this could be slow.
+
+**6. Override deletion doesn't check parent chain (line 1234)**
+`delete_override` checks only `PlaybookRuleOverride.id == override_id` — doesn't verify the override belongs to the specified condition_id and playbook_id. A user could delete overrides from other playbooks by guessing override IDs.
+
+**7. Version rollback creates a new version (line 1448)**
+`rollback()` creates a NEW version with the old snapshot rather than reverting to the old version number. This is correct behavior (preserves history) but should be documented for users.
+
+**8. `PlaybookResponse` uses `is_default` from model but doesn't include `created_by` or `party_side` (line 277)**
+The `create_from_template` endpoint passes `created_by=str(current_user.id)` to `PlaybookResponse` (line 277), but `PlaybookResponse` doesn't have a `created_by` field — this would cause a Pydantic validation error. **BUG**: Pydantic v2 with `model_config` may silently ignore extra fields, but this is still wrong.
+
+### Lifecycle Summary
+1. **Create**: POST / → Playbook created with org_id, creator → audit logged
+2. **Add Rules**: POST /{id}/rules → RuleCreate with detection_patterns stored as JSONB
+3. **Configure Tiers**: PUT /{id}/rules/{rid}/tiers → Bulk upsert of negotiation tiers
+4. **Set Conditions**: POST /{id}/conditions → Conditional logic for context-dependent behavior
+5. **Add Overrides**: POST /{id}/conditions/{cid}/overrides → Per-condition rule adjustments
+6. **Set Dependencies**: POST /{id}/dependencies → Cross-clause dependency rules
+7. **Version**: POST /{id}/versions → Snapshot current state
+8. **Publish**: POST /{id}/marketplace/publish → Make available to community
+9. **Fork**: POST /marketplace/{id}/fork → Copy playbook with rules+tiers (not conditions/deps)
+10. **Apply**: Loaded by analysis_pipeline via `from_playbook_rules()` → compiled to regex → run
