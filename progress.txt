@@ -155,3 +155,160 @@
 ## Iteration 8 — AUDIT-8: Async Task System
 **Task:** Map TaskQueue, AnalysisJob lifecycle, frontend polling.
 **What I learned:** TaskQueue uses Redis lists (or in-memory dict fallback). JobStatus: QUEUED→RUNNING→COMPLETED/FAILED. Frontend polls GET /documents/jobs/{job_id}. Fully wired.
+
+## Iteration 15 — REGEX-1: rule_engine.py Full Audit
+**Task:** Read all 730 lines of `backend/app/services/rule_engine.py`. Document every regex pattern and rule. Classify each as KEEP/REPLACE/REMOVE.
+**File:** `backend/app/services/rule_engine.py` (730 lines)
+
+### File Structure
+- **Lines 1-26**: Imports + logger
+- **Lines 29-33**: `RiskLevel` enum (RED/YELLOW/GREEN)
+- **Lines 36-51**: `RulePattern` dataclass (v1 rule format)
+- **Lines 53-68**: `SmartRule` dataclass (v2, extends RulePattern with negative_patterns, escalation/de-escalation)
+- **Lines 71-94**: `RuleMatch` dataclass (output of matching, includes cache_key for AI responses)
+- **Lines 97-113**: Risk escalation/de-escalation helpers (`_escalate_risk`, `_deescalate_risk`)
+- **Lines 120-312**: `DEFAULT_RULES` list — 13 built-in rules (not 16 as PRD states)
+- **Lines 315-730**: `RuleEngine` class
+
+### All 13 DEFAULT_RULES — Regex Patterns Inventory
+
+**1. `unlimited_liability` (RED, deal_breaker=True)**
+- `\b(unlimited\s+liability)\b`
+- `\b(no\s+(cap|limit|limitation)\s+(on|to)\s+liability)\b`
+- `\b(without\s+limit(ation)?\s+of\s+liability)\b`
+- `\b(liability\s+shall\s+not\s+be\s+limited)\b`
+- **Classification: REPLACE-WITH-AI** — These catch obvious phrases but miss nuanced unlimited liability clauses. E.g., "The Vendor's aggregate liability hereunder shall not be subject to any monetary limitation" would NOT match any pattern. AI understands semantic equivalents.
+
+**2. `unilateral_termination` (RED, deal_breaker=True)**
+- `\b(terminate\s+(this\s+)?(agreement|contract)\s+(at\s+)?any\s+time)\b`
+- `\b(termination\s+without\s+(cause|reason))\b`
+- `\b(may\s+terminate\s+(immediately|forthwith)\s+without\s+(notice|cause))\b`
+- **Classification: REPLACE-WITH-AI** — Misses "Either party reserves the right to discontinue this arrangement at its sole discretion" — semantically identical but uses different vocabulary. Also can't distinguish buyer vs seller termination rights (context-dependent risk).
+
+**3. `broad_indemnification` (SmartRule, base YELLOW, can escalate to RED)**
+- Positive patterns (4): `indemnify and hold harmless`, `defend, indemnify, hold harmless`, `indemnif(y|ication) against any and all`, `unlimited indemnif(y|ication)`
+- Negative patterns (1): `mutual(ly)?.{0,80}limited\s+to` — suppresses if mutual+limited
+- Escalation (3): `one-sided|unilateral`, `uncapped|without cap|no cap`, `any and all (loss|damage|claim|liabilit)`
+- De-escalation (1): `mutual(ly)?.{0,120}capped? (at|to)`
+- **Classification: REPLACE-WITH-AI** — This is the most sophisticated rule (SmartRule with escalation logic), but still can't handle: (a) clauses that describe indemnification without using the word "indemnify", (b) cross-reference indemnification ("as set forth in Section 8.2"), (c) carve-outs that change the risk profile.
+
+**4. `ip_assignment` (RED, deal_breaker=True)**
+- `\b(work(s)?\s+for\s+hire)\b`
+- `\b(assign(s|ment)?\s+(of\s+)?all\s+(intellectual\s+property|IP))\b`
+- `\b(all\s+(rights|IP|intellectual\s+property)\s+shall\s+(belong|vest)\s+to)\b`
+- **Classification: REPLACE-WITH-AI** — Misses "any developments, inventions, or improvements made during the term shall become the exclusive property of Client" — no "work for hire" or "assign" keyword.
+
+**5. `auto_renewal` (YELLOW)**
+- `\b(auto(matic(ally)?)?[\s-]?renew(al|s|ed)?)\b`
+- `\b(shall\s+(automatically\s+)?renew\s+for\s+(successive|additional))\b`
+- `\b(renew(s|ed)?\s+automatically)\b`
+- **Classification: KEEP** — Auto-renewal uses very standard language. Regex is fast and accurate here. False negatives unlikely.
+
+**6. `assignment_restriction` (YELLOW)**
+- `\b(may\s+not\s+assign)\b`
+- `\b(no\s+assignment\s+without\s+consent)\b`
+- `\b(assignment\s+(is\s+)?(prohibited|restricted))\b`
+- **Classification: REPLACE-WITH-AI** — Needs context: "may not assign without prior written consent, such consent not to be unreasonably withheld" is standard and fine. "may not assign under any circumstances" is problematic. Regex can't distinguish.
+
+**7. `non_compete` (YELLOW)**
+- `\b(non[\s-]?compete)\b`
+- `\b(shall\s+not\s+compete)\b`
+- `\b(restriction\s+on\s+competition)\b`
+- **Classification: REPLACE-WITH-AI** — Needs contextual analysis of scope, duration, geography. "Non-compete limited to 6 months in Mumbai" vs "Non-compete worldwide for 5 years" are drastically different risks.
+
+**8. `exclusive_dealing` (YELLOW)**
+- `\b(exclusive\s+(right|license|agreement))\b`
+- `\b(sole\s+and\s+exclusive)\b`
+- `\b(exclusivity\s+(period|term|clause))\b`
+- **Classification: REPLACE-WITH-AI** — "Exclusive right" could be perfectly fine (exclusive license to use software) or dangerous (exclusive dealing arrangement). Context-dependent.
+
+**9. `confidentiality_term` (YELLOW)**
+- `\b(perpetual\s+confidentiality)\b`
+- `\b(confidential(ity)?\s+(in\s+)?perpetuity)\b`
+- `\b(survive\s+(indefinitely|forever|in\s+perpetuity))\b`
+- **Classification: KEEP as pre-filter** — The keyword "perpetual" or "perpetuity" is a strong signal. But AI should evaluate whether perpetual confidentiality is actually problematic in context (trade secrets vs general business info).
+
+**10. `non_solicitation` (YELLOW)**
+- `\b(non[\s-]?solicit(ation)?)\b`
+- `\b(shall\s+not\s+solicit)\b`
+- `solicit.{0,100}(employee|personnel|staff|contractor)`
+- `\b(solicit,?\s+(induce,?\s+)?(recruit|hire|employ))\b`
+- `\b(recruit(ing)?\s+(any\s+)?employee)\b`
+- **Classification: KEEP as pre-filter** — Keyword-based detection is appropriate. AI should evaluate scope/duration.
+
+**11. `reverse_engineering` (YELLOW)**
+- `\b(reverse\s+engineer(ing)?)\b`
+- `\b(decompil(e|ation)|disassembl(e|y))\b`
+- `\b(derive\s+source\s+code)\b`
+- **Classification: KEEP** — Very specific technical terms. Regex is perfect here.
+
+**12. `governing_law` (GREEN)**
+- `\b(govern(ed|ing)\s+(by|law))\b`
+- `\b(laws\s+of\s+(the\s+)?(state|country|jurisdiction))\b`
+- `\b(applicable\s+law)\b`
+- **Classification: KEEP** — Standard clause detection. GREEN risk = informational only. Regex appropriate.
+
+**13. `notice_provision` (GREEN)**
+- `\b(notice(s)?\s+(shall|must|should)\s+be\s+(sent|given|provided))\b`
+- `\b(written\s+notice)\b`
+- **Classification: KEEP** — Standard clause detection. GREEN risk = informational only.
+
+### RuleEngine Class Methods Analysis
+
+**`__init__` (lines 328-390)** — KEEP
+- Loads rules (custom, expanded 75-rule library, or default 13)
+- Compiles all regex patterns at init time (good for performance)
+- Handles SmartRule negative/escalation patterns
+- Robust error handling for invalid regex
+
+**`evaluate` (lines 392-513)** — KEEP (but role should change)
+- Normalizes text via `normalize_text()` before matching
+- For each rule: finds all regex matches, applies negative suppression, expands to sentence, deduplicates
+- SmartRule: checks escalation/de-escalation in context window
+- **Key insight**: This should become a PRE-FILTER that feeds candidates to AI, not a standalone risk assessor. Currently its output goes directly to results.
+
+**`_remove_overlapping_matches` (lines 515-547)** — KEEP
+- Deduplicates within same rule using 100-char proximity threshold
+- Good heuristic for sentence-level dedup
+
+**`_dedupe_cross_rule_matches` (lines 549-566)** — KEEP
+- Prevents same text being flagged by multiple rules
+- Uses normalized text comparison
+
+**`_expand_to_sentence` (lines 568-608)** — KEEP
+- Expands regex match to surrounding sentence (max 300 chars)
+- Sentence boundary detection via `.!?;`
+- **Issue**: `;` as sentence boundary is debatable in legal text where semicolons separate list items within a single clause. Could cause truncated context.
+
+**`get_risk_summary` (lines 610-622)** — KEEP (utility)
+
+**`get_default_rules` (lines 624-627)** — KEEP (utility)
+
+**`from_playbook_rules` (lines 629-730)** — KEEP (but needs migration path)
+- Converts PlaybookRule DB objects into RulePattern/SmartRule instances
+- Supports 3 match_type modes: `exact` (escapes regex chars), `fuzzy` (word boundary), `regex` (raw)
+- Validates regex at compile time, skips invalid patterns
+- **Critical finding**: This is where user-created playbook rules become regex matchers. If we migrate to AI-native playbooks, this method needs the biggest change.
+- **Security note** (line 663-664): Raw regex patterns from users are compiled directly. No ReDoS protection. A malicious user could craft a catastrophic backtracking regex like `(a+)+$` that hangs the server.
+
+### Summary Classification
+
+| Classification | Count | Rules |
+|---|---|---|
+| **KEEP** | 5 | auto_renewal, reverse_engineering, governing_law, notice_provision, confidentiality_term (as pre-filter) |
+| **REPLACE-WITH-AI** | 8 | unlimited_liability, unilateral_termination, broad_indemnification, ip_assignment, assignment_restriction, non_compete, exclusive_dealing, non_solicitation (keep as pre-filter) |
+| **REMOVE** | 0 | None — all rules serve a purpose, but 8 should transition to AI-primary with regex as optional pre-filter |
+
+### Critical Findings
+
+1. **ReDoS vulnerability** (line 663-664): `from_playbook_rules()` compiles user-supplied regex patterns without ReDoS protection. A malicious regex could cause CPU exhaustion. This is a P0 security issue.
+
+2. **Semicolon as sentence boundary** (line 588): Legal contracts use semicolons within clauses for list items. Using `;` as a sentence terminator truncates clause context, leading to incomplete match text being sent to AI for verification.
+
+3. **13 rules, not 16**: The PRD mentions "16 built-in rules" but DEFAULT_RULES has only 13. The expanded library (rules_library.py, 75 rules) is the actual default.
+
+4. **SmartRule escalation is order-dependent** (lines 463-490): De-escalation is checked FIRST and takes priority. If both escalation and de-escalation patterns match, de-escalation wins. This is intentional but not documented for users.
+
+5. **from_playbook_rules uses rule.clause_type as the name** (line 705): `name=rule.clause_type` — this means the rule name shown to users is the clause_type, not the rule's actual title. Could cause confusing UI labels.
+
+6. **Normalized text dedup is too aggressive** (lines 556-566): If two genuinely different clauses have the same normalized text (e.g., two "governing law" clauses in different sections), only the first is kept. This is a false-negative risk for contracts with repeated standard language.
