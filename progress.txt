@@ -907,3 +907,75 @@ The 5-factor model architecture is sound. The weights and individual factor scor
 3. **Cross-reference map covers only 9/78 rules** and uses exact string matching
 4. **Asymmetric corroboration pairs** — relationship isn't bidirectional
 5. **Weight auto-normalization** (lines 106-109) is a good safety measure
+
+## Iteration 23 — REGEX-9: hallucination_guard.py Full Audit (423 lines)
+**Task:** Read all 423 lines (not "370" as PRD states). Document verification cascade, fuzzy threshold, deal-breaker handling.
+**File:** `backend/app/services/hallucination_guard.py` (423 lines)
+
+### Architecture Overview
+4-tier verification cascade for every AI-generated quote:
+
+| Tier | Method | Confidence | Status |
+|---|---|---|---|
+| 1 | Exact substring match | 1.0 | "exact" |
+| 2 | Normalized match (case+whitespace) | 0.99 | "normalized" |
+| 3 | Fuzzy match (rapidfuzz ≥80%) | score×0.95 | "fuzzy_corrected" |
+| 4 | No match (<70%) | 0.0 | "rejected" |
+
+Pre-computation on init: normalizes full contract text, generates 300-char sliding window segments with 100-char overlap for fuzzy matching.
+
+### Critical Findings
+
+**1. The 0.80 fuzzy threshold — is it correct? (line 127)**
+`FUZZY_PASS_THRESHOLD = 0.80` means any AI quote that is 80%+ similar to some 300-char segment of the contract is accepted.
+
+**Analysis**: 80% Levenshtein ratio on a 300-char segment means up to 60 characters can differ. For a legal clause like "The Vendor shall indemnify and hold harmless the Client", an 80% match could accept "The Vendor shall indemnify and hold harmless the Customer" (only "Client"→"Customer" changed). This is a DIFFERENT PARTY — the AI hallucinated the party name.
+
+**However**: The fuzzy match uses `partial_ratio` (line 330), not `ratio`. `partial_ratio` finds the best matching substring, so a short AI quote matching a longer segment at 80%+ is more lenient than 80% of the full segment. For short quotes, the guard switches to `fuzz.ratio` with score_cutoff=85 (line 217), which is stricter.
+
+**Recommendation**: The 0.80 threshold is on the edge. For legal text where a single word change can reverse meaning ("shall" → "shall not"), 0.85 would be safer. But increasing it risks rejecting valid quotes where AI adds/removes minor whitespace or punctuation.
+
+**2. Deal-breaker rules at confidence 0.3 — PRD concern**
+The PRD asks if deal-breaker rules are "kept at confidence 0.3". Looking at the code:
+- `verify_quote()` never uses 0.3 as a threshold
+- Fuzzy match confidence is `score/100 * 0.95` (line 225): an 80% fuzzy match gets confidence 0.76 (0.80 × 0.95)
+- Rejected quotes get confidence 0.0
+- The 0.3 appears nowhere in hallucination_guard.py
+
+**Where does 0.3 come from?** It's in confidence_scorer.py: the *playbook_alignment* factor defaults to 0.3 for generic findings (no specific playbook rule). This is a different system. The hallucination guard itself does NOT keep deal-breakers at 0.3.
+
+**3. `_find_actual_text()` position mapping is fragile (lines 358-414)**
+This function reverse-maps normalized positions back to original text positions. The algorithm:
+- Walks through original characters one by one
+- Tracks "normalized position" by simulating normalization
+- **Bug**: Line 386 checks `char in '"\' '` but the normalization function (`_normalize_for_comparison`) only strips quotes at EDGES, not internally. The position tracking doesn't account for:
+  - Punctuation stripping at edges (`.strip('"\' .,;:')`)
+  - Unicode normalization differences
+  - The actual `_normalize_for_comparison` removes characters the walker doesn't
+- **Result**: For quotes where normalization changes character count (e.g., stripping leading quotes), the returned original text may be offset by a few characters — extracting the wrong portion of the contract.
+
+**4. Sliding window parameters are hardcoded (line 151)**
+`window_size=300, step=100` — means segments overlap by 200 chars. For a 50-page contract (~100,000 chars), this generates ~1,000 segments. `process.extractOne` runs fuzzy comparison against ALL segments.
+
+**Performance**: rapidfuzz is C-optimized and fast, but 1,000 segments × multiple quotes per analysis could be measurable. For a contract with 20 AI findings, that's 20 × 1,000 = 20,000 fuzzy comparisons. Still fast with rapidfuzz but worth monitoring.
+
+**5. Token sort ratio fallback (lines 342-348)**
+If `partial_ratio` fails, the guard falls back to `token_sort_ratio`, which sorts words alphabetically before comparing. This handles cases where AI reorders words in a quote. **Risk**: Token sort can produce false positives — "The Client shall not indemnify the Vendor" and "The Vendor shall not indemnify the Client" have the same tokens and would match at 100%.
+
+**6. Re-query mechanism is well-designed (lines 279-308)**
+`needs_requery()` only triggers for deal-breaker rules that failed or had weak fuzzy matches (<85%). `get_requery_instruction()` generates a clear "copy verbatim" prompt. However, this function was identified as "disconnected" in iteration 9 (AUDIT-9) — it exists but may not be called by the pipeline.
+
+**7. Empty quote handling (lines 170-180)**
+Empty/blank quotes are immediately rejected with confidence 0.0. Correct behavior — AI sometimes returns empty original_text fields.
+
+**8. `_normalize_for_comparison` strips semantic punctuation (line 80)**
+Stripping `,;:` from edges means "Section 8:" and "Section 8" are treated identically. Fine for matching. But the confidence of 0.99 for normalized matches may overstate confidence when the normalization was actually aggressive.
+
+### Verdict: KEEP (with threshold refinement)
+The hallucination guard is a critical safety layer. The 4-tier verification cascade is well-architected. The main concerns are:
+- 0.80 fuzzy threshold may be too lenient for legal text where single-word changes reverse meaning
+- `_find_actual_text()` position mapping has offset bugs
+- Token sort fallback can produce false positives with word reordering
+- Re-query mechanism exists but may be disconnected from pipeline
+
+### Classification: KEEP — This is the most important quality gate in the system
