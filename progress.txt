@@ -3631,3 +3631,57 @@ If an organization has 50 users on the Pro tier, that's 50×200 = 10,000 scans/m
 
 ### Verdict
 Rate limiting EXISTS on all expensive AI endpoints (20-30/min). Combined with subscription quota (5-1000 scans per user), credit abuse is controlled for legitimate users. The vulnerability is X-Forwarded-For spoofing (SEC-3 #2) which bypasses IP-based rate limits, combined with stolen credentials.
+
+## Iteration 68 — SEC-7: OWASP Top 10 2025 + FastAPI Best Practices Cross-Reference
+
+### OWASP Top 10 2025 vs ContraRed
+
+| OWASP 2025 | Risk | ContraRed Status |
+|---|---|---|
+| A01: Broken Access Control | #1 | ✓ GOOD — org-based access control, RLS policies, 120/134 endpoints protected |
+| A02: Security Misconfiguration | #2 | ✓ GOOD — startup validation for secrets, DEBUG controls, API docs disabled in prod |
+| A03: Software Supply Chain | #3 (NEW) | ⚠️ NOT ASSESSED — no dependency scanning (pip-audit), no SBOM, no lock file audit |
+| A04: Injection | #4 | ✓ GOOD — parameterized SQL, React auto-escape XSS. ⚠️ Prompt injection medium risk |
+| A05: Cryptographic Failures | #5 | ✓ GOOD — bcrypt passwords, Fernet field encryption, HTTPS enforced (HSTS 2yr) |
+| A06: Vulnerable Components | #6 | ⚠️ NOT ASSESSED — no automated dependency vulnerability scanning |
+| A07: Auth & Identification | #7 | ✓ GOOD — JWT with rotation, MFA, account lockout. ⚠️ Password reset gaps (SEC-3) |
+| A08: Data Integrity | #8 | ✓ GOOD — CSRF protection, audit logging, version control for playbooks |
+| A09: Logging & Monitoring | #9 | ✓ EXCELLENT — PII redaction in logs, Sentry integration, request logging, audit events |
+| A10: Exceptional Conditions | #10 (NEW) | ✓ GOOD — global exception handler, graceful degradation in pipeline |
+
+### FastAPI Best Practices Cross-Reference
+
+| Best Practice | ContraRed Status |
+|---|---|
+| Disable debug/docs in production | ✓ docs_url=None, debug=False |
+| Generic error responses in prod | ✓ "An internal error occurred" |
+| OAuth2/JWT authentication | ✓ JWT with HttpOnly cookies |
+| Rate limiting | ✓ slowapi on all sensitive endpoints |
+| HTTPS enforcement | ✓ HSTS 2-year with preload |
+| Secrets in env vars | ✓ Pydantic Settings from env, validated on startup |
+| Security-relevant logging | ✓ Failed logins, permission denials, audit trail |
+| Dependency scanning | ✗ MISSING — no pip-audit or safety check |
+| WAF (Web Application Firewall) | ✗ MISSING — relies on Render.com infrastructure only |
+| Gunicorn + Uvicorn workers | ✓ Uvicorn via Procfile (single worker on Render free tier) |
+
+### New Vulnerabilities Found via OWASP 2025
+
+**A03: Software Supply Chain** — ContraRed has NO:
+- `pip-audit` or `safety` checks in CI/CD
+- Software Bill of Materials (SBOM)
+- Lock file (`requirements.txt` has versions but no hashes)
+- Dependency update policy
+- **Risk**: A compromised dependency (e.g., `rapidfuzz`, `python-docx`) could inject malicious code
+
+**A10: Mishandling of Exceptional Conditions** — Mostly handled:
+- Global exception handler catches all unhandled errors ✓
+- Pipeline stages have try/catch with graceful degradation ✓
+- **Gap**: Some mutations in dashboard silently fail (DASH-2 finding)
+- **Gap**: Polling errors in BatchUpload silently swallowed (DASH-3 finding)
+
+### Sources
+- [OWASP Top 10 2025](https://owasp.org/Top10/2025/)
+- [OWASP Top 10 2025 Changes](https://www.aikido.dev/blog/owasp-top-10-2025-changes-for-developers)
+- [FastAPI Best Practices Production 2026](https://fastlaunchapi.dev/blog/fastapi-best-practices-production-2026)
+- [FastAPI Security Guide](https://davidmuraya.com/blog/fastapi-security-guide/)
+- [Securing FastAPI Applications](https://github.com/VolkanSah/Securing-FastAPI-Applications)
