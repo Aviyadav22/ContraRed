@@ -209,6 +209,8 @@ class ConditionsEngine:
 
         # Track which match indices to suppress (delete after iteration)
         suppress_indices: set = set()
+        # Track which match indices have already been modified by a higher-priority override
+        modified_indices: set = set()
 
         for override in overrides:
             rule_uuid_str = str(override.rule_id)
@@ -219,6 +221,9 @@ class ConditionsEngine:
             for idx, match in enumerate(working):
                 if idx in suppress_indices:
                     continue  # Already suppressed by an earlier override
+
+                if idx in modified_indices:
+                    continue  # Higher-priority override already applied — skip
 
                 if not self._override_targets_match(
                     match, rule_uuid_str, target_clause_type
@@ -234,6 +239,9 @@ class ConditionsEngine:
                         override.id,
                     )
                     continue  # No further processing for this match
+
+                # Mark as modified so lower-priority overrides don't overwrite
+                modified_indices.add(idx)
 
                 # --- 2. Risk level ---
                 if override.override_risk_level is not None:

@@ -13,6 +13,7 @@ Templates:
   5. M&A / SPA (25 rules)
 """
 
+import json
 import uuid
 import logging
 from dataclasses import dataclass, field
@@ -904,7 +905,7 @@ async def create_playbook_from_template(
                 "fallback": rule_dict.get("fallback_position"),
                 "risk": rule_dict["risk_level"],
                 "deal_breaker": rule_dict["is_deal_breaker"],
-                "patterns": str(rule_dict["detection_patterns"]).replace("'", '"') if rule_dict.get("detection_patterns") else "{}",
+                "patterns": json.dumps(rule_dict["detection_patterns"]) if rule_dict.get("detection_patterns") else "{}",
                 "order_idx": rule_dict.get("order_index", 0),
                 "requires_ai": rule_dict.get("requires_ai_verification", True),
                 "category": rule_dict.get("category"),
