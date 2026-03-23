@@ -4188,3 +4188,48 @@ But this is a P2 optimization — the current approach works for the typical use
 | 200 rules | ⚠️ | Prompt may be too large, AI may skip rules |
 | False positive storm | ⚠️ | Dedup helps but UI can't handle 100 cards |
 | Conflicting rules | ✗ | Both shown — confusing contradictory ratings |
+
+## Iteration 79 — EDGE-5: Word API Edge Cases
+
+### Text Appearing Multiple Times (Which Instance Gets Replaced?)
+**Expected**: Replace the correct instance (the one the AI flagged).
+**Actual**: ✗ WRONG INSTANCE LIKELY
+- `findTextInDocument()` Tier 1 (taskpane.ts:900): `return { range: exactResults.items[0] }` — always returns the FIRST occurrence
+- If "shall indemnify and hold harmless" appears in both Section 5.1 and Section 8.3, and the AI flagged Section 8.3, the fix is applied to Section 5.1
+- **No position/context matching** — the system has no knowledge of which instance the AI was referring to
+- **Impact**: Modifying the WRONG clause in a legal contract — could change a clause that was compliant, making it non-compliant
+
+### Very Long Clauses (>255 chars, Word Search Limit)
+**Expected**: Full clause found and replaced correctly.
+**Actual**: ✗ PARTIAL REPLACEMENT (documented in OOXML-5)
+- Tier 1 truncates search to first 255 chars → finds partial match → replaces only the first 255 chars
+- Remaining clause text stays in document as orphaned fragment
+- For enterprise contracts: 40-60% of flagged clauses exceed 255 chars
+
+### Clauses Spanning Multiple Paragraphs
+**Expected**: Cross-paragraph clause found and handled as a unit.
+**Actual**: ✗ NOT HANDLED
+- `body.search()` searches within individual paragraphs — cannot find text spanning paragraph boundaries
+- Fuse.js Tier 3 matches against individual paragraphs — cannot match cross-paragraph text
+- AI may quote a clause that spans two paragraphs: "...obligations set forth herein.\n\nThe Vendor shall further..."
+- `findTextInDocument()` fails on all three tiers → returns `{ range: null, method: 'none' }`
+- **User sees**: "Could not locate this clause — text may have been modified"
+- **Impact**: Legitimate risks that span paragraph boundaries cannot be fixed via the add-in
+
+### Document with Existing Track Changes from Previous Review
+**Expected**: ContraRed changes are distinct from existing Track Changes.
+**Actual**: ⚠️ PROBLEMATIC (documented in OOXML-3 and OOXML-7)
+- `getDocumentText()` returns `body.text` which includes BOTH current and deleted text from pending Track Changes
+- AI sees and may quote deleted text that's already been removed
+- `findTextInDocument()` searches visible text only — deleted text isn't findable
+- **Result**: AI flags issues in already-deleted text → verification fails → findings rejected
+- Additionally: `changeTrackingMode = trackAll` (line 2360) means ContraRed's OOXML insertions are tracked as NEW changes, visually similar to existing Track Changes. No way to distinguish ContraRed's changes from previous reviewer's changes.
+- **Impact for lawyers**: Cannot tell which changes are ContraRed's vs previous reviewer's — defeats the purpose of using Track Changes for attribution
+
+### Summary
+| Edge Case | Handled? | Severity |
+|---|---|---|
+| Duplicate text (wrong instance) | ✗ | P0 — modifies wrong clause |
+| Long clauses >255 chars | ✗ | P0 — partial replacement orphans text |
+| Cross-paragraph clauses | ✗ | P1 — legitimate risks unfixable |
+| Existing Track Changes | ⚠️ | P1 — deleted text confuses AI, changes indistinguishable |
