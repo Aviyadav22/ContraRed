@@ -3841,3 +3841,68 @@ The full contract MUST be sent for holistic analysis. Chunking would lose cross-
 3. Keep system prompt and examples intact — quality depends on them
 4. Monitor actual token usage via Gemini API response metadata (currently estimated by word count — underreports by 30-50%)
 5. Consider caching analysis results by document hash — re-scanning the same document costs $0 instead of $0.06
+
+## Iteration 71 — PERF-2: Caching Audit
+
+### Caching Systems Inventory
+
+**1. CacheService (cache_service.py, 264 lines) — Redis-based**
+- Tenant-isolated: `org:{org_id}:` key prefix ✓
+- Max value size: 500K chars ✓ (prevents contract text storage)
+- Key builders: `make_analysis_key(contract_hash, playbook_id)` and `make_clause_key(clause_text, rule_id)`
+- Default TTL: 3600s (1 hour)
+- Graceful degradation: returns None when Redis unavailable ✓
+- **BUT: Redis is NOT configured on production** (REDIS_URL empty per memory notes)
+
+**2. PlaybookCache (playbook_cache.py, 158 lines) — In-memory**
+- `_engine_cache`: (playbook_id, updated_at) → compiled RuleEngine — avoids re-compiling regex
+- `_rules_dict_cache`: (playbook_id, updated_at) → rule dicts for prompt injection
+- `_MAX_CACHE_SIZE = 64` — FIFO eviction
+- Invalidation: `invalidate_playbook_cache()` called on playbook update/delete ✓
+- **ACTIVE and effective** — saves regex compilation on every analysis
+
+### What IS Being Cached?
+
+| Item | Cached? | Where | Hit Rate Potential |
+|---|---|---|---|
+| Compiled regex (RuleEngine) | ✓ In-memory | playbook_cache | HIGH — same playbook reused across scans |
+| Playbook rule dicts | ✓ In-memory | playbook_cache | HIGH |
+| AI analysis results | ✗ NOT cached | CacheService exists but Redis not configured | HIGH — same contract re-scanned repeatedly |
+| OOXML generation | ✗ NOT cached | Computed fresh each time | LOW — each fix is unique |
+| Defined terms extraction | ✗ NOT cached | Recomputed each scan | MEDIUM — same contract terms |
+| Jurisdiction detection | ✗ NOT cached | Recomputed each scan | LOW — very fast (regex) |
+| Fix generation | ✗ NOT cached | Each fix is unique | LOW |
+
+### Cache Hit Rate Potential
+
+**If Redis were configured:**
+- Re-scanning the same contract with the same playbook → **100% cache hit** → $0 AI cost
+- Re-scanning after minor edits → cache miss (hash changes) → full AI cost
+- Different users scanning the same template contract → cache hit (if same org + same hash)
+- **Estimated savings: 20-40%** of AI costs for organizations with standardized contract templates
+
+### Critical Findings
+
+**1. CacheService exists but is DEAD in production**
+Redis is not configured (REDIS_URL empty). The entire CacheService infrastructure — tenant isolation, key builders, TTL management — is unused. This means:
+- EVERY full contract scan calls Gemini Pro ($0.04-0.10)
+- No caching of analysis results between page reloads
+- Re-scanning the same unchanged document re-runs the full AI pipeline
+
+**2. `make_analysis_key` hashes are content-based (line 228)**
+```python
+return f"ai:analysis:{playbook_id}:{contract_hash[:24]}"
+```
+Uses first 24 chars of SHA-256 hash — sufficient for uniqueness. The key includes playbook_id, so different playbooks on the same contract get separate cache entries. ✓
+
+**3. Playbook cache uses FIFO, not LRU (from PLAYBOOK-3)**
+FIFO eviction may evict frequently-used playbooks. For production with many orgs, LRU would be better.
+
+**4. No response-level HTTP caching**
+`Cache-Control: no-store` (main.py line 103) is set on ALL responses. This is correct for security (prevents browser caching of contract data) but means the dashboard can't leverage browser cache for static API responses like playbook lists.
+
+### Verdict
+- **PlaybookCache: EFFECTIVE** — avoids regex recompilation on every scan ✓
+- **CacheService: INFRASTRUCTURE EXISTS but unused** — Redis not configured in production
+- **AI results: NOT cached** — biggest cost optimization opportunity
+- **Recommendation**: Configure Upstash Redis ($0/month free tier) to enable CacheService, saving 20-40% of AI API costs
