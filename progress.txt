@@ -2424,3 +2424,96 @@ This creates inconsistency between full-document and clause-level analysis.
 
 **8. Gemini SDK is sync, wrapped in `run_in_executor` (line 283)**
 The Gemini SDK doesn't support async natively, so it's wrapped in a thread pool executor. This is the correct approach but means one thread is blocked per concurrent analysis. With the default thread pool size (~5 workers), only 5 concurrent analyses can run.
+
+## Iteration 45 — PROMPT-3: analysis_pipeline.py Full Audit (1183 lines)
+**Task:** Trace the 5-stage pipeline end-to-end. Document what each stage runs, produces, and feeds into the next.
+**File:** `backend/app/services/analysis_pipeline.py` (1183 lines)
+
+### 5-Stage Pipeline Flow
+
+```
+Stage 1: EXTRACTION (deterministic, ~50ms)
+  Input:  contract_text (raw string)
+  Runs:   StructureExtractor → ContractMap with SHA-256 hashes
+          Regex defined term extraction (duplicate of defined_terms_resolver)
+          Regex jurisdiction extraction (duplicate of jurisdiction_detector)
+  Output: ExtractionResult { contract_map, defined_terms, jurisdiction_hint, full_text }
+
+    ↓ (between 2-3: Scope Analysis + Jurisdiction Overrides)
+
+Stage 2: CLASSIFICATION (deterministic, ~100ms)
+  Input:  ExtractionResult, playbook_rules
+  Runs:   RuleEngine.evaluate() → regex pattern matching against all rules
+  Output: PipelineClassificationResult { clause_inventory, rule_matches }
+
+    ↓ (scope_analyzer.analyze + apply_jurisdiction_overrides)
+
+Stage 3: RISK ASSESSMENT (Gemini Pro, ~10-60s)
+  Input:  ExtractionResult, classification, playbook_rules, playbook_name, party_side
+  Runs:   GeminiAnalyzer.analyze_full_contract() → full AI analysis
+          Regex-AI corroboration check (line 721-725)
+  Output: List[RawRedline] + executive_summary + tokens_used
+
+Stage 4: VERIFICATION (deterministic, ~200ms)
+  Input:  contract_text, List[RawRedline]
+  Runs:   HallucinationGuard.verify_quote() per redline
+          Deal-breaker redlines kept with "unverified" status even if rejected
+          Missing clauses verified leniently
+  Output: List[VerifiedRedline] + HallucinationStats
+
+Stage 5: ENRICHMENT (deterministic, ~50ms)
+  Input:  List[VerifiedRedline]
+  Runs:   ConfidenceScorer.score_redline() per redline
+          Cross-reference detection
+  Output: List[FinalRedline] with ConfidenceScore per redline
+```
+
+### Critical Findings
+
+**1. Duplicate extraction logic (Stage 1 vs dedicated services)**
+Stage 1 has its OWN defined term patterns (`_DEFINED_TERM_PATTERNS`, lines 230-241) and jurisdiction patterns (`_JURISDICTION_PATTERNS`, lines 243-256) that are DIFFERENT from `defined_terms_resolver.py` and `jurisdiction_detector.py`. The dedicated services are more comprehensive (7 patterns vs 2 for terms, 8 patterns vs 3 for jurisdiction). The pipeline's Stage 1 extraction feeds Stage 2 context, but Stage 3 (gemini_analyzer) re-runs the FULL `defined_terms_resolver` and `jurisdiction_detector` independently. **Double extraction with different results.**
+
+**2. Graceful degradation is excellent (lines 448-464)**
+When AI fails (Stage 3), the pipeline falls back to rule-engine-only results from Stage 2. Executive summary explains the degradation. `partial=True` flag is set. This means ContraRed works WITHOUT AI (Gemini API key missing) — a critical reliability feature.
+
+**3. Deal-breaker redlines are NEVER silently dropped (lines 803-826)**
+When a deal-breaker quote fails hallucination verification:
+- It's KEPT with "unverified_deal_breaker" status
+- Confidence set to 0.3
+- Explanation prepended with "⚠️ UNVERIFIED QUOTE"
+This is the RIGHT approach — false negatives on deal-breakers are worse than false positives.
+
+**4. Regex-AI corroboration check is substring-based (lines 721-725)**
+```python
+regex_matched = any(
+    ai_redline.original_text.lower().strip() in rt
+    or rt in ai_redline.original_text.lower().strip()
+    for rt in regex_matched_texts
+)
+```
+Uses substring containment, not exact match. If AI quotes a 200-char clause and regex matched a 50-char phrase within it, it counts as "corroborated". This is the right heuristic but could overcount corroboration.
+
+**5. Non-English detection and contract validation (lines 333-339)**
+`_detect_non_english()` and `_is_likely_contract()` provide upfront warnings. Good for user experience but don't block analysis.
+
+**6. Input minimum is 100 characters (line 323)**
+Documents shorter than 100 chars return "too short" immediately. Reasonable threshold.
+
+**7. Stage metrics tracking is comprehensive**
+Every stage records: duration_seconds, tokens_used, items_processed, items_passed, errors. This enables monitoring and optimization.
+
+**8. Missing clause verification is lenient (lines 767-795)**
+Missing clauses only rejected if `similarity_score < 0.5` (vs strict rejection for violations). Confidence floor set to 0.6. This is correct — missing clause anchors just need to be "somewhere nearby" for insertion.
+
+### Pipeline Timing Estimate
+| Stage | Duration | Cost |
+|---|---|---|
+| 1. Extraction | ~50ms | $0 |
+| 2. Classification | ~100ms | $0 |
+| Scope Analysis | ~50ms | $0 |
+| 3. Risk Assessment | 10-60s | ~$0.01-0.05 |
+| 4. Verification | ~200ms | $0 |
+| 5. Enrichment | ~50ms | $0 |
+| **Total** | **10-60s** | **~$0.01-0.05** |
+
+Stage 3 (AI) dominates both time and cost. All other stages are negligible.
