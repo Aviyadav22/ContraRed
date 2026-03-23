@@ -997,3 +997,43 @@ Created comprehensive synthesis with:
 - Priority-ordered migration plan: P0 (3 items), P1 (7 items), P2 (6 items), P3 (3 items)
 - Industry context from web research
 - Recommended tiered hybrid approach: regex for preprocessing + AI for risk assessment + verification gates
+
+## Iteration 25 — PLAYBOOK-1: playbook.py Full Audit (259 lines)
+**Task:** Read all 259 lines of `backend/app/models/playbook.py`. Document the PlaybookRule schema.
+**File:** `backend/app/models/playbook.py` (259 lines)
+
+### Database Models: 9 tables + ClauseLibrary
+1. **Playbook** — top-level container with category/version/party_side
+2. **PlaybookRule** — core rule with detection_patterns (JSONB), AI fields, positions
+3. **PlaybookRuleTier** — 4-tier negotiation system (IDEAL/ACCEPTABLE/WALK_AWAY/ESCALATE)
+4. **PlaybookCondition** — conditional logic (counterparty/deal_size/jurisdiction/side)
+5. **PlaybookRuleOverride** — per-condition rule overrides
+6. **PlaybookRuleDependency** — cross-clause dependencies
+7. **PlaybookVersion** — version snapshots (JSONB)
+8. **PlaybookMarketplace** — publishing with verification/ratings
+9. **PlaybookRating** — user ratings/reviews
+10. **ClauseLibrary** — pre-approved clause text
+
+### Key Field: `detection_patterns` (JSONB)
+```json
+{
+  "patterns": ["regex1", "regex2"],
+  "match_type": "exact|fuzzy|regex",
+  "negative_patterns": [...],
+  "escalation_conditions": [...],
+  "de_escalation_conditions": [...],
+  "context_window": 500
+}
+```
+This is the regex dependency point. Migration to AI-native requires changing this schema.
+
+### AI Fields ARE Present and Used
+- `requires_ai_verification` (bool, default True) — ACTIVELY USED
+- `verification_prompt` (Text, nullable) — custom AI prompt per rule
+- These mean the system ALREADY supports AI-enhanced rules
+
+### Critical Findings
+1. **`Playbook.rules` (JSONB) vs `Playbook.rules_list` (relationship)** — confusing dual storage
+2. **`risk_level_at_tier` is String not Enum** — allows invalid values
+3. **`tags` default=list** — passes type not instance (technically wrong)
+4. **Schema is enterprise-grade** — 9 tables with tiers/conditions/dependencies/versions/marketplace
