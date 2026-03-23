@@ -1287,3 +1287,76 @@ Rule table shows only first 3 patterns with "+N more". But there's no way to see
 4. Replace "Match Type" dropdown with "Detection Mode" toggle: AI-only / AI+Keywords / Keywords-only
 5. Replace raw JSON inputs with structured forms for conditions and dependencies
 6. Add inline edit capability for existing rules
+
+## Iteration 30 — PLAYBOOK-6: playbook_templates.py Audit (921 lines)
+**Task:** Check if playbook templates are hardcoded with regex patterns.
+**File:** `backend/app/services/playbook_templates.py` (921 lines)
+
+### Template Inventory
+5 pre-built templates registered in `_TEMPLATES`:
+1. **NDA - Indian Law** (`nda_indian_law`) — 22 rules, jurisdiction: IN
+2. **SaaS Agreement** (`saas_agreement`) — 35 rules, jurisdiction: "" (any)
+3. **Employment - India** (`employment_india`) — 28 rules, jurisdiction: IN
+4. **MSA / Services** (`msa_services`) — 30 rules, jurisdiction: "" (any)
+5. **M&A / SPA** (`ma_spa`) — 25 rules, jurisdiction: "" (any)
+
+**Total: 140 template rules, ALL with hardcoded regex patterns.**
+
+### Are Templates Hardcoded with Regex? YES.
+
+Every template rule uses the `_rule()` helper (line 37) which stores regex patterns in `detection_patterns`:
+```python
+_rule("confidentiality", "...", "YELLOW", [
+    r"\b(confidential\s+information)\b",
+    r"\b(proprietary\s+information)\b",
+    ...
+], match_type="regex")
+```
+
+The default `match_type` is "regex" (line 46), meaning ALL template patterns are compiled as raw regex by `from_playbook_rules()`. This is different from user-created rules which default to "exact" match type.
+
+### Templates Need Migration
+When migrating to AI-native playbooks:
+1. **140 rules** across 5 templates need updated schemas
+2. The `primary_position` and `fallback_position` text is HIGH QUALITY legal guidance — KEEP
+3. The regex patterns should become optional (AI can detect without them)
+4. Add `risk_description` field with natural language explanation of what to look for
+
+### Critical Findings
+
+**1. SQL injection risk in `create_playbook_from_template` (line 907)**
+```python
+"patterns": str(rule_dict["detection_patterns"]).replace("'", '"')
+```
+This converts a Python dict to string using `str()` then manually replaces quotes. This is fragile:
+- `str({"key": "it's a test"})` → `{"key": "it's a test"}` → `{"key": "it"s a test"}` (BROKEN)
+- Should use `json.dumps()` instead of `str().replace()`
+- Uses raw SQL with `sql_text()` instead of ORM — bypasses SQLAlchemy's parameter binding for the JSONB column
+
+**2. `requires_ai=False` for some rules (line 186)**
+`stamp_duty` rule has `requires_ai=False`. Only 1 of 140 rules has AI disabled — the rest default to True. This confirms AI verification is the norm, not the exception.
+
+**3. Jurisdiction-specific legal advice is embedded in templates**
+The NDA Indian Law template has accurate, specific Indian law references:
+- Section 27 Indian Contract Act 1872 (non-compete void)
+- DPDP Act 2023 data protection
+- Order XXXIX CPC (injunctive relief)
+- Indian Stamp Act 1899
+This content is extremely valuable and should be preserved regardless of regex migration.
+
+**4. SaaS template has no jurisdiction (line 205)**
+`jurisdiction=""` — applies generically. But SaaS terms vary significantly by jurisdiction (e.g., EU vs US data handling, consumer protection laws). A jurisdiction-aware SaaS template would be more useful.
+
+**5. Template creation uses raw SQL (lines 869-912)**
+Instead of using the ORM (Playbook/PlaybookRule models), `create_playbook_from_template` uses raw SQL `INSERT` statements via `sql_text()`. This bypasses:
+- Model defaults (updated_at, created_at)
+- Validation
+- Relationships
+Likely done for performance or to avoid ORM complexity, but it's a maintenance risk.
+
+### Migration Plan for Templates
+1. Keep all 140 rules' `primary_position` and `fallback_position` text — this is gold
+2. Add `risk_description` field to each rule explaining what to look for in natural language
+3. Make `detection_patterns` optional (KEEP as speed optimization, not requirement)
+4. Set `requires_ai_verification=True` for all rules (already true for 139/140)
+5. Convert `_rule()` helper to support both old (regex) and new (AI-native) formats
