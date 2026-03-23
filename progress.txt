@@ -2094,3 +2094,80 @@ The hash-based anchor Strategy 1 ("fastest, most reliable") in `find_anchor()` i
 Hardcoded placeholder — multiple users share the same ID, causing potential cache collisions.
 
 **6. Mismatch chain**: AI quotes → backend diffs AI version → frontend finds in document → range may not match what was diffed → insertOoxml replaces mismatched range
+
+## Iteration 40 — OOXML-8: Web Search — Office.js insertOoxml + Track Changes Best Practices
+**Task:** Search for best practices on insertOoxml precision, Track Changes interaction, and 255-char workarounds.
+
+### Web Research Findings
+
+**1. The 255-char limit is a KNOWN Microsoft limitation (GitHub issue #31)**
+- Filed as early as 2016 on OfficeDev/office-js GitHub
+- No official workaround from Microsoft
+- Affects body.search(), range.search(), and paragraph.search()
+- Wildcard workarounds exist but are "extremely slow"
+- Behavior differs between desktop Word and Word Online
+- **ContraRed's truncation approach is the standard community workaround**
+
+**2. insertOoxml and Track Changes interaction**
+- The Word API's `insertOoxml()` and `changeTrackingMode` are separate systems
+- When `changeTrackingMode = trackAll` is active, Word tracks the insertOoxml operation AS a change
+- The OOXML's own `<w:del>` / `<w:ins>` markup AND Word's tracking create double-tracking
+- **Best practice**: Either use OOXML with embedded track changes markup (and disable live tracking), OR use `insertText()` with live tracking enabled — NOT both simultaneously
+- GitHub issue #2991: insertOoxml can corrupt numbering in Word 2016
+- GitHub issue #3271: insertOoxml doesn't work in Word Online in some cases
+
+**3. insertText with Track Changes is the simpler approach**
+- When `changeTrackingMode = trackAll`, `range.insertText(newText, "Replace")` automatically creates tracked changes
+- Word natively handles the revision marks — only the replaced text shows as changed
+- No double-tracking issue
+- No OOXML generation needed
+- **Limitation**: Can only insert plain text — no formatting control
+
+**4. Range precision via paragraph.search()**
+- `paragraph.search(text)` returns a tight range within the paragraph
+- Can be used after Fuse.js identifies the matching paragraph to narrow the range
+- Subject to same 255-char limit
+
+**5. TrackedChange API (WordApi 1.6+)**
+- `Word.TrackedChange` class allows programmatic accept/reject of tracked changes
+- `body.getTrackedChanges()` retrieves all tracked changes
+- Could be used to programmatically accept ContraRed's changes
+
+### Key Best Practice: The Right Approach for Redlining
+
+**Option A: insertText + Track Changes ON (RECOMMENDED for simple word swaps)**
+```
+1. Enable changeTrackingMode = trackAll
+2. range = paragraph.search(exactOldPhrase) — get tight range of only changing text
+3. range.insertText(newPhrase, "Replace")
+4. Word natively marks ONLY the searched phrase as changed
+5. No double-tracking, no OOXML needed
+```
+Pros: Simple, native Track Changes, no formatting issues
+Cons: Plain text only, can't control revision colors/author
+
+**Option B: insertOoxml + Track Changes OFF (RECOMMENDED for complex formatting)**
+```
+1. Disable changeTrackingMode (or set to trackNone)
+2. range = findTextInDocument() — find the clause
+3. range.insertOoxml(ooxml, "Replace") — OOXML has <w:del>/<w:ins> markup
+4. OOXML handles its own revision marks with author/timestamp
+5. No double-tracking because live tracking is off
+```
+Pros: Full formatting control, custom author/date on revisions
+Cons: OOXML generation complex, range precision still matters
+
+**ContraRed's current approach mixes BOTH:**
+- Enables `changeTrackingMode = trackAll` (line 2360)
+- Then uses `insertOoxml` with embedded `<w:del>/<w:ins>` (line 2378)
+- **Result: double-tracked revisions**
+
+### Sources
+- [Search 256 char limit — GitHub issue #31](https://github.com/OfficeDev/office-js/issues/31)
+- [Word for Mac search limit — GitHub issue #320](https://github.com/OfficeDev/office-js/issues/320)
+- [How to reliably create ranges — GitHub issue #390](https://github.com/OfficeDev/office-js/issues/390)
+- [insertOoxml numbering corruption — GitHub issue #2991](https://github.com/OfficeDev/office-js/issues/2991)
+- [insertOoxml web version — GitHub issue #3271](https://github.com/OfficeDev/office-js/issues/3271)
+- [Word.TrackedChange API — Microsoft Learn](https://learn.microsoft.com/en-us/javascript/api/word/word.trackedchange)
+- [OOXML in Word add-ins — Microsoft Learn](https://learn.microsoft.com/en-us/office/dev/add-ins/word/create-better-add-ins-for-word-with-office-open-xml)
+- [Tips for Word add-in development — Medium](https://medium.com/oi-hu-2019/tips-and-tricks-for-word-add-in-development-4e855e65ae33)
