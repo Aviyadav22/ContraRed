@@ -2517,3 +2517,76 @@ Missing clauses only rejected if `similarity_score < 0.5` (vs strict rejection f
 | **Total** | **10-60s** | **~$0.01-0.05** |
 
 Stage 3 (AI) dominates both time and cost. All other stages are negligible.
+
+## Iteration 46 — PROMPT-4: Prompt Edge Cases Evaluation
+**Task:** What happens with empty contract, non-English, all-GREEN, partial document, amendments, 50-page contract?
+
+### Edge Case 1: Empty Contract (0 text)
+**Code path:** `analysis_pipeline.py` line 323
+```python
+if not contract_text or len(contract_text.strip()) < 100:
+    return PipelineResult(executive_summary=["Document is too short..."], partial=True)
+```
+**Result:** Returns immediately with "too short" message. No AI call. ✓ Handled correctly.
+
+### Edge Case 2: Non-English Contract (e.g., Hindi with English legal terms)
+**Code path:** `analysis_pipeline.py` lines 333-335
+```python
+if self._detect_non_english(contract_text):
+    warnings.append("⚠️ This document appears to contain non-English text...")
+```
+**Result:** Warning prepended to executive summary, but analysis PROCEEDS. AI (Gemini) can handle Hindi text but with degraded accuracy. The regex rule engine will miss ALL non-English clauses since patterns are English-only. HallucinationGuard will reject AI quotes that don't match the non-English text due to normalization issues.
+**Risk:** Regex finds nothing → AI finds risks → verification fails (quote mismatch) → most findings rejected. User sees "no issues found" for a risky Hindi contract. **P1 issue for Indian market.**
+
+### Edge Case 3: Contract with NO Risks (all GREEN)
+**Code path:** AI returns `"redlines": []` in JSON
+**Result:** Pipeline processes normally. Stage 4 (verification) has nothing to verify. Stage 5 (enrichment) has nothing to score.
+```python
+if not raw_redlines:
+    return PipelineResult(executive_summary=executive_summary or ["No issues found."], redlines=[])
+```
+**Result:** Returns "No issues found." ✓ Handled correctly. But is the AI prompt biased toward finding risks? The prompt says "Identify risks, violations, and missing protections" — this framing may cause the AI to FIND risks even in a clean contract (confirmation bias). The GREEN criteria say "Silence is approval" but the ORIENT step asks for "missing standard clauses" which could generate false YELLOW/missing findings.
+
+### Edge Case 4: Partial Document (just one section pasted)
+**Code path:** No explicit detection. Contract text > 100 chars → proceeds normally.
+**Result:** The AI analyzes the fragment as if it were a complete contract. The "missing clause" analysis (STEP 1 ORIENT: "Are any STANDARD clauses entirely missing?") will flag EVERYTHING as missing — force majeure, dispute resolution, data protection, liability cap, etc. A user who pasted just the indemnification section would see 20+ "missing" warnings for clauses that exist elsewhere in the full document.
+**Risk:** False positive storm. No way for the user to indicate "this is a partial document." **P1 UX issue.**
+
+### Edge Case 5: Amendments Referencing a Master Agreement
+**Code path:** No explicit detection.
+**Result:** The AI sees "This Amendment modifies Section 8.2 of the Master Services Agreement dated..." but doesn't have access to the MSA. It will:
+- Flag the amendment's terms without knowing the MSA's baseline
+- Can't evaluate if the amendment IMPROVES or WORSENS the MSA's terms
+- Will flag "missing" clauses that exist in the MSA (just not in the amendment)
+- Jurisdiction detection may fail if governing law is only in the MSA
+**Risk:** Misleading analysis. Amendment analysis requires context from the master agreement. **P2 feature gap.**
+
+### Edge Case 6: 50-Page Contract (~25,000 words, ~100,000 chars)
+**Code path:** `_sanitize_for_prompt()` truncates at 200,000 chars (line 261). Gemini Pro has 1M token context.
+**Input budget:** ~100,000 chars ≈ ~30,000 tokens for contract text. Plus ~7,000 tokens for system prompt + playbook. Total ≈ ~37,000 tokens input. Well within Gemini Pro's 1M context.
+**Output budget:** 32,768 max_output_tokens. With 78 playbook rules, if AI generates ~200 tokens per redline for 40 findings = ~8,000 tokens. Plus executive summary. Comfortably within limit.
+**Performance:** 90-second timeout (line 293). A 50-page contract typically takes 30-60s for Gemini Pro analysis. May occasionally timeout for complex contracts with dense legal language.
+**Result:** Works but may be slow. ✓ Handled within budget.
+
+### Edge Case 7: Contract Exceeding Context Window (200+ pages)
+**Code path:** `_sanitize_for_prompt()` truncates at 200,000 chars = ~60,000 tokens.
+**Result:** Contract is truncated to first 200,000 chars. Later sections are silently dropped. AI only analyzes the first ~120 pages. User is NOT warned about truncation.
+**Risk:** Lawyer expects full-contract analysis but gets partial coverage. Critical clauses in later sections (e.g., limitation of liability in Appendix A) are missed. **P1 — must warn user about truncation.**
+
+### Edge Case 8: Contract with Existing Track Changes from Previous Review
+**Code path:** `getDocumentText()` returns `body.text` which includes BOTH accepted and pending deleted text.
+**Result:** AI sees deleted text alongside current text. May quote deleted text as "problematic" when it's already been removed. `findTextInDocument()` won't find deleted text (it searches visible content only). Verification may reject the quote.
+**Risk:** Confusing results. AI flags text the user already fixed. **P2 — filter Track Changes before analysis.**
+
+### Summary Table
+
+| Edge Case | Handled? | Severity | Fix Effort |
+|---|---|---|---|
+| Empty contract | ✓ Yes | N/A | 0h |
+| Non-English | ⚠️ Warning only | P1 | 8h |
+| All GREEN | ✓ Yes | N/A | 0h |
+| Partial document | ✗ No | P1 | 4h |
+| Amendments | ✗ No | P2 | 16h |
+| 50-page contract | ✓ Yes | N/A | 0h |
+| 200+ page contract | ⚠️ Silent truncation | P1 | 2h |
+| Existing Track Changes | ⚠️ Confusing results | P2 | 4h |
