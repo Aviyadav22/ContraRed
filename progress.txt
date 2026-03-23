@@ -2066,3 +2066,31 @@ Undo uses `insertText()` (plain text), not `insertOoxml()`. So after undo:
 
 ### Verdict
 Undo is fundamentally broken for Tier 3 (paragraph-level) replacements — destroyed content is unrecoverable. For Tier 1/2 (tight range) replacements, undo restores the AI's quoted text which may differ slightly from the actual original. The undo mechanism provides a false sense of safety.
+
+## Iteration 39 — OOXML-7: api.ts generateRedlineZDR() + generateFix() Audit
+**Task:** Document what backend sends back and what frontend does with it.
+**File:** `ContraRed-PoC/src/taskpane/api.ts` (lines 360-462)
+
+### Data Flow
+1. **generateFix()** → POST /documents/generate-fix → returns `{ fix_text, reasoning, fix_verified, fix_warnings }`
+2. **generateRedlineZDR()** → POST /documents/redline → returns `{ ooxml, success, confidence }`
+3. **applyAIRedline()** → `range.insertOoxml(ooxml, replace)`
+
+### Critical Findings
+
+**1. `original_text` sent to backend is AI's QUOTED text, not document text**
+`redline.original_text` is what the AI quoted during analysis. If user edited the document between scan and fix, or AI misquoted, the backend generates OOXML diffing AI's version, not the actual document.
+
+**2. `body.text` includes Track Changes revisions**
+`getDocumentText()` returns `body.text` which may include deleted text from pending Track Changes. AI sees and may quote deleted text that `body.search()` can't find.
+
+**3. `paragraph_hash` is always `undefined` from Word add-in**
+The hash-based anchor Strategy 1 ("fastest, most reliable") in `find_anchor()` is dead code — the frontend never passes a hash.
+
+**4. Full contract text resent for every fix generation**
+`contractText` parameter means the entire document is POSTed again per fix — 20 fixes = 2MB+ redundant API calls.
+
+**5. Fake `document_id = 'ai-doc'`**
+Hardcoded placeholder — multiple users share the same ID, causing potential cache collisions.
+
+**6. Mismatch chain**: AI quotes → backend diffs AI version → frontend finds in document → range may not match what was diffed → insertOoxml replaces mismatched range
