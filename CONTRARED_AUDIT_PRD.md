@@ -111,7 +111,7 @@ This is the critical "whole paragraph turns red" bug.
 - [x] ADDIN-3: Audit button debouncing and state management. Can users double-fire scans by clicking rapidly? What happens if user scans again while results are displayed? Is `currentAIAnalysis` / `fixedRisks` / `negotiationSession` state robust? Write findings to progress.txt.
 - [x] ADDIN-4: Audit large document handling. Memory issues with 50+ page contracts? Does `body.paragraphs.load()` choke? Are there pagination or chunking strategies? Write findings to progress.txt.
 - [x] ADDIN-5: Audit the negotiation mode. Is auto-scan-on-selection reliable? Does the 1.5s debounce cause missed selections? Is the flow intuitive for a lawyer using it in real-time? Write findings to progress.txt.
-- [ ] ADDIN-6: Audit accessibility. Screen readers, keyboard navigation, ARIA labels, color contrast — are they production-ready? Write findings to progress.txt.
+- [x] ADDIN-6: Audit accessibility. Screen readers, keyboard navigation, ARIA labels, color contrast — are they production-ready? Write findings to progress.txt.
 - [ ] ADDIN-7: Audit memory leaks. Are event listeners cleaned up? Are timers cleared? Are Office.js tracked objects released? Write findings to progress.txt.
 - [ ] ADDIN-8: Read `ContraRed-PoC/src/taskpane/api.ts` (all 602 lines). Audit: token handling, error retry logic, request/response interceptors, timeout configuration. Is the API client production-ready? Write findings to progress.txt.
 

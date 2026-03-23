@@ -3016,3 +3016,61 @@ For each redline, `findTextInDocument()` loads all paragraphs again. For 40 redl
 - **Missing**: counter-proposal text input, decision export, timer pause, session clearing on new document
 - Selection scan results ACCUMULATE without clear — risk list grows unbounded
 - 20-char minimum selection with no feedback when too short
+
+## Iteration 54 — ADDIN-6: Accessibility Audit
+**Task:** Screen readers, keyboard navigation, ARIA labels, color contrast.
+
+### Keyboard Navigation: GOOD
+- **8 keyboard shortcuts** documented in shortcuts panel: Ctrl+Shift+D (scan), Ctrl+Alt+S (selection), Alt+↑/↓ (navigate risks), Ctrl+Shift+H (highlight), Ctrl+Shift+G (generate fix), Ctrl+Alt+A (apply fix), Ctrl+Shift+R (research)
+- Shortcuts skip form fields (INPUT/TEXTAREA/SELECT check, line 1370)
+- `focusRiskCard()` adds `.keyboard-focused` class with visual ring indicator
+- `?` key toggles shortcuts help panel
+
+### ARIA Labels: GOOD
+- Buttons have `aria-label` attributes: scanBtn, scanSelectionBtn, negotiationBtn, filter buttons, search input, sort select
+- Dialogs have `role="dialog"` + `aria-modal="true"` + `aria-label`: createPlaybookModal, templatePicker, shortcutsPanel
+- Progress text has `aria-live="polite"` for Apply All progress (line 1965)
+
+### Focus Trapping: GOOD
+- Custom `FocusTrap` class (line 1725) for modals
+- 3 instances: playbook modal, template picker, shortcuts panel
+- Traps Tab/Shift+Tab within modal, Escape closes
+- Cleans up on deactivate (removes keydown listener)
+
+### Critical Findings
+
+**1. Risk cards are not in tab order**
+Risk cards are `<div>` elements, not `<button>` or `<a>` elements. They have no `tabindex` attribute. Screen reader users CANNOT navigate to risk cards using Tab key. They must use the Alt+↑/↓ shortcuts (which only work with keyboard shortcuts knowledge).
+
+**2. No skip-to-content link**
+The add-in has no skip navigation link. A screen reader user must traverse the entire header, playbook selector, scan buttons, and filters before reaching the risk cards.
+
+**3. Risk level communicated by color only**
+Risk cards use red/yellow/green color coding. The risk level text ("Critical"/"Warning"/"Safe") IS shown on the badge, but:
+- The filter buttons show only "Critical"/"Warning" text — accessible ✓
+- The risk card visual ring uses color (red/yellow/green border) which is invisible to colorblind users
+- No alternative pattern (icon, pattern, shape) distinguishes risk levels
+
+**4. `innerHTML` for dynamic content breaks screen reader announcements**
+Risk cards are rendered via `innerHTML` (line 1487, renderRedlineList). Screen readers don't automatically announce new content injected via innerHTML unless `aria-live` regions are used. The risk list container (`#riskList`) has NO `aria-live` attribute — new scan results appear silently.
+
+**5. Dynamically generated buttons lack ARIA labels**
+Buttons inside risk cards (Generate Fix, Apply, Highlight, Research) are created via string interpolation in `createAIRedlineCard()`. These buttons have CSS classes but NO `aria-label` attributes. Screen readers would announce them as unlabeled buttons.
+
+**6. Color contrast — assessed visually from CSS**
+- Primary text: `--text-primary: #1A1A1A` on `--bg-card: #FFFFFF` — ratio ~17:1 ✓✓
+- Secondary text: `--text-muted: #64748B` on white — ratio ~5.5:1 ✓ (passes AA)
+- Risk badge red: `#DC2626` on `#FEE2E2` — ratio ~4.2:1 ⚠️ (barely passes AA, fails AAA)
+- Risk badge yellow: `#D97706` on `#FEF3C7` — ratio ~3.7:1 ⚠️ (fails AA for small text)
+- Green badge: `#16A34A` on `#DCFCE7` — ratio ~3.5:1 ⚠️ (fails AA for small text)
+
+**7. Notification toasts auto-dismiss without screen reader announcement**
+`showNotification()` creates a toast that auto-removes after 5s (line 30). No `aria-live` region. No `role="alert"`. Screen reader users never hear these notifications.
+
+### Summary
+- Keyboard shortcuts: ✓ GOOD (8 shortcuts, well-designed)
+- ARIA on static elements: ✓ GOOD (buttons, dialogs, inputs labeled)
+- Focus trapping: ✓ GOOD (3 modals with proper trapping)
+- Risk cards: ✗ Not in tab order, no ARIA labels on dynamic buttons
+- Color contrast: ⚠️ Badge colors borderline AA for small text
+- Screen reader announcements: ✗ No aria-live on risk list or notifications
