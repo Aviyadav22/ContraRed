@@ -557,3 +557,88 @@ Best case: Narrow(2×.25) + Mutual(3×.25) + Capped(3×.25) + Fixed(3×.15) + Wi
 - **REPLACE-WITH-AI**: Breadth, mutuality, and financial exposure analysis — these require semantic understanding
 - **KEEP as pre-filter**: Duration detection (structural patterns), trigger detection (specific legal terms), coverage report (taxonomy check)
 - **The scope_score composite model is sound** — the WEIGHTS and THRESHOLDS should be preserved even if detection methods change
+
+## Iteration 19 — REGEX-5: defined_terms_resolver.py Full Audit (456 lines)
+**Task:** Read all 456 lines of `backend/app/services/defined_terms_resolver.py`. Document defined term extraction.
+**File:** `backend/app/services/defined_terms_resolver.py` (456 lines, not 434 as PRD states)
+
+### Architecture Overview
+4-step pipeline:
+1. **Extract** — 7 regex patterns match "Term" means/shall mean/is defined as/refers to/hereinafter/colon-separated definitions
+2. **Cross-reference** — Finds which definitions reference other defined terms
+3. **Resolve** — Recursively expands cross-references up to depth 3
+4. **Flag overbroad** — 9 regex patterns detect dangerously broad definition language
+
+Output feeds into AI prompts via `to_prompt_context()` — this gives the AI visibility into what "Confidential Information" or "Intellectual Property" ACTUALLY means in this specific contract.
+
+### Classification: KEEP
+
+**This is an ideal regex use case.** Defined terms follow highly predictable syntactic patterns:
+- `"Capitalized Term" means ...`
+- `"Capitalized Term" shall mean ...`
+- `(hereinafter "Term")`
+
+Regex is FASTER, MORE RELIABLE, and CHEAPER than AI for this extraction. The output feeds into AI prompts, which is the correct architecture.
+
+### Detailed Pattern Analysis
+
+**7 Definition Extraction Patterns (lines 108-158):**
+
+1. `"Term" means/shall mean/will mean ...` — Core pattern, handles most definitions ✓
+2. `"Term" is/are defined as ...` — Alternative definition syntax ✓
+3. `As used herein, "Term" means/refers to ...` — Inline definition ✓
+4. `"Term" has/shall have the meaning ...` — Cross-reference style ✓
+5. `"Term" refers to ...` — Simple reference ✓
+6. `(hereinafter "Term")` — Parenthetical definition ✓ — **Note**: Groups are REVERSED (definition first, term second). Code handles this correctly (lines 269-274).
+7. `"Term": definition` — Colon/em-dash separated ✓
+
+**All patterns handle smart quotes** (`\u201c`, `\u201d`) ✓
+
+**Definition boundary detection**: Uses lookahead `(?=\n["\u201c][A-Z]|\n\n|\n\d+\.\s|\Z)` — stops at:
+- Next quoted capitalized term on new line
+- Double newline (paragraph break)
+- Numbered section heading
+- End of text
+
+### Critical Findings
+
+**1. Definition boundary fails for inline definitions (all patterns)**
+The lookahead `\n\n|\n\d+\.\s` assumes definitions are paragraph-separated. But many contracts have INLINE definitions:
+> `"Confidential Information" means all information disclosed by either party, whether written or oral, and "Receiving Party" means the party receiving such information.`
+In this case, the regex would capture EVERYTHING after "Confidential Information means" all the way to the end of the paragraph, including the definition of "Receiving Party". The second term's definition would then be a subset of the first.
+
+**2. Term name length limit of 80 chars (line 111)**
+Pattern: `[A-Z][A-Za-z\s&,/()-]{1,80}?`. Indian contracts sometimes have long defined terms:
+- `"Minimum Guaranteed Annual Revenue Commitment"` (46 chars) ✓
+- `"Intellectual Property Rights and Proprietary Information of the Disclosing Party"` (82 chars) ✗ — would be truncated
+
+**3. Parenthetical pattern (Pattern 6) captures too much context (line 147)**
+Pattern: `([A-Za-z][^.]{10,200}?)` captures 10-200 chars BEFORE the parenthetical as the "definition". This could match half a sentence that isn't really a definition:
+> `The parties agree that all software code developed during the engagement (hereinafter "Deliverables") shall be...`
+Captured "definition" would be: `The parties agree that all software code developed during the engagement` — this is context, not a precise definition.
+
+**4. Colon pattern (Pattern 7) has no uppercase restriction on right side (line 154)**
+Could match section headings like `"DEFINITIONS": This section defines the terms...` where the text after the colon is not actually a definition of the term "DEFINITIONS".
+
+**5. Overbroad detection is well-calibrated (lines 161-198)**
+9 signals with a 2-signal threshold for flagging (or 1 high-severity signal). Covers:
+- "all information", "any and all", "without limitation"
+- "whether or not marked", "including but not limited to"
+- "in any form or medium", "directly or indirectly"
+- "all intellectual property", "everything/totality"
+**Assessment**: These are exactly the right phrases that a corporate lawyer would flag. Well-done.
+
+**6. Recursive resolution has circular reference protection (line 406)**
+`visited` set prevents infinite loops. MAX_RECURSION_DEPTH=3 prevents runaway expansion. Both are correct safeguards.
+
+**7. `to_prompt_context()` truncates definitions at 400 chars (line 63)**
+For a contract with 50 defined terms averaging 200 chars each, the prompt context would be ~10,000 chars (~2,500 tokens). This is a meaningful chunk of the AI's context window but within budget.
+
+**8. Missing pattern: Bold/underlined defined terms**
+Many Word documents use **bold** or __underline__ to indicate defined terms without quotes. Since text extraction strips formatting, these terms would be invisible to the resolver. This is a limitation of the text extraction layer, not the resolver itself.
+
+### Verdict: KEEP
+- **KEEP**: All 7 extraction patterns, cross-reference resolution, overbroad detection
+- **ENHANCE**: Fix inline definition boundary, increase term name length limit
+- **REPLACE**: Nothing — defined term extraction is a textbook regex use case
+- **Integration with AI is correct**: Resolver output feeds into AI prompts via `to_prompt_context()`, giving AI the definitions it needs for contextual analysis
