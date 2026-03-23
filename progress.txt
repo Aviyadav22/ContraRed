@@ -1360,3 +1360,144 @@ Likely done for performance or to avoid ORM complexity, but it's a maintenance r
 3. Make `detection_patterns` optional (KEEP as speed optimization, not requirement)
 4. Set `requires_ai_verification=True` for all rules (already true for 139/140)
 5. Convert `_rule()` helper to support both old (regex) and new (AI-native) formats
+
+## Iteration 31 — PLAYBOOK-7: AI-First Playbook Rule Schema Design
+**Task:** Design what replaces `detection_patterns`. Propose full schema.
+
+### Current Schema (regex-dependent)
+```python
+class PlaybookRule:
+    clause_type: str              # "unlimited_liability"
+    primary_position: str         # "Liability capped at 12 months of fees"
+    fallback_position: str        # "Liability capped at total contract value"
+    risk_level: RiskLevel         # RED/YELLOW/GREEN
+    is_deal_breaker: bool
+    detection_patterns: JSONB     # {"patterns": ["regex1"], "match_type": "exact|fuzzy|regex"}
+    suggested_language: JSONB     # {"text": "replacement clause"}
+    requires_ai_verification: bool
+    verification_prompt: str      # Custom AI prompt
+```
+
+### Proposed AI-First Schema
+
+**New fields to ADD to PlaybookRule:**
+
+```python
+# === AI-Native Detection (replaces detection_patterns) ===
+risk_description: str           # Natural language: "What makes this risky?"
+                                # Example: "Look for liability clauses that are uncapped
+                                # or where the vendor bears unlimited financial exposure"
+
+acceptable_position: str        # Natural language: "What does a good clause look like?"
+                                # Example: "Mutual liability cap at 12 months of fees paid,
+                                # with separate super-cap for IP/confidentiality breaches"
+
+unacceptable_signals: JSONB     # List of red-flag descriptions (natural language)
+                                # ["One-sided liability favoring the buyer",
+                                #  "No monetary cap on aggregate liability",
+                                #  "Includes consequential damages without carve-out"]
+
+acceptable_signals: JSONB       # List of green-flag descriptions (natural language)
+                                # ["Mutual cap at contract value or 12 months fees",
+                                #  "Separate super-cap for IP/data breaches",
+                                #  "Consequential damages mutually excluded"]
+
+clause_context: str             # What type of clause this applies to
+                                # Example: "Limitation of liability provisions,
+                                # including caps, exclusions, and carve-outs"
+
+example_risky_clauses: JSONB    # Real examples from clause library
+                                # [{"text": "Vendor's liability shall be unlimited",
+                                #   "risk": "RED", "why": "No cap = infinite exposure"}]
+
+example_acceptable_clauses: JSONB  # Real examples of good clauses
+                                   # [{"text": "Aggregate liability shall not exceed...",
+                                   #   "risk": "GREEN", "why": "Clear cap with carve-outs"}]
+
+# === Detection Mode ===
+detection_mode: str             # "ai_only" | "ai_with_keywords" | "keywords_only"
+                                # Replaces binary regex/AI split
+
+# === Keep existing fields (backward compat) ===
+detection_patterns: JSONB       # KEEP — optional speed optimization
+                                # When present + detection_mode="ai_with_keywords",
+                                # regex pre-filters candidates before AI evaluates
+```
+
+**Fields to KEEP unchanged:**
+- `clause_type`, `primary_position`, `fallback_position`, `risk_level`
+- `is_deal_breaker`, `order_index`, `priority`, `category`, `subcategory`, `tags`
+- `requires_ai_verification`, `verification_prompt`
+- `jurisdiction_overrides`, `suggested_language`
+
+**Fields NOT to add (avoid over-engineering):**
+- No `embedding_vector` — not needed for prompt-based AI analysis
+- No `confidence_threshold` — global confidence model handles this
+- No `ai_model_override` — single model for consistency
+
+### How AI Uses the New Schema
+
+The AI prompt template would inject:
+
+```
+RULE: {clause_type}
+RISK DESCRIPTION: {risk_description}
+ACCEPTABLE POSITION: {acceptable_position}
+UNACCEPTABLE SIGNALS: {unacceptable_signals as bullet list}
+ACCEPTABLE SIGNALS: {acceptable_signals as bullet list}
+CLAUSE CONTEXT: {clause_context}
+
+For each clause matching this context, evaluate whether it meets the
+acceptable position or exhibits any unacceptable signals. Rate as:
+- RED: Matches unacceptable signals AND no acceptable signals present
+- YELLOW: Mixed signals or partially acceptable
+- GREEN: Fully meets acceptable position
+```
+
+### Detection Mode Flow
+
+```
+detection_mode = "ai_only":
+  → AI analyzes full contract against risk_description
+  → No regex pre-filtering
+
+detection_mode = "ai_with_keywords" (recommended default):
+  → Regex pre-filters candidates using detection_patterns (fast)
+  → AI evaluates filtered candidates using risk_description (accurate)
+  → Best of both: speed + accuracy
+
+detection_mode = "keywords_only":
+  → Legacy mode for backward compatibility
+  → Only regex detection, no AI
+  → Used when AI is unavailable or for simple structural rules
+```
+
+### Migration Strategy
+
+**Phase 1 (Week 1-2): Schema extension**
+- Add new columns to PlaybookRule (all nullable for backward compat)
+- Update `from_playbook_rules()` to handle both old and new schemas
+- Default `detection_mode = "ai_with_keywords"` for existing rules
+
+**Phase 2 (Week 3-4): Template migration**
+- Auto-generate `risk_description` from existing `primary_position` + `clause_type`
+- Auto-generate `unacceptable_signals` from existing regex pattern descriptions
+- Auto-generate `acceptable_signals` from existing `primary_position`
+- Keep `detection_patterns` as-is for the "keywords" layer
+
+**Phase 3 (Week 5-6): Dashboard UX**
+- Replace pattern chip input with risk_description textarea
+- Add acceptable/unacceptable signals editor
+- Add detection mode toggle
+- Add example clause linking from ClauseLibrary
+
+**Phase 4 (Week 7-8): AI integration**
+- Update prompt_templates.py to inject new schema fields
+- Update confidence_scorer.py to weight AI-native rules higher
+- A/B test: regex-only vs AI-only vs hybrid for accuracy
+
+### Backward Compatibility Guarantees
+1. Existing rules with `detection_patterns` continue working — `detection_mode` defaults to "ai_with_keywords"
+2. If new AI fields are empty, system falls back to regex-only behavior
+3. Version snapshots capture whatever fields exist — versioning is schema-agnostic (confirmed in PLAYBOOK-4)
+4. `from_playbook_rules()` checks for new fields before old ones
