@@ -4060,3 +4060,48 @@ But this is a P2 optimization — the current approach works for the typical use
 - **No way to tell the system "this is a partial document"**
 - Selection scan (`scanSelection()`) is the correct tool for partial text, but the user might use the full scan button instead
 - **Impact**: Frustrated lawyers who see a flood of irrelevant warnings
+
+## Iteration 76 — EDGE-2: AI Failure Edge Cases
+
+### Gemini Returns Malformed JSON
+**Expected**: Graceful fallback with partial results or clear error.
+**Actual**: ✓ HANDLED
+- `gemini_analyzer.py:379-382`: `json.JSONDecodeError` caught → `_fallback_result()` returns empty redlines + "AI analysis unavailable"
+- `_strip_markdown_fences()` (line 72-85) removes `\`\`\`json` fences before parsing
+- For fix generation (line 589-597): Falls back to raw text as fix_text — **DANGEROUS** (could insert AI commentary as contract text, documented in PROMPT-2)
+
+### Gemini Rate-Limited Mid-Analysis (429)
+**Expected**: Clear "rate limited" message with retry guidance.
+**Actual**: ✓ HANDLED
+- `_classify_gemini_error()` (line 88-102): Detects "429" or "rate" or "quota" in error message → `AIRateLimited` exception
+- Pipeline Stage 3 (analysis_pipeline.py:448-456): Catches `AIServiceUnavailable` → falls back to rule-engine-only results with "AI analysis unavailable" summary
+- Frontend `displayScanError()` (taskpane.ts:1477-1479): Shows "Rate Limited — Too many requests. Please wait a minute and try again." with retry button ✓
+- **No automatic retry with backoff** — user must manually click retry
+
+### Gemini Returns Empty Response
+**Expected**: Clear error, no crash, no empty results shown as "no issues found."
+**Actual**: ✓ HANDLED
+- `gemini_analyzer.py:303-305`: `if not response_text` → raises `AIServiceError("AI returned an empty response")`
+- Pipeline catches this and falls back to rule-engine results
+- Frontend shows error card with retry button ✓
+- **Not confused with "no issues found"** — the error path is distinct from the clean-analysis path ✓
+
+### Gemini Hallucates a Clause That Doesn't Exist
+**Expected**: Hallucinated clause detected and rejected before reaching the user.
+**Actual**: ✓ WELL HANDLED
+- Stage 4 HallucinationGuard (analysis_pipeline.py:762-848):
+  - **Violations**: Strict verification — quote must match contract text (exact/normalized/fuzzy at 80%)
+  - Rejected quotes are DROPPED from results (line 832)
+  - **Deal-breakers**: Kept with "unverified_deal_breaker" status + "⚠️ UNVERIFIED QUOTE" warning (line 816)
+  - **Missing clauses**: Lenient — only rejected if similarity < 0.5 (line 774)
+- Stage 5 ConfidenceScorer: Text verification is 30% of score — failed verification → LOW confidence → collapsed in UI
+- **Net result**: Most hallucinated quotes are removed. Deal-breakers are kept with warning. False negatives preferred over false positives.
+
+### Summary Table
+| AI Failure | Handled? | User Experience |
+|---|---|---|
+| Malformed JSON | ✓ | Empty results + "unavailable" message |
+| 429 Rate Limited | ✓ | "Rate Limited" card + retry button |
+| Empty response | ✓ | Error card + retry button |
+| Hallucinated clause | ✓ | Removed from results (or warned for deal-breakers) |
+| Fix as raw text | ⚠️ | AI commentary could be inserted as contract text |
