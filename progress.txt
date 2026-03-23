@@ -2010,3 +2010,59 @@ This reduces search precision even more, increasing wrong-match risk.
 2. **Paragraph-then-narrow**: First identify which paragraph contains the clause, then use `paragraph.search()` for the specific sub-phrase being changed
 3. **Use `range.expandTo()`**: After finding the first 255 chars, expand the range to encompass the full clause text by checking adjacent content
 4. **Multiple search passes**: Search for the first 255 chars, then search for chars 200-455, then verify both ranges are in the same paragraph
+
+## Iteration 38 — OOXML-6: undoRedlineFix() Audit (lines 2228-2285 of taskpane.ts)
+**Task:** Document undo behavior. Can undo restore precisely after paragraph-level replacement?
+
+### Undo Flow
+1. **Get search text** (line 2230): Uses `appliedFix` text or falls back to `redline.recommendation`
+2. **Paragraph-based lookup** (lines 2237-2262): Uses stored `fixInfo` (paragraph index + context hash) from apply step
+3. **Fallback**: Global `findTextInDocument()` (same 3-tier search)
+4. **Restore** (lines 2274-2278):
+   - Missing clauses: `targetRange.delete()` — removes the inserted text
+   - Violations: `targetRange.insertText(redline.original_text, replace)` — replaces fix with original
+
+### Can Undo Restore After Paragraph-Level Replacement? NO.
+
+**The critical problem:**
+When `applyAIRedline()` triggers the OOXML-4 bug (Tier 3 paragraph range), the ENTIRE paragraph is replaced with just the diffed fragment. On undo:
+
+1. `searchText` = the applied fix text (the OOXML fragment content)
+2. The original 400-char paragraph is GONE — it was replaced by a 60-char fragment
+3. Undo finds the 60-char fragment and replaces it with `redline.original_text`
+4. `redline.original_text` is the AI's QUOTED text (60 chars), NOT the original full paragraph
+5. **Result: The 340 chars that were destroyed by the apply step are PERMANENTLY LOST**
+
+The undo restores the AI's quoted fragment but NOT the surrounding paragraph text that was collateral damage.
+
+### Critical Findings
+
+**1. Undo uses `redline.original_text` — AI's quote, not document text (line 2277)**
+```typescript
+targetRange.insertText(redline.original_text, Word.InsertLocation.replace);
+```
+The AI's quoted text may differ from what was actually in the document (LLM paraphrasing, truncation). Even for Tier 1/2 matches where apply works correctly, undo inserts the AI's VERSION, not the exact original from the document. Minor differences accumulate with multiple apply/undo cycles.
+
+**2. Paragraph index may be stale (lines 2245-2258)**
+After other edits, paragraph indices shift. The `fixInfo.paragraphIndex` stored at apply time may point to a different paragraph. The context hash verification (line 2248) mitigates this, but `substring(0, 100)` comparison is fragile — any edit within the first 100 chars breaks the hash match.
+
+**3. `searchText` fallback to `redline.recommendation` (line 2230)**
+```typescript
+const searchText = appliedFix || redline.recommendation;
+```
+If `appliedFix` is missing (e.g., state lost), undo searches for the recommendation TEXT in the document. But recommendation is guidance like "Consider capping liability at 12 months" — this text should NEVER appear in the contract. This fallback would fail to find anything, throwing an error.
+
+**4. Missing clause undo deletes the range (line 2275)**
+`targetRange.delete()` for missing clauses removes the inserted text. This is correct but:
+- If Track Changes is on, the deletion is tracked (showing the clause as removed)
+- The lawyer would see a "deleted" revision where ContraRed previously added text
+- Not harmful but potentially confusing
+
+**5. No undo for OOXML Track Changes markup**
+Undo uses `insertText()` (plain text), not `insertOoxml()`. So after undo:
+- The Track Changes markup (`<w:del>`, `<w:ins>`) is removed
+- The text is restored as plain text without any revision marks
+- Any Word revision history from the apply step remains in the document's revision log
+
+### Verdict
+Undo is fundamentally broken for Tier 3 (paragraph-level) replacements — destroyed content is unrecoverable. For Tier 1/2 (tight range) replacements, undo restores the AI's quoted text which may differ slightly from the actual original. The undo mechanism provides a false sense of safety.
