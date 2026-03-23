@@ -322,6 +322,7 @@ JURISDICTION:
 {jurisdiction_context}
 
 {context_block}
+{defined_terms_block}
 
 PROBLEMATIC TEXT (to be replaced):
 "{original_text}"
@@ -355,6 +356,7 @@ INSERTION POINT (insert AFTER this text):
 "{original_text}"
 
 {context_block}
+{defined_terms_block}
 
 RECOMMENDATION: {recommendation}
 PLAYBOOK RULE: {rule_name}
@@ -466,7 +468,7 @@ Return ONLY a valid JSON object:
 def render_system_prompt(
     jurisdiction_context: str = "",
     defined_terms: str = "",
-    party_side: str = "buyer",
+    party_side: str = "seller",
 ) -> str:
     """
     Render the v2 system prompt with jurisdiction, defined terms, and party side injected.
@@ -481,7 +483,7 @@ def render_system_prompt(
     """
     context = jurisdiction_context or "JURISDICTION: Not specified\nThe governing law jurisdiction could not be auto-detected. Apply general commercial law principles and flag jurisdiction-specific risks for manual review."
     terms = defined_terms or "DEFINED TERMS: None detected in the contract."
-    side_context = PARTY_SIDE_CONTEXT.get(party_side, PARTY_SIDE_CONTEXT["buyer"])
+    side_context = PARTY_SIDE_CONTEXT.get(party_side, PARTY_SIDE_CONTEXT["seller"])
 
     return SYSTEM_PROMPT_V2.format(
         jurisdiction_context=context,
@@ -522,6 +524,7 @@ def render_fix_prompt(
     jurisdiction_name: str = "applicable",
     surrounding_context: str = "",
     playbook_guidance: str = "",
+    defined_terms: str = "",
 ) -> str:
     """
     Render a fix generation prompt (violation or missing).
@@ -535,6 +538,7 @@ def render_fix_prompt(
         jurisdiction_name: Short jurisdiction name for inline references
         surrounding_context: Surrounding contract text for context
         playbook_guidance: Relevant playbook rule guidance
+        defined_terms: Defined terms from the contract to use in the fix
 
     Returns:
         Complete fix prompt string.
@@ -546,6 +550,10 @@ def render_fix_prompt(
     guidance_block = ""
     if playbook_guidance:
         guidance_block = f"\nPLAYBOOK GUIDANCE:\n{playbook_guidance}"
+
+    defined_terms_block = ""
+    if defined_terms:
+        defined_terms_block = f"\nDEFINED TERMS (use these exact terms in your fix):\n{defined_terms}"
 
     j_context = jurisdiction_context or "Apply general commercial law principles."
     j_name = jurisdiction_name or "applicable"
@@ -559,6 +567,7 @@ def render_fix_prompt(
             rule_name=rule_name,
             context_block=context_block,
             playbook_guidance=guidance_block,
+            defined_terms_block=defined_terms_block,
         )
     else:
         return FIX_VIOLATION_PROMPT.format(
@@ -569,6 +578,7 @@ def render_fix_prompt(
             rule_name=rule_name,
             context_block=context_block,
             playbook_guidance=guidance_block,
+            defined_terms_block=defined_terms_block,
         )
 
 
