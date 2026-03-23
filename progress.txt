@@ -2812,3 +2812,89 @@ Notifications auto-dismiss after 5 seconds. For critical errors like "Fix failed
 
 ### Summary
 Error handling for SCANS is good — categorized messages, retry buttons, no silent failures. Error handling for FIX APPLICATION is weak — small toasts easy to miss, no consolidated offline detection. No periodic health checking or auto-reconnection.
+
+## Iteration 50 — ADDIN-2: Loading States + Progress Feedback Audit
+**Task:** Are ALL async operations showing spinners/progress? Is there user feedback during long scans?
+
+### Loading States Inventory
+
+| Operation | Loading Indicator | Duration | User Feedback |
+|---|---|---|---|
+| Full document scan | Skeleton loader + rotating status messages + elapsed timer | 10-90s | ✓ EXCELLENT |
+| Selection scan | Button text "Scanning..." + spinner | 2-10s | ✓ Good |
+| Login | Button disabled + spinner | 1-3s | ✓ Good |
+| Generate Fix | Inline "Generating fix..." text | 2-10s | ✓ Good |
+| Apply Fix | No progress indicator | <2s | ⚠️ None |
+| Apply All | Progress bar + count text | 5-60s | ✓ EXCELLENT |
+| Undo Fix | No progress indicator | <1s | ⚠️ None |
+| Research Clause | Inline "Researching case law..." text | 5-15s | ✓ Good |
+| Load Templates | "Loading templates..." placeholder | 1-3s | ✓ Good |
+| Load Playbooks | No loading state | 1-2s | ⚠️ None |
+| Export Report | Button text changes | 2-5s | ✓ Good |
+
+### Full Scan Progress — Deep Dive (lines 2593-2669)
+
+**The 120-second timeout question from the PRD:**
+
+The scan uses a skeleton loader with:
+1. **8 rotating status messages** (every 5 seconds):
+   - "Analysing contract..." → "Reviewing clause language..." → "Checking against playbook..." → etc.
+2. **Elapsed time counter** (every 1 second): "0s" → "1s" → ... → "1m 30s"
+3. **5-minute informational message**: "Still analysing... large documents take longer"
+4. **Skeleton cards** — animated placeholder cards that look like risk cards loading
+
+**Assessment: This is EXCELLENT UX for a long-running AI task.** The lawyer sees:
+- The system is actively working (rotating messages suggest different stages)
+- How long they've been waiting (elapsed counter)
+- Reassurance if it's taking very long (5-minute message)
+
+**But NO stage-level progress**: The messages are cosmetic — they don't reflect actual pipeline stages. The frontend doesn't know if it's in Stage 1 (extraction, 50ms) or Stage 3 (AI, 60s). The backend pipeline has stage metrics but they aren't streamed to the frontend during analysis.
+
+### Critical Findings
+
+**1. Apply Fix has NO loading indicator (line 2346-2424)**
+When user clicks "Apply Fix":
+- `generateRedlineZDR()` API call fires (2-5s)
+- Then `Word.run` inserts OOXML (0.5-1s)
+- **During this 3-6s window, no spinner, no "Applying..." text, no button disable**
+- User might click again (though `fixedRisks.add()` should prevent re-application)
+- A stressed lawyer on a deadline would think the button didn't work and click multiple times
+
+**2. Undo Fix has NO loading indicator (line 2228-2285)**
+`undoRedlineFix()` runs `Word.run` to search and replace text. No visual feedback during the 0.5-2s operation.
+
+**3. Status messages don't match actual pipeline stages**
+The 8 messages cycle every 5s regardless of what's happening:
+```javascript
+const statusMessages = [
+  'Analysing contract…',       // Shows at t=0 (Stage 1 already done)
+  'Reviewing clause language…', // Shows at t=5s (Stage 2 done in 100ms)
+  'Checking against playbook…', // Shows at t=10s (Stage 3 AI just starting)
+  'Assessing risk exposure…',   // Shows at t=15s
+  'Deep analysis in progress…', // Shows at t=20s
+  'Reviewing all clauses…',     // Shows at t=25s
+  'Cross-referencing playbook rules…', // Shows at t=30s
+  'Preparing risk summary…',    // Shows at t=35s (Stage 3 still running)
+];
+```
+At t=40s the messages RESTART from "Analysing contract..." — misleading, implies starting over.
+
+**4. No cancellation capability**
+Once a scan starts, the user cannot cancel it. The 90s backend timeout is the only escape. For a lawyer who accidentally scanned a non-contract document, there's no way to abort and try something else.
+
+**5. Selection scan loading is minimal**
+Only changes button text to "Scanning..." with inline spinner. No elapsed timer, no status messages. For a 30-second clause analysis, the user just sees "Scanning..." with no indication of progress.
+
+**6. Apply All has GOOD progress (lines 2446-2448)**
+```javascript
+const progressDiv = document.getElementById('applyProgress');
+const progressFill = document.getElementById('progressFill');
+const progressText = document.getElementById('progressText');
+```
+Apply All shows a progress bar with "Applied 3/15 fixes" — this is excellent for batch operations.
+
+### Verdict
+- **Full scan loading: EXCELLENT** — skeleton loader, rotating messages, elapsed timer
+- **Apply Fix loading: MISSING** — no indicator during 3-6s operation
+- **No real-time stage progress** — messages are cosmetic, not pipeline-driven
+- **No cancel capability** — can't abort a long-running scan
