@@ -4021,3 +4021,42 @@ But this is a P2 optimization — the current approach works for the typical use
 - Warm response: AI calls dominate (10-60s), all other operations < 500ms
 - SSE for progress: P2 nice-to-have, not blocking for launch
 - Current 90s/120s timeout pairing: sufficient for 50-page contracts
+
+## Iteration 75 — EDGE-1: Empty / Non-English / All-GREEN / Partial Document Behavior
+
+### Empty Contract (0 text)
+**Expected**: Clear error message, no AI call, no wasted credits.
+**Actual**: ✓ CORRECT
+- Frontend (taskpane.ts:979): `documentText.trim().length < 50` → error card "Document appears to be empty"
+- Backend (analysis_pipeline.py:323): `len(contract_text.strip()) < 100` → returns "Document is too short"
+- No AI API call made ✓, no quota consumed ✓
+
+### Non-English Contract (Hindi with English legal terms)
+**Expected**: Warning to user + best-effort analysis with reduced accuracy.
+**Actual**: ⚠️ PARTIALLY HANDLED
+- Backend (analysis_pipeline.py:334): `_detect_non_english()` adds warning "⚠️ This document appears to contain non-English text"
+- AI (Gemini Pro) CAN analyze Hindi text — it's multilingual
+- BUT: Regex rule engine (Stage 2) finds ZERO matches — all patterns are English-only
+- HallucinationGuard verification: AI quotes Hindi text, `verify_quote()` may fail on normalization
+- **Net result**: Warning shown, AI may find some risks, but verification rejects many valid findings. User sees fewer risks than actually exist.
+- **Impact for Indian market**: HIGH — many Indian contracts mix Hindi and English
+
+### Contract with NO Risks (all GREEN)
+**Expected**: "No issues found" message, empty risk list, encouraging executive summary.
+**Actual**: ✓ CORRECT
+- Backend (analysis_pipeline.py:466-475): `if not raw_redlines` → returns `executive_summary=["No issues found."]` with empty redlines list
+- Frontend: Shows executive summary with "No issues found"
+- Risk counts show 0/0/0
+- No false positive generation — the prompt says "Silence is approval when the contract truly meets the standard"
+- **Minor concern**: The ORIENT step asks "Are any STANDARD clauses entirely missing?" which may generate YELLOW/missing findings even for a clean contract. A clean NDA might trigger "missing force majeure" findings.
+
+### Partial Document (one section pasted)
+**Expected**: Analysis of the pasted section without false "missing" warnings for sections that exist elsewhere.
+**Actual**: ✗ PROBLEMATIC
+- No detection that the document is partial — passes the >100 char minimum
+- ORIENT step flags ALL missing standard clauses as risks
+- A user pasting just the indemnification section sees 15-20 "missing" warnings
+- **Example**: Pasting "8.1 The Vendor shall indemnify..." → AI flags: missing force majeure, missing data protection, missing governing law, missing termination clause, missing confidentiality, etc.
+- **No way to tell the system "this is a partial document"**
+- Selection scan (`scanSelection()`) is the correct tool for partial text, but the user might use the full scan button instead
+- **Impact**: Frustrated lawyers who see a flood of irrelevant warnings
