@@ -122,7 +122,7 @@ This is the critical "whole paragraph turns red" bug.
 - [x] DASH-1: Read `dashboard/src/api/client.ts` (all 1250+ lines). Audit the wrapped response pattern: which endpoints return `{ items: [], total: N }` vs plain arrays? Are ALL client functions handling this correctly? (4 were already fixed — are there more?) Write findings to progress.txt.
 - [x] DASH-2: Audit `dashboard/src/pages/PlaybookEditor.tsx` and `dashboard/src/pages/Playbooks.tsx`. Focus on: error boundaries, empty states, loading states, form validation. Can a user create an invalid playbook rule? What happens on save failure? Write findings to progress.txt.
 - [x] DASH-3: Audit `dashboard/src/pages/BatchUpload.tsx`, `Compare.tsx`, `Analytics.tsx`, `Dashboard.tsx`. For each page: error handling, empty states, loading states, data freshness (React Query stale time), pagination handling. Write findings to progress.txt.
-- [ ] DASH-4: Audit TypeScript type safety. Are interfaces matching backend response schemas exactly? Any `as any` casts hiding type mismatches? Write findings to progress.txt.
+- [x] DASH-4: Audit TypeScript type safety. Are interfaces matching backend response schemas exactly? Any `as any` casts hiding type mismatches? Write findings to progress.txt.
 - [ ] DASH-5: Audit race conditions. Can stale data from React Query cause UI glitches? What happens if user navigates away during a mutation? Write findings to progress.txt.
 
 ---

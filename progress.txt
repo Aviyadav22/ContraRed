@@ -3260,3 +3260,46 @@ Conditions, dependencies, and versions queries use `enabled: !!id && activeTab =
 - **No retry buttons on error states** (except Compare which shows error message)
 - **Text-only loading indicators** (no skeleton loaders except Dashboard)
 - **Hardcoded pagination limits** with no "load more" UI (Analytics reports: 20)
+
+## Iteration 60 — DASH-4: TypeScript Type Safety Audit
+**Task:** Are interfaces matching backend response schemas? Any `as any` casts?
+
+### Outstanding Type Safety
+
+- **Zero `as any` casts** in entire dashboard/src ✓
+- **Zero `@ts-ignore` / `@ts-expect-error`** directives ✓
+- **Zero TypeScript compilation errors** (`npx tsc --noEmit` passes clean) ✓
+- **48 exported interfaces** in api/client.ts — comprehensive type coverage
+
+### Type Safety Assessment: EXCELLENT
+
+The dashboard codebase has unusually clean TypeScript. No type escapes, no suppressions, no cast hacks. This is rare for a startup codebase.
+
+### Potential Runtime Type Mismatches (backend vs frontend)
+
+Despite clean TypeScript, there are potential RUNTIME mismatches where the backend returns data that doesn't match the frontend interface:
+
+**1. `PlaybookRule.match_type` — frontend has it, backend may not always include it**
+Frontend: `match_type: string` (client.ts line 44)
+Backend PlaybookResponse: `match_type` extracted from `detection_patterns.get("match_type", "exact")` (playbooks.py line 582)
+If `detection_patterns` is null/missing, the backend returns "exact" as default. ✓ Safe.
+
+**2. `PlaybookRule.detection_patterns` — frontend expects `string[]`, backend stores `{patterns: string[], match_type: string}`**
+Frontend: `detection_patterns: string[]` (client.ts line 43)
+Backend: Unwraps JSONB: `r.detection_patterns.get("patterns", [])` (playbooks.py line 581)
+This unwrapping is done in the endpoint, not the model. ✓ Types match at API boundary.
+
+**3. `DashboardStats` — large interface with many optional fields**
+Frontend defines 16+ fields (lines 298-316). If backend adds/removes fields, TypeScript won't catch it at compile time — `request<DashboardStats>()` trusts the backend response structure. This is the standard limitation of TypeScript without runtime validation.
+
+**4. `risk_level` enum values differ between components**
+- `PlaybookRule.risk_level: string` (client.ts) — lowercase: "red", "yellow", "green"
+- `AIRedlineItem.risk_level: 'RED' | 'YELLOW'` (Word add-in api.ts) — uppercase union
+- Backend `RiskLevel` enum: "RED", "YELLOW", "GREEN" (uppercase)
+- The dashboard and Word add-in use DIFFERENT casing conventions for risk levels. Dashboard uses lowercase (from backend `.value` which is lowercase for the Python enum), Word add-in uses uppercase. This inconsistency could cause bugs if shared code is introduced.
+
+**5. No runtime validation library (Zod, io-ts, etc.)**
+All API responses are trusted at the TypeScript level via `response.json() as T`. No runtime schema validation. If the backend returns unexpected data (null where object expected, number where string expected), the app crashes at the point of use, not at the API boundary.
+
+### Verdict
+TypeScript type safety is EXCELLENT at compile time. The risk is at RUNTIME — backend responses are trusted without validation. For a production legal tool, adding Zod or similar runtime validation at the API boundary would catch schema mismatches before they cause user-facing crashes.
