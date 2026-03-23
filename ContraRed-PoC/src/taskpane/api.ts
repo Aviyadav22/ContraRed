@@ -188,7 +188,8 @@ class ContraRedAPI {
 
     private async request<T>(
         endpoint: string,
-        options: RequestInit = {}
+        options: RequestInit = {},
+        retryCount: number = 0
     ): Promise<T> {
         const url = `${API_BASE_URL}${endpoint}`;
         const headers: Record<string, string> = {
@@ -229,6 +230,14 @@ class ContraRedAPI {
 
         if (response.status === 204) {
             return undefined as T;
+        }
+
+        // Retry on 429 or 5xx with exponential backoff (max 2 retries)
+        const MAX_RETRIES = 2;
+        if (retryCount < MAX_RETRIES && (response.status === 429 || response.status >= 500)) {
+            const delay = Math.pow(2, retryCount) * 1000; // 1s, 2s
+            await new Promise(resolve => setTimeout(resolve, delay));
+            return this.request<T>(endpoint, options, retryCount + 1);
         }
 
         if (response.status === 401 && !this.isRefreshing) {

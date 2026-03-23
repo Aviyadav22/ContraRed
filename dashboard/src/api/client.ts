@@ -136,7 +136,7 @@ export function isAdmin(): boolean {
 // API Request Helper
 // ============================================================================
 
-async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+async function request<T>(endpoint: string, options: RequestInit = {}, retryCount: number = 0): Promise<T> {
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         ...(options.headers as Record<string, string>),
@@ -171,6 +171,14 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
         throw err;
     } finally {
         clearTimeout(timeoutId);
+    }
+
+    // Retry on 429 or 5xx with exponential backoff (max 2 retries)
+    const MAX_RETRIES = 2;
+    if (retryCount < MAX_RETRIES && (response.status === 429 || response.status >= 500)) {
+        const delay = Math.pow(2, retryCount) * 1000; // 1s, 2s
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return request<T>(endpoint, options, retryCount + 1);
     }
 
     if (!response.ok) {
