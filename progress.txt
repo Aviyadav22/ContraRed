@@ -979,3 +979,21 @@ The hallucination guard is a critical safety layer. The 4-tier verification casc
 - Re-query mechanism exists but may be disconnected from pipeline
 
 ### Classification: KEEP — This is the most important quality gate in the system
+
+## Iteration 24 — REGEX-10: Web Search + REGEX_INVENTORY.md Creation
+**Task:** Web search for LLM vs regex best practices, create REGEX_INVENTORY.md synthesis document.
+**Files Created:** `REGEX_INVENTORY.md` (project root)
+
+### Web Research Findings
+1. **LLM vs Regex**: Industry data shows LLMs achieving >90% accuracy vs 60-80% for rule-based. One benchmark: AI reviewed complex supply agreements in <3 min at >90% accuracy vs 4h at 86% for lawyers.
+2. **Agentic Document Workflows (ADW)**: Emerging architecture combining document processing, retrieval, structured outputs, and agentic orchestration. Specialized agents for intake/classification/extraction/reasoning/verification/audit.
+3. **Explainable AI (XAI)**: Becoming central — AI must show WHY it flagged something. ContraRed's confidence scoring aligns with this.
+4. **Best practice accuracy**: Modern agentic systems achieve 95-99.8% with self-improving feedback loops.
+
+### REGEX_INVENTORY.md Contents
+Created comprehensive synthesis with:
+- Total inventory: ~500+ regex patterns across 9 files
+- Classification: 50% KEEP / 50% REPLACE-WITH-AI / 0% REMOVE
+- Priority-ordered migration plan: P0 (3 items), P1 (7 items), P2 (6 items), P3 (3 items)
+- Industry context from web research
+- Recommended tiered hybrid approach: regex for preprocessing + AI for risk assessment + verification gates
