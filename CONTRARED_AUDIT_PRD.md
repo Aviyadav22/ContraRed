@@ -142,7 +142,7 @@ This is the critical "whole paragraph turns red" bug.
 
 ## PHASE 8: PERFORMANCE & COST (5 tasks)
 
-- [ ] PERF-1: Analyze AI token usage. How many tokens per contract scan? Estimate cost per scan at Gemini pricing. Can prompts be shortened without quality loss? Write findings to progress.txt.
+- [x] PERF-1: Analyze AI token usage. How many tokens per contract scan? Estimate cost per scan at Gemini pricing. Can prompts be shortened without quality loss? Write findings to progress.txt.
 - [ ] PERF-2: Audit caching. Is `CacheService` / `playbook_cache.py` effective? What's the cache hit rate potential? Are expensive computations (AI analysis, OOXML generation) being cached? Write findings to progress.txt.
 - [ ] PERF-3: Audit database queries. Any N+1 queries? Missing indexes? Slow joins? Check the playbook queries especially — loading rules + conditions + versions. Write findings to progress.txt.
 - [ ] PERF-4: Audit concurrent analysis. The batch endpoint runs 3 concurrent analyses — is this safe with Gemini rate limits? What happens if one fails? Write findings to progress.txt.

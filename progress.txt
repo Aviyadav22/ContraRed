@@ -3760,3 +3760,84 @@ Batch status is stored in a module-level dict. Server restart (Render.com auto-r
 - Text extraction: ⚠️ Regex XML stripping instead of proper parser
 - Malware scanning: ✗ None (low risk since only text extracted)
 - Filename sanitization: ⚠️ Used as-is in storage/logging
+
+## Iteration 70 — PERF-1: AI Token Usage + Cost Per Scan Analysis
+
+### Token Budget Breakdown (Full Contract Analysis)
+
+**Input tokens (sent to Gemini Pro):**
+| Component | Estimated Tokens | Source |
+|---|---|---|
+| System prompt (V2) | ~2,000 | prompt_templates.py SYSTEM_PROMPT_V2 (~6KB) |
+| Jurisdiction context | ~300-500 | jurisdiction_detector to_prompt_context() |
+| Defined terms | ~500-2,500 | defined_terms_resolver (depends on contract) |
+| Playbook rules (78 rules) | ~3,000-4,000 | format_playbook_rules() |
+| Contract text (avg 20-page) | ~15,000-20,000 | ~60,000 chars = ~18K tokens |
+| Contract text (50-page) | ~40,000-50,000 | ~150,000 chars = ~45K tokens |
+| **Total input (20-page)** | **~21,000-29,000** | |
+| **Total input (50-page)** | **~46,000-57,000** | |
+
+**Output tokens (from Gemini Pro):**
+| Component | Estimated Tokens | Calculation |
+|---|---|---|
+| Executive summary (5 bullets) | ~150 | 5 × 30 tokens |
+| Per redline (avg 20 findings) | ~4,000 | 20 × 200 tokens each |
+| Per redline (max 40 findings) | ~8,000 | 40 × 200 tokens each |
+| **Total output (typical)** | **~4,000-8,000** | |
+
+**max_output_tokens = 32,768** (gemini_analyzer.py line 288) — sufficient for 100+ redlines.
+
+### Cost Per Scan (Gemini Pro Pricing)
+
+**Gemini 2.0 Pro pricing (as of early 2026):**
+- Input: $1.25 per 1M tokens ($0.00000125 per token)
+- Output: $5.00 per 1M tokens ($0.000005 per token)
+
+| Document Size | Input Cost | Output Cost | Total Cost |
+|---|---|---|---|
+| 10-page contract (~12K tokens) | $0.019 | $0.020 | **$0.039** |
+| 20-page contract (~25K tokens) | $0.031 | $0.025 | **$0.056** |
+| 50-page contract (~50K tokens) | $0.063 | $0.035 | **$0.098** |
+
+**Per-fix generation (Gemini Flash-Lite):**
+- Input: ~2K tokens (prompt + context) → ~$0.001
+- Output: ~500 tokens (fix + reasoning) → ~$0.001
+- **Total per fix: ~$0.002**
+
+**Monthly cost estimates:**
+| Usage Level | Scans/Month | Fix/Scan | Total Monthly |
+|---|---|---|---|
+| Single lawyer (light) | 50 | 5 | $3.30 |
+| Team of 5 (moderate) | 500 | 10 | $33.00 |
+| Enterprise (heavy) | 5,000 | 15 | $365.00 |
+
+### Can Prompts Be Shortened?
+
+**1. System prompt (2,000 tokens) — KEEP**
+The V2 4-step framework is essential for quality. The worked examples (200+ tokens) significantly improve output format compliance. Removing them would increase JSON parsing failures.
+
+**2. Jurisdiction context (300-500 tokens) — OPTIMIZE**
+Each jurisdiction profile includes 4-8 key statutes, indemnification/non-compete/arbitration/data protection standards, and special considerations. For a contract clearly governed by Indian law, the California/Germany/France profiles are wasted tokens.
+**Proposal**: Only inject the detected jurisdiction's profile, not a generic block.
+**Current**: Already only injects detected jurisdiction ✓ — no waste here.
+
+**3. Defined terms (500-2,500 tokens) — OPTIMIZE**
+`to_prompt_context()` includes ALL extracted terms with resolved definitions (truncated at 400 chars each). For a contract with 50 defined terms at 200 chars average = 10,000 chars = ~3,000 tokens.
+**Proposal**: Only inject defined terms that are referenced by playbook rules. A "Governing Law" rule doesn't need the definition of "Force Majeure Event."
+**Savings**: 30-50% of defined terms context (~1,000-1,500 tokens)
+
+**4. Playbook rules (3,000-4,000 tokens) — OPTIMIZE**
+78 rules formatted as `Rule #N: Name | Risk: LEVEL | Position: text | Fallback: text`
+**Proposal**: For 20-page contracts, most rules won't apply (no SaaS terms in an NDA). Pre-filter rules by contract type (detected in ORIENT step) to send only relevant rules.
+**Savings**: 50-70% of rules context for specialized contracts (~2,000-2,800 tokens)
+**Risk**: May miss cross-domain risks (e.g., IP clause in an NDA)
+
+**5. Contract text (15,000-50,000 tokens) — NO OPTIMIZATION POSSIBLE**
+The full contract MUST be sent for holistic analysis. Chunking would lose cross-clause context (STEP 4 CROSS-CLAUSE analysis requires seeing the full document).
+
+### Recommendations
+1. Pre-filter playbook rules by detected contract type — biggest token savings
+2. Limit defined terms to those relevant to active rules
+3. Keep system prompt and examples intact — quality depends on them
+4. Monitor actual token usage via Gemini API response metadata (currently estimated by word count — underreports by 30-50%)
+5. Consider caching analysis results by document hash — re-scanning the same document costs $0 instead of $0.06
