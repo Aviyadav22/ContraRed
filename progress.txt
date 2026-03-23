@@ -1779,3 +1779,64 @@ If `body.search()` returns multiple matches (items.length > 1), only the first i
 - **Tier 3**: Range is paragraph-level — THIS is the "whole paragraph turns red" bug
 - **Prevalence**: Tier 3 activates when AI quotes don't match document text exactly (common with LLMs)
 - **Fix direction**: Tier 3 should `paragraph.search()` within the matched paragraph to get a tighter range
+
+## Iteration 35 — OOXML-3: applyAIRedline() Audit (lines 2329-2428 of taskpane.ts)
+**Task:** Document EXACTLY how OOXML gets inserted into Word. What is the range at insertion time?
+
+### Flow
+1. **Pre-fetch OOXML** (line 2348): Calls `api.generateRedlineZDR()` BEFORE entering `Word.run` to avoid context timeout. This is smart — the API call can take seconds, and Word contexts timeout.
+2. **Enable Track Changes** (line 2360): Sets `changeTrackingMode = Word.ChangeTrackingMode.trackAll`. Wrapped in try/catch — Office webview may not support this.
+3. **Find text** (line 2367): `findTextInDocument(redline.original_text, context)` — the 3-tier search from OOXML-2.
+4. **Insert OOXML** (lines 2375-2379):
+   - Missing clauses: `range.insertOoxml(ooxml, Word.InsertLocation.after)` — appends after range
+   - Violations: `range.insertOoxml(ooxml, Word.InsertLocation.replace)` — **REPLACES the entire range**
+5. **Insert comment** (line 2384): Adds explanation as Word comment on the range
+6. **Store undo info** (lines 2392-2413): Saves paragraph index + context hash for undo targeting
+
+### THE KEY LINE — Root Cause Confirmed
+
+```typescript
+result.range.insertOoxml(redlineResponse.ooxml, Word.InsertLocation.replace);  // line 2378
+```
+
+**What `result.range` is at this point:**
+- If Tier 1 or 2 found the text: Range is the EXACT matching text → OOXML replaces only that text ✓
+- If Tier 3 (fuzzy) found the text: Range is the ENTIRE PARAGRAPH → OOXML replaces the ENTIRE paragraph ✗
+
+**The OOXML contains word-level diffs** (from backend `generate_track_changes_ooxml()`), but when `insertOoxml(..., replace)` replaces a paragraph-level range:
+1. Word deletes the entire paragraph content
+2. Word inserts the OOXML content (which includes keep/del/ins runs)
+3. If Track Changes is ON: the delete of the paragraph + insert of OOXML are BOTH tracked
+4. Result: The whole paragraph appears as a revision (red strikethrough + green underline)
+
+### Critical Findings
+
+**1. Double-tracking problem with Track Changes ON**
+When `changeTrackingMode = trackAll` is set (line 2360) AND `insertOoxml(..., replace)` is used:
+- Track Changes records the REPLACEMENT operation itself as a change
+- The OOXML already contains its OWN `<w:del>` and `<w:ins>` markup
+- Result: **DOUBLE revision marks** — Word's track changes wrapping the OOXML's track changes
+- This is the fundamental incompatibility: you can't use OOXML-embedded track changes AND Word's live Track Changes simultaneously
+
+**2. Missing clause handling is correct (line 2376)**
+`InsertLocation.after` appends the OOXML after the found range without replacing anything. This works correctly because there's no existing text to match.
+
+**3. Fix text guard is good (lines 2330-2335)**
+Prevents falling back to recommendation text as replacement. Without this guard, the recommendation (e.g., "Consider capping liability at 12 months") would be inserted as literal contract text.
+
+**4. Read-only document check (lines 2337-2342)**
+Calls `isDocumentReadOnly()` before attempting changes. Good defensive programming.
+
+**5. Undo info storage uses substring matching (line 2399)**
+```typescript
+allParas.items[pi].text.includes(textToApply.substring(0, 50))
+```
+After applying the fix, searches paragraphs for the first 50 chars of the fix text to find its location. If the fix text appears in multiple paragraphs, wrong location stored.
+
+**6. Comment insertion may fail silently (lines 2383-2389)**
+Comments require WordApi 1.4 — graceful fallback is correct, but the user doesn't know the comment wasn't added.
+
+### Root Cause Summary
+The "whole paragraph turns red" bug has TWO contributing causes:
+1. **Tier 3 fuzzy** returns paragraph-level range → `replace` replaces entire paragraph
+2. **Track Changes double-tracking** — Word's live Track Changes wraps the OOXML's embedded track changes, creating double revision marks even for Tier 1/2 matches
