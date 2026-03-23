@@ -100,7 +100,7 @@ This is the critical "whole paragraph turns red" bug.
 - [x] PROMPT-3: Read `backend/app/services/analysis_pipeline.py` (full file). Trace the 5-stage analysis pipeline end-to-end. For each stage: what runs (regex or AI or both), what does it produce, what feeds into the next stage. Document the full flow in progress.txt.
 - [x] PROMPT-4: Evaluate prompt edge cases: What happens with an empty contract? Non-English contract? Contract with no risks (all GREEN)? Partial document? Amendments referencing a master agreement? A 50-page contract that exceeds context window? Document findings in progress.txt.
 - [x] PROMPT-5: Evaluate `temperature: 0.1` — is this optimal for legal analysis? Too deterministic may miss creative risk interpretations. Too creative may hallucinate risks. What do industry best practices say? Evaluate fix generation prompts: are they producing legally sound replacement language? Write findings to progress.txt.
-- [ ] PROMPT-6: Evaluate the party perspective handling. Does the prompt correctly handle buyer vs seller vs neutral perspective? ContraRed reviews contracts FROM the client's perspective (usually the vendor/seller receiving a buyer's contract). Is this correctly baked into prompts? Write findings to progress.txt.
+- [x] PROMPT-6: Evaluate the party perspective handling. Does the prompt correctly handle buyer vs seller vs neutral perspective? ContraRed reviews contracts FROM the client's perspective (usually the vendor/seller receiving a buyer's contract). Is this correctly baked into prompts? Write findings to progress.txt.
 
 ---
 

@@ -2663,3 +2663,87 @@ if not raw_redlines:
 3. Lower research prompt temperature to 0.1
 4. Add length guidance for missing clause generation ("match typical length for this clause type in a {contract_category} agreement")
 5. Add cross-reference preservation instruction
+
+## Iteration 48 — PROMPT-6: Party Perspective Handling Evaluation
+**Task:** Does the prompt correctly handle buyer vs seller vs neutral perspective?
+
+### How Party Side Flows Through the System
+
+```
+Word Add-in: User selects from dropdown
+  └→ "Buyer / Client" | "Seller / Vendor" | "Neutral Review"
+  └→ partySideSelect.value = "buyer" | "seller" | "neutral"
+
+API call: api.analyzeWithAI(text, filename, playbookId, partySide || 'buyer')
+  └→ POST /documents/analyze-full { party_side: "buyer" }
+
+Backend endpoint: documents.py line 152
+  └→ party_side: Optional[str] = Field(default="buyer", pattern=r"^(buyer|seller|neutral)$")
+  └→ Validated with regex pattern — only buyer/seller/neutral accepted ✓
+
+Pipeline: analysis_pipeline.py → run(party_side="buyer")
+  └→ _stage3_risk_assessment(party_side) → gemini_analyzer.analyze_full_contract(party_side)
+
+Gemini Analyzer: gemini_analyzer.py line 268
+  └→ render_system_prompt(party_side=party_side)
+
+Prompt Templates: prompt_templates.py line 484
+  └→ PARTY_SIDE_CONTEXT.get(party_side, PARTY_SIDE_CONTEXT["buyer"])
+  └→ Injected into system prompt as {party_side_context}
+```
+
+### Party Side Context Definitions
+
+**Buyer (default):**
+> "You represent the BUYER/CLIENT — the party PURCHASING or RECEIVING goods, services, or licenses. Terms that favor the provider/vendor/seller are ADVERSE to your client."
+
+**Seller:**
+> "You represent the SELLER/VENDOR/PROVIDER — the party SUPPLYING goods, services, or licenses. Terms that favor the buyer/client/customer are ADVERSE to your client."
+
+**Neutral:**
+> "You are performing a NEUTRAL/BALANCED review. Flag terms that are unfair to EITHER party."
+
+### Assessment: Is This Correctly Baked into Prompts?
+
+**YES — the perspective is correctly injected into the system prompt.** It's part of the "YOUR IDENTITY" section (line 116):
+```
+- Perspective: {party_side_context}
+```
+This means the AI's ENTIRE risk assessment is framed from the selected perspective.
+
+### Critical Findings
+
+**1. Default is "buyer" everywhere — is this correct for ContraRed's use case?**
+The PRD says "ContraRed reviews contracts FROM the client's perspective (usually the vendor/seller receiving a buyer's contract)." But the DEFAULT is "buyer".
+
+If ContraRed's typical user is a VENDOR (seller) reviewing a contract sent BY a buyer (customer), then the default should be "seller", not "buyer". A vendor receiving a procurement contract needs risks flagged from the VENDOR's perspective — buyer-favorable terms are adverse.
+
+**However**: The dropdown says "Your Role" — the user self-selects. If the user is a vendor, they'd select "Seller/Vendor." The issue is only with the DEFAULT. Most users may not change the default. If they don't, a vendor gets buyer-perspective analysis — risks are inverted.
+
+**2. Playbook `party_side` field is NOT used for perspective**
+`Playbook.party_side` (playbook.py line 39) defaults to "buyer" — this is stored in the DB per playbook. But the ANALYSIS pipeline takes `party_side` from the API request (line 718), NOT from the playbook's `party_side` field. The playbook's stored party_side is ignored.
+
+**This is a bug**: If a playbook was created for "seller" analysis (party_side="seller"), but the user forgets to change the dropdown, the analysis runs from buyer perspective against a seller-focused playbook. The rules and perspective are misaligned.
+
+**3. Fix generation prompts do NOT use party_side**
+`render_fix_prompt()` (lines 516-572) doesn't include party_side context. Fixes are generated without knowledge of which side the user represents. A fix for a "buyer" user should strengthen buyer protections, but for a "seller" user should protect the seller. Currently, fixes are generic.
+
+**4. Clause analysis (selection scan) does NOT use party_side**
+`gemini_analyzer.analyze_clause()` (line 603) uses an inline prompt that doesn't inject party_side. Selection-level analysis always runs from a generic perspective, potentially inconsistent with the full-document analysis perspective.
+
+**5. The perspective context is well-written**
+The buyer/seller/neutral descriptions are clear, specific, and include concrete examples of what constitutes "adverse" terms from each perspective. This is good prompt engineering.
+
+### ContraRed's Intended Use Case
+Based on the deployment context (Intellect Design Arena as client):
+- Intellect is a technology VENDOR providing products to banks/financial institutions
+- They RECEIVE contracts from enterprise BUYERS
+- They need analysis from the VENDOR/SELLER perspective
+- **The default should be "seller" for this use case, not "buyer"**
+
+### Recommendations
+1. Change default party_side from "buyer" to "seller" (matches ContraRed's target market)
+2. Use playbook's `party_side` field as default, falling back to "buyer" if not set
+3. Inject party_side context into fix generation prompts
+4. Add party_side to clause analysis (selection scan) prompts
+5. Add a prominent "You're reviewing as: SELLER" indicator in the UI during scan
