@@ -3303,3 +3303,54 @@ All API responses are trusted at the TypeScript level via `response.json() as T`
 
 ### Verdict
 TypeScript type safety is EXCELLENT at compile time. The risk is at RUNTIME — backend responses are trusted without validation. For a production legal tool, adding Zod or similar runtime validation at the API boundary would catch schema mismatches before they cause user-facing crashes.
+
+## Iteration 61 — DASH-5: Race Conditions Audit
+**Task:** React Query stale data, navigation during mutations.
+
+### Global React Query Config (App.tsx lines 27-34)
+```typescript
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      staleTime: 30000, // 30 seconds
+      refetchOnWindowFocus: false,
+    },
+  },
+});
+```
+**Correction**: DASH-3 incorrectly stated "no staleTime configured." There IS a global 30s staleTime. `refetchOnWindowFocus: false` prevents re-fetches on tab switch — appropriate for a dashboard that shouldn't spam the API.
+
+### Race Condition Analysis
+
+**1. Navigation during mutations — LOW RISK**
+React Query mutations continue running even if the user navigates away. The `onSuccess` callbacks call `queryClient.invalidateQueries()` which updates the cache even if the component unmounted. This is CORRECT behavior — the mutation completes, the cache updates, and the next visit sees fresh data. No data loss.
+
+**2. Stale data between Playbooks list and PlaybookEditor — LOW RISK**
+User edits a playbook (rules added/deleted), navigates back to list. The list query has 30s staleTime — if they navigate back within 30s, they see cached data without the changes. After 30s or on refetch, the list updates. `invalidateQueries` in mutations mitigates this — most mutations invalidate `['playbooks']` query key.
+
+**3. Concurrent mutations on the same resource — MEDIUM RISK**
+Two users editing the same playbook simultaneously:
+- User A adds a rule → `playbook.version += 1`
+- User B adds a rule → `playbook.version += 1` (same base version)
+- No optimistic locking — both succeed, both increment from same base
+- **Result**: Version counter is wrong (incremented by 1 instead of 2)
+- No conflict detection — last write wins silently
+
+**4. React Query cache and 401 refresh — LOW RISK**
+If a token expires during a cached period (30s staleTime), the next fetch attempt triggers the 401 → refresh flow. If refresh succeeds, the query retries automatically. ✓
+
+**5. PlaybookEditor tab switching — NO RACE**
+Conditions, dependencies, and versions queries use `enabled: activeTab === 'conditions'` etc. Only the active tab fetches. Switching tabs doesn't cause concurrent fetches — the previous tab's query is idle. ✓
+
+**6. Marketplace fork + rate — MEDIUM RISK**
+`forkMutation` invalidates both `['playbooks']` and `['marketplace']` on success. But if the fork API call takes 5s and the user clicks "Fork" again during that time, two forks are created. No mutation-in-progress guard.
+
+**7. Batch upload polling race — LOW RISK**
+BatchUpload uses `setInterval(3000)` for polling. The interval checks `isBatchProcessing` before polling. If the component unmounts mid-poll (navigation), the interval is cleared in cleanup. ✓
+
+### Findings Summary
+- **Global 30s staleTime** exists (correcting DASH-3 finding) ✓
+- **Navigation during mutations**: safe — React Query handles correctly ✓
+- **Concurrent same-resource edits**: no optimistic locking — last write wins
+- **Fork double-click**: no mutation guard — can create duplicate forks
+- **No optimistic updates used anywhere** — all mutations wait for server response. This is SAFE but feels slower than it could be.
