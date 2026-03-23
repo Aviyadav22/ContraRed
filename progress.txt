@@ -1631,3 +1631,74 @@ Clause Type [text] → Risk Level [dropdown] → Match Type [dropdown]
 - [Best AI Contract Review Tools 2026](https://www.legalfly.com/post/9-best-ai-contract-review-software-tools-for-2025)
 - [Harvey Legal AI — Playbooks](https://www.spellbook.legal/learn/legal-ai-tools)
 - [Multi-Agent LLM Legal Systems](https://www.oaepublish.com/articles/aiagent.2025.06)
+
+## Iteration 33 — OOXML-1: redline_implementer.py Full Audit (525 lines)
+**Task:** Document EXACTLY how OOXML is generated.
+**File:** `backend/app/services/redline_implementer.py` (525 lines)
+
+### Architecture Overview
+3-step pipeline: Find Anchor → Compute Diff → Generate OOXML
+
+**Step 1: `find_anchor()` (lines 74-139) — Multi-strategy text search**
+1. **Hash match**: SHA-256 lookup in ContractMap nodes (from structure_extractor.py)
+2. **Exact match**: `full_text.find(target_text)` — simple substring
+3. **Fuzzy match**: rapidfuzz Levenshtein against ContractMap nodes, then sliding window fallback
+
+**Step 2: `_compute_word_ops()` (lines 256-282) — Word-level diff**
+- Splits on whitespace using `re.split(r'(\s+)', text)` preserving whitespace tokens
+- Uses `SequenceMatcher` to compute opcodes: equal/delete/insert/replace
+- Returns list of `('keep'|'del'|'ins', text)` operations
+- If <15% overlap → falls back to bulk replace (line 334)
+
+**Step 3: `generate_track_changes_ooxml()` (lines 308-364) — OOXML generation**
+- For each word-level op:
+  - `keep` → `<w:r><w:t>text</w:t></w:r>` (normal run)
+  - `del` → `<w:del><w:r><w:delText>text</w:delText></w:r></w:del>` (red strikethrough)
+  - `ins` → `<w:ins><w:r><w:t>text</w:t></w:r></w:ins>` (green underline)
+- Wrapped in full OOXML package (lines 284-306)
+
+### Critical Findings
+
+**1. The OOXML itself IS word-level diffs — NOT bulk replacement**
+The PRD concern that "the OOXML generation replaces whole paragraphs" is INCORRECT for the backend. The backend generates surgical word-level diffs:
+- `SequenceMatcher` computes word-by-word operations
+- Only changed words get `<w:del>` / `<w:ins>` markup
+- Unchanged words appear as normal `<w:r>` runs
+- **The bug is in the FRONTEND**, not the backend OOXML generation
+
+**2. Sliding window fuzzy search is O(n²) (lines 185-244)**
+For a target of length T in document of length D:
+- Slides window of size T through document with step T/4
+- Then checks adjusted windows around the best match
+- For T=200 chars in D=100,000 chars: ~2,000 fuzz.ratio comparisons
+- Each `fuzz.ratio` call is O(T²) → total: O(D × T) which is manageable
+- But for multiple redlines (20+), this adds up
+
+**3. OOXML package structure is minimal (lines 284-306)**
+Only includes:
+- `/_rels/.rels` — required relationship
+- `/word/document.xml` — content with `<w:body><w:p>...</w:p></w:body>`
+Missing:
+- No `<w:styles>` — inherits styles from host document ✓ (correct for insertOoxml)
+- No `<w:numbering>` — numbered lists would lose numbering
+- No `<w:rPr>` for font/size — assumes host document formatting. If the host paragraph uses a different font, the inserted OOXML won't match.
+
+**4. Bulk fallback uses hardcoded 15% overlap threshold (line 334)**
+If less than 15% of word-ops are `keep`, the entire text is replaced as bulk (full red → full green). This threshold is reasonable but not configurable.
+
+**5. `_escape_xml` is duplicated (lines 246-254 and 398-404)**
+Two identical escape functions. Minor code smell.
+
+**6. `generate_insert_only_ooxml` has leading space (line 429)**
+`<w:t xml:space="preserve"> {new_escaped}</w:t>` — note the space before `{new_escaped}`. This adds an unwanted leading space to inserted clauses.
+
+**7. XML special characters in author name (line 350)**
+`w:author="{author}"` — if author contains `"` or `<`, the XML would be malformed. Should escape the author name. Currently hardcoded as "ContraRed AI" which is safe, but the parameter accepts arbitrary strings.
+
+### Key Insight for OOXML-4 (Root Cause)
+The backend generates CORRECT word-level OOXML. The "whole paragraph turns red" bug must originate from:
+1. The frontend's `findTextInDocument()` returning a paragraph-level range
+2. `insertOoxml(..., replace)` replacing the entire range (which is paragraph-sized)
+3. Even though the OOXML has word-level diffs, Word treats the entire replaced range as revised
+
+The fix is in the frontend range precision, not the backend OOXML.
