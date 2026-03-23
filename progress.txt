@@ -2171,3 +2171,89 @@ Cons: OOXML generation complex, range precision still matters
 - [Word.TrackedChange API — Microsoft Learn](https://learn.microsoft.com/en-us/javascript/api/word/word.trackedchange)
 - [OOXML in Word add-ins — Microsoft Learn](https://learn.microsoft.com/en-us/office/dev/add-ins/word/create-better-add-ins-for-word-with-office-open-xml)
 - [Tips for Word add-in development — Medium](https://medium.com/oi-hu-2019/tips-and-tricks-for-word-add-in-development-4e855e65ae33)
+
+## Iteration 41 — OOXML-9: Surgical Search+Replace Approach — Detailed Analysis
+**Task:** Document the `paragraph.search(exactPhrase)` → `insertText(newPhrase, Replace)` approach with pros/cons vs current OOXML approach.
+
+### The Correct Approach: `paragraph.search()` + `insertText()` with Track Changes
+
+```typescript
+// Step 1: Enable Track Changes
+context.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+
+// Step 2: For each word-level diff from SequenceMatcher:
+for (const [opType, oldText, newText] of wordDiffs) {
+  if (opType === 'replace' || opType === 'delete') {
+    // Search for the exact old text within the paragraph
+    const searchResults = paragraph.search(oldText, { matchCase: true });
+    searchResults.load('items');
+    await context.sync();
+
+    if (searchResults.items.length > 0) {
+      const range = searchResults.items[0];  // Tight range of ONLY the changing text
+      if (opType === 'replace') {
+        range.insertText(newText, Word.InsertLocation.replace);
+        // Word natively marks ONLY this range as tracked change
+      } else {
+        range.delete();
+        // Word natively marks ONLY this range as deleted
+      }
+    }
+  } else if (opType === 'insert') {
+    // Find insertion point and insert after
+    const insertionRange = paragraph.search(precedingText, { matchCase: true });
+    // ... insert after the found range
+  }
+}
+await context.sync();
+```
+
+### Pros of Surgical Search+Replace
+
+1. **Word handles Track Changes natively** — only changed words show as revisions. No double-tracking.
+2. **No OOXML generation needed** — eliminates the entire backend `generate_track_changes_ooxml()` call for simple replacements. Saves one API round-trip.
+3. **No paragraph range destruction** — each `paragraph.search(oldWord)` returns a tight range of ONLY the matching word/phrase. No risk of replacing the whole paragraph.
+4. **Correct author attribution** — Word uses the document author for tracked changes, matching the user's identity.
+5. **Works with Word Online** — `insertText` is more reliable across platforms than `insertOoxml` (which has known Word Online issues per GitHub #3271).
+6. **Preserves formatting** — `insertText(Replace)` on a tight range preserves the formatting of the replaced text (font, size, bold, etc.) in the new text.
+
+### Cons of Surgical Search+Replace
+
+1. **Multiple API calls per fix** — a fix changing 5 words requires 5 search+replace operations, each needing `await context.sync()`. This is slower than a single `insertOoxml` call.
+2. **255-char search limit still applies** — if the word/phrase being replaced is >255 chars, search can't find it. But individual word-level diffs are almost always <255 chars.
+3. **Word search quirks** — `search()` returns 0 results when the search term is broken by a Deleted revision in the middle (GitHub issue #5874). If the document already has Track Changes from a previous review, searching for text that was partially deleted will fail.
+4. **Ordering sensitivity** — replacing words sequentially changes the document text, potentially shifting positions of subsequent search targets. Must process changes in REVERSE document order to avoid this.
+5. **Insert-only operations harder** — for "missing clause" fixes that ADD new text (not replace), there's no old text to search for. Need to find an anchor point using context.
+6. **No custom revision colors** — Word's native Track Changes uses the user's default revision color, not the red/green ContraRed currently uses. Lawyers may not immediately recognize ContraRed changes.
+7. **No `ContraRed AI` author name** — revisions are attributed to the current Word user, not "ContraRed AI".
+
+### Key Workaround for Cons #6 and #7
+After applying changes with `insertText`, ContraRed can insert a comment on the changed range:
+```typescript
+range.insertComment('ContraRed: Changed "unlimited" to "capped at 12 months"');
+```
+This preserves the ContraRed attribution even though the revision itself shows the user's name.
+
+### Comparison Table
+
+| Criterion | Current (OOXML) | Proposed (search+insertText) |
+|---|---|---|
+| Paragraph destruction risk | HIGH (Tier 3) | NONE |
+| Double-tracking | YES | NO |
+| API calls per fix | 2 (generateRedlineZDR + insertOoxml) | 1 + N (N = word changes) |
+| Works in Word Online | Fragile (#3271) | Reliable |
+| Formatting preservation | Must include in OOXML | Automatic |
+| Custom author name | Yes ("ContraRed AI") | No (current user) |
+| Custom revision colors | Yes (red/green) | No (user's default) |
+| Missing clause insertion | Works (InsertLocation.after) | Harder (need anchor point) |
+| Backend dependency | Requires OOXML generation API | Can be frontend-only |
+| Existing Track Changes compat | Fragile (double-tracking) | Mostly works (#5874 edge case) |
+
+### Sources
+- [Word.Range.search — Microsoft Learn](https://learn.microsoft.com/en-us/javascript/api/word/word.range)
+- [Search options guidance — Microsoft Learn](https://learn.microsoft.com/en-us/office/dev/add-ins/word/search-option-guidance)
+- [TrackedChange API — Microsoft Learn](https://learn.microsoft.com/en-us/javascript/api/word/word.trackedchange)
+- [Range.search + deleted revisions — GitHub #5874](https://github.com/officedev/office-js/issues/5874)
+- [Track Changes behavior differences — GitHub #5334](https://github.com/OfficeDev/office-js/issues/5334)
+- [Enable Track Changes — GitHub #2285](https://github.com/OfficeDev/office-js/issues/2285)
+- [OOXML in Word add-ins — Microsoft Learn](https://learn.microsoft.com/en-us/office/dev/add-ins/word/create-better-add-ins-for-word-with-office-open-xml)
