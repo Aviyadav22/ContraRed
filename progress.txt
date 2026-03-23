@@ -4105,3 +4105,39 @@ But this is a P2 optimization — the current approach works for the typical use
 | Empty response | ✓ | Error card + retry button |
 | Hallucinated clause | ✓ | Removed from results (or warned for deal-breakers) |
 | Fix as raw text | ⚠️ | AI commentary could be inserted as contract text |
+
+## Iteration 77 — EDGE-3: Concurrent Usage Edge Cases
+
+### Two Users Scan Same Document
+**Expected**: Independent analysis sessions, no cross-contamination.
+**Actual**: ✓ SAFE
+- Each user's request is a separate HTTP POST to `/analyze-full`
+- Each creates its own `AnalysisPipeline` instance with its own `HallucinationGuard` and `ConfidenceScorer`
+- Results are returned per-request — no shared state on the backend
+- Frontend state (`currentAIAnalysis`) is per-browser-window
+- Database: Document records are per-user (`user_id` FK)
+- **No cross-contamination possible** ✓
+
+### User Scans While Previous Scan Is Still Running
+**Expected**: Second scan blocked or first cancelled.
+**Actual**: ⚠️ FRONTEND BLOCKS, BACKEND DOESN'T
+- **Frontend** (taskpane.ts:970): `if (isScanning) return;` — blocks double-click ✓
+- **Backend**: No per-user scan-in-progress tracking. If a user bypasses the frontend guard (e.g., via API directly), two concurrent scans would both run and both charge quota.
+- The 90s backend timeout prevents zombie requests from lingering indefinitely ✓
+- **If two scans return**: The second response overwrites `currentAIAnalysis` — first results are lost silently. No merge, no conflict resolution.
+
+### User Closes Word While Scan Is In Progress
+**Expected**: Scan completes or is cancelled; no orphaned state.
+**Actual**: ⚠️ PARTIALLY HANDLED
+- **Frontend**: `Word.run` context is released when taskpane closes. The `fetch()` call to the backend is an independent network request — it continues running even if the taskpane closes.
+- **Backend**: The Gemini API call runs to completion (10-60s), the response is generated, and the HTTP response is sent — but no client is listening. The response is discarded by the network layer.
+- **Quota**: 1 scan quota is consumed even though the user never sees the result.
+- **State**: When the user reopens the taskpane, `restoreScanState()` checks localStorage — it finds the state from BEFORE the scan started (the scan never completed from the frontend's perspective). Previous results (if any) are restored.
+- **No orphaned background tasks** — the backend request simply returns to nobody.
+
+### Summary
+| Scenario | Behavior | Risk |
+|---|---|---|
+| Two users, same doc | Independent sessions, no cross-contamination | ✓ Safe |
+| Same user, double scan | Frontend guards ✓, backend allows if bypassed | ⚠️ Low |
+| Close Word mid-scan | Quota consumed, result discarded, previous state restored | ⚠️ Low |

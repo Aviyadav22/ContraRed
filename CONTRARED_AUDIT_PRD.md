@@ -154,7 +154,7 @@ This is the critical "whole paragraph turns red" bug.
 
 - [x] EDGE-1: Document what happens with: empty contract (0 text), non-English contract (Hindi contract with English legal terms), contract with NO risks (all GREEN), partial document (just one section pasted). Write expected vs actual behavior in progress.txt.
 - [x] EDGE-2: Document what happens with AI failures: Gemini returns malformed JSON, Gemini is rate-limited mid-analysis (429), Gemini returns empty response, Gemini hallucates a clause that doesn't exist in the contract. Write expected vs actual behavior in progress.txt.
-- [ ] EDGE-3: Document what happens with concurrent usage: two users scan same document, user scans while previous scan is still running, user closes Word while scan is in progress. Write expected vs actual behavior in progress.txt.
+- [x] EDGE-3: Document what happens with concurrent usage: two users scan same document, user scans while previous scan is still running, user closes Word while scan is in progress. Write expected vs actual behavior in progress.txt.
 - [ ] EDGE-4: Document what happens with playbook edge cases: playbook with 0 rules, playbook with 200 rules (performance), rule that matches every clause in the document (false positive storm), conflicting rules (one says GREEN, another says RED for same clause). Write expected vs actual behavior in progress.txt.
 - [ ] EDGE-5: Document what happens with Word API edge cases: text that appears multiple times in document (which instance gets replaced?), very long clauses (>255 chars, Word search limit), clauses spanning multiple paragraphs, document with existing Track Changes from a previous review. Write expected vs actual behavior in progress.txt.
 
