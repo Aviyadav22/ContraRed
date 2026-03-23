@@ -3567,3 +3567,67 @@ Explicitly disables default PII collection. Combined with `_before_send` filter,
 | ReDoS | HIGH | User regex compiled without protection (from REGEX-1) |
 | DOCX zip bomb | MEDIUM | No decompression size limit |
 | File type validation | LOW | Content-Type check only |
+
+## Iteration 67 — SEC-6: Rate Limiting on AI Endpoints Audit
+
+### Rate Limits on Expensive AI Endpoints
+
+| Endpoint | Rate Limit | AI Cost per Call | Abuse Potential |
+|---|---|---|---|
+| POST /analyze-full | 20/min | ~$0.01-0.05 | **HIGH** — 20×$0.05 = $1/min = $60/hr |
+| POST /analyze-clause | 20/min | ~$0.005 | MEDIUM — $0.10/min |
+| POST /generate-fix | 30/min | ~$0.005 | MEDIUM — $0.15/min |
+| POST /generate-clause | 30/min | ~$0.005 | MEDIUM — $0.15/min |
+| POST /research-clause | 30/min | ~$0.005 | MEDIUM — $0.15/min |
+| POST /batch-analyze | 5/min | ~$0.05×10 files | **HIGH** — $0.50/call × 5 = $2.50/min |
+| POST /redline | 30/min | ~$0 (CPU only) | LOW |
+| POST /compare | 30/min | ~$0.01 | LOW |
+
+### Can Someone Burn Through Gemini Credits?
+
+**YES — a determined attacker can spend ~$60/hour on your Gemini API.**
+
+Calculation for `/analyze-full` at 20 requests/minute:
+- 20 scans × 60 minutes = 1,200 scans/hour
+- At ~$0.05 per scan (Gemini Pro with 50K input + 10K output tokens) = **$60/hour**
+- The rate limit is per-IP (spoofable per SEC-3 finding #2)
+- With X-Forwarded-For spoofing, limits are effectively unlimited
+
+**Batch analysis is worse:**
+- 5 batches/min × 10 files/batch = 50 concurrent AI analyses per minute
+- At $0.05 each = $2.50/min = $150/hour
+
+### Subscription Tier Enforcement
+
+**Good news**: There IS a per-user quota system (billing.py):
+```
+FREE_TIER_SCANS: 5
+STARTER_TIER_SCANS: 50
+PRO_TIER_SCANS: 200
+BUSINESS_TIER_SCANS: 1000
+ENTERPRISE_INCLUDED_SCANS: -1 (unlimited)
+```
+The `check_and_decrement_quota()` function (billing.py) deducts 1 scan per analysis. Once quota is exhausted, the user gets a 402 error.
+
+But the quota check runs INSIDE the endpoint handler (after auth), not as middleware. If the auth succeeds but quota check fails, the rate limiter has already counted the request. This is correct but means the rate limit and quota are independent controls.
+
+### Critical Findings
+
+**1. Rate limit per IP, not per user (auth.py:57)**
+```python
+limiter = Limiter(key_func=get_remote_address)
+```
+Rate limits key on CLIENT IP, not on authenticated user. Two users behind the same NAT share the same rate limit. Conversely, one user with multiple IPs gets multiple rate limit buckets.
+
+**2. No rate limit on `/documents/redline` (line 2097)**
+Wait — checking... YES there IS: `@limiter.limit("30/minute")` at documents.py:1972 covers the `POST /summary` endpoint, and line 290/546/653 cover analyze endpoints. But `/redline` is at line 2097 — let me check:
+Actually, looking at the grep output, documents.py has rate limits at lines 290, 546, 653, 867, 1020, 1384, 1480, 1599, 1699, 1771, 1972. The `/redline` endpoint at line 2097 does NOT appear in the rate-limited list. **The redline generation endpoint is NOT rate limited.** However, it's CPU-only (no AI cost), so the risk is DoS on the server, not API credit burn.
+
+**3. Subscription quota is the real protection**
+The per-user scan quota (5/50/200/1000/unlimited) is more meaningful than rate limits for preventing credit abuse. A free-tier user can only do 5 scans total, regardless of rate.
+
+**4. No per-organization aggregate limit**
+If an organization has 50 users on the Pro tier, that's 50×200 = 10,000 scans/month. No aggregate cap prevents one organization from dominating API capacity.
+
+### Verdict
+Rate limiting EXISTS on all expensive AI endpoints (20-30/min). Combined with subscription quota (5-1000 scans per user), credit abuse is controlled for legitimate users. The vulnerability is X-Forwarded-For spoofing (SEC-3 #2) which bypasses IP-based rate limits, combined with stolen credentials.
