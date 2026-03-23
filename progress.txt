@@ -2747,3 +2747,68 @@ Based on the deployment context (Intellect Design Arena as client):
 3. Inject party_side context into fix generation prompts
 4. Add party_side to clause analysis (selection scan) prompts
 5. Add a prominent "You're reviewing as: SELLER" indicator in the UI during scan
+
+## Iteration 49 — ADDIN-1: Backend Down / Error Handling Audit (taskpane.ts 2679 lines)
+**Task:** What happens when backend is down? Is there user-facing error handling or silent failure?
+
+### Error Handling Architecture
+
+**1. API Client Level (api.ts)**
+- HTTP errors: `!response.ok` → throws `Error(detail || HTTP ${status})`
+- 401 handling: Auto-refresh token via `refreshAccessToken()`, retry once
+- Network errors: `Failed to fetch` / `NetworkError` thrown by browser fetch API
+- Health check: `checkHealth()` → `!response.ok` → throws Error
+
+**2. Taskpane Level (taskpane.ts)**
+`displayScanError()` (lines 1460-1498) — central error display function with categorized messages:
+
+| Error Pattern | Title Shown | Description | Retry? |
+|---|---|---|---|
+| `Failed to fetch` / `NetworkError` | "Cannot Reach Server" | "Check internet + server running" | ✓ |
+| `not configured` / `API key` | "AI Service Not Configured" | "Contact administrator" | ✗ |
+| `rate limit` / `429` | "Rate Limited" | "Wait a minute and try again" | ✓ |
+| `timeout` / `504` | "Analysis Timed Out" | "Document may be too long" | ✓ |
+| Other | "Analysis Failed" | Raw error message | ✓ |
+
+### Assessment: Is Error Handling Production-Ready?
+
+**GOOD:**
+1. **No silent failures for scans** — all scan errors flow to `displayScanError()` which shows an inline error card with clear title + description ✓
+2. **Categorized error messages** — user-friendly, not raw HTTP codes ✓
+3. **Retry button** — shown for recoverable errors (network, timeout, rate limit) ✓
+4. **isScanning guard** — prevents double-click race condition ✓
+5. **finally block** — `setScanLoading(false)` always runs, preventing stuck spinner ✓
+6. **XSS protection** — `escapeHtml()` used on error messages before innerHTML ✓
+
+**CONCERNS:**
+1. **Fix application errors show as toasts, not error cards (line 2426)**
+```javascript
+showToastOnCard(cardElement, 'Fix failed: ' + (error instanceof Error ? error.message : String(error)));
+```
+Fix failures show a small toast on the risk card — easy to miss. If the backend is completely down, EVERY fix attempt shows a separate toast. No consolidated "server unreachable" message.
+
+2. **No offline detection / reconnection**
+When the backend goes down MID-SESSION (e.g., Render.com spin-down):
+- User can scan (analysis tab shows results from cache)
+- User clicks "Generate Fix" → API call fails → toast appears on card
+- User clicks another fix → another toast
+- No proactive "server is offline" banner
+- No automatic reconnection attempt when server comes back
+
+3. **Login errors during scan are not handled gracefully**
+If token expires DURING a long scan (90s timeout), the refresh fails, and the user sees "Analysis Failed" without understanding it's an auth issue. Should show "Session expired — please log in again."
+
+4. **Health check runs at startup only (line 511)**
+```javascript
+api.checkHealth().then(r => { statusIndicator()?.classList.remove('offline'); }).catch(() => { ... });
+```
+The health check runs ONCE at startup. No periodic polling. If the server goes down after startup, the UI doesn't update the status indicator.
+
+5. **`showNotification()` (line 288) uses fixed 5s timeout (line 30)**
+Notifications auto-dismiss after 5 seconds. For critical errors like "Fix failed", the user might not see the notification if they're looking at the document.
+
+6. **Error messages may expose internal details**
+`String(error)` in catch blocks (e.g., line 2426) passes raw error messages to the user. A backend error like "sqlalchemy.exc.OperationalError: connection to server at 'db.qjlkdmoz...'" would expose database host information.
+
+### Summary
+Error handling for SCANS is good — categorized messages, retry buttons, no silent failures. Error handling for FIX APPLICATION is weak — small toasts easy to miss, no consolidated offline detection. No periodic health checking or auto-reconnection.

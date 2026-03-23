@@ -106,7 +106,7 @@ This is the critical "whole paragraph turns red" bug.
 
 ## PHASE 5: WORD ADD-IN PRODUCTION STABILITY (8 tasks)
 
-- [ ] ADDIN-1: Read `ContraRed-PoC/src/taskpane/taskpane.ts` (all 2679 lines). Document: what happens when the backend is down? (500s, timeouts, network errors). Is there user-facing error handling or silent failure? Write findings to progress.txt.
+- [x] ADDIN-1: Read `ContraRed-PoC/src/taskpane/taskpane.ts` (all 2679 lines). Document: what happens when the backend is down? (500s, timeouts, network errors). Is there user-facing error handling or silent failure? Write findings to progress.txt.
 - [ ] ADDIN-2: Audit loading states. Are ALL async operations showing spinners/progress? The 120-second timeout — is there user feedback during long scans? (Progress bar? Stage updates? "Analyzing clause 5 of 23"?) Or does it just show a spinner for 2 minutes? Write findings to progress.txt.
 - [ ] ADDIN-3: Audit button debouncing and state management. Can users double-fire scans by clicking rapidly? What happens if user scans again while results are displayed? Is `currentAIAnalysis` / `fixedRisks` / `negotiationSession` state robust? Write findings to progress.txt.
 - [ ] ADDIN-4: Audit large document handling. Memory issues with 50+ page contracts? Does `body.paragraphs.load()` choke? Are there pagination or chunking strategies? Write findings to progress.txt.
