@@ -473,3 +473,87 @@ If a contract has "1. DEFINITIONS" followed by "1.1 Defined Terms", both are det
 - **KEEP**: Entire classifier architecture, heading/body pattern approach, AI fallback
 - **ENHANCE**: Add missing clause types (SaaS, compliance, assignment), fix UNKNOWN group mapping, improve section splitting for Indian contracts
 - **REPLACE**: Nothing — clause classification is a categorization task well-suited to keyword matching
+
+## Iteration 18 — REGEX-4: scope_analyzer.py Full Audit (451 lines)
+**Task:** Read all 451 lines (not 406 as PRD states) of `backend/app/services/scope_analyzer.py`.
+**File:** `backend/app/services/scope_analyzer.py` (451 lines)
+
+### Architecture Overview
+ScopeAnalyzer runs BETWEEN Stage 2 (rule engine) and Stage 3 (AI). It takes RuleMatch objects and analyzes each clause's **scope dimensions** using regex:
+1. **Breadth** — narrow/standard/broad/unlimited
+2. **Mutuality** — mutual/one-sided favorable/one-sided unfavorable/unclear
+3. **Financial Exposure** — capped/uncapped/not applicable
+4. **Duration** — fixed term/perpetual/survival/not specified
+5. **Trigger** — material breach/any breach/negligence/gross negligence/willful misconduct
+
+Each dimension produces a sub-score, and a weighted composite `scope_score` (1-10) determines `risk_adjustment` (-1, 0, or +1).
+
+### Classification: REPLACE-WITH-AI (mostly)
+
+**This is exactly the kind of analysis AI does better.** Scope analysis requires understanding SEMANTIC CONTEXT:
+
+1. **Breadth detection fails on paraphrasing**: "any and all" is caught, but "the broadest extent permitted by law" is not. "Without limitation" is caught, but "there shall be no restriction on the types of claims covered" is not.
+
+2. **Mutuality detection is too simplistic (lines 302-313)**:
+   - Detects "each party" or "both parties" as mutual ✓
+   - But MISSES asymmetric obligations phrased as separate sentences: "The Vendor shall indemnify the Client..." in one paragraph, with no corresponding "The Client shall indemnify the Vendor..." — this is one-sided, but the analyzer would mark it UNCLEAR since neither mutual nor one-sided patterns match.
+   - **Critical flaw**: `ONE_SIDED_INDICATORS` (lines 166-171) hardcode party names: "company", "vendor", "provider", "licensor", "employer", "customer", "client", "licensee", "employee". What about "Seller", "Buyer", "Supplier", "Consultant", "Contractor", "Subscriber", "End User", "Recipient", "Disclosing Party"? These common terms are completely missed.
+
+3. **Financial exposure cap extraction (lines 174-177)**:
+   - Pattern captures dollar amounts and "months of fees" phrasing
+   - **Good**: Handles multiple currencies (USD, INR, GBP, EUR, £, $, ₹)
+   - **Good**: Handles Indian numbering (lakh, crore)
+   - **Miss**: "aggregate liability shall not exceed the fees paid in the preceding twelve (12) month period" — the word "twelve" written out (not digit) won't match `\d+\s*months`
+   - **Miss**: Percentage-based caps ("100% of fees paid under this SOW") won't match
+
+4. **Duration detection has priority bug (lines 330-351)**:
+   - Checks perpetual FIRST, survival SECOND, fixed-term THIRD
+   - If a clause says "shall survive termination for a period of 3 years", it matches SURVIVAL (correct)
+   - But if it says "this irrevocable license shall terminate after 5 years", "irrevocable" triggers PERPETUAL even though there's a fixed 5-year term
+   - `irrevocable` ≠ `perpetual` in legal terms. An irrevocable license can still have a fixed term.
+
+5. **Trigger detection conflates gross negligence and willful misconduct (line 198)**:
+   `TriggerType.GROSS_NEGLIGENCE` patterns include `willful\s+misconduct` — this means gross negligence and willful misconduct are treated as equivalent triggers. But `TriggerType.WILLFUL_MISCONDUCT` also exists separately (line 199). Due to the check order in `_detect_trigger` (lines 356-361), WILLFUL_MISCONDUCT is checked first, so the duplicate in GROSS_NEGLIGENCE is dead code but confusing.
+
+### Scoring Model Analysis (lines 363-404)
+
+Weights: Breadth 25%, Mutuality 25%, Financial 25%, Duration 15%, Trigger 10%
+
+**Risk adjustment thresholds**:
+- scope_score >= 7.5 → escalate (+1)
+- scope_score <= 3.0 → de-escalate (-1)
+- Otherwise → no adjustment (0)
+
+**Issue**: The 7.5 escalation threshold is quite high. Let's check worst case:
+- Unlimited breadth (10.0 × 0.25 = 2.5)
+- One-sided unfavorable (9.0 × 0.25 = 2.25)
+- Uncapped exposure (9.0 × 0.25 = 2.25)
+- Perpetual (9.0 × 0.15 = 1.35)
+- Any breach (8.0 × 0.10 = 0.80)
+- **Worst case: 9.15** → correctly escalates
+
+Best case: Narrow(2×.25) + Mutual(3×.25) + Capped(3×.25) + Fixed(3×.15) + Willful(3×.10) = 0.5+0.75+0.75+0.45+0.3 = **2.75** → correctly de-escalates
+
+**Middle ground concern**: A clause that is BROAD (7.5×.25=1.875) + ONE_SIDED_UNFAVORABLE (9×.25=2.25) + NOT_APPLICABLE financial (5×.25=1.25) + NOT_SPECIFIED duration (5×.15=0.75) + NONE_SPECIFIED trigger (5×.10=0.50) = **6.625** → NO adjustment. This seems too lenient — a broad, one-sided clause should probably escalate.
+
+### Coverage Report (lines 406-446)
+- Lists all 75 clause types and reports which are present/missing
+- **Good**: Coverage note acknowledges not all types apply to every agreement
+- **Issue**: The `ALL_CLAUSE_TYPES` list (lines 94-129) uses different IDs than the rules in rules_library.py. E.g., scope_analyzer uses "confidentiality" but rules_library uses "confidentiality_obligations". "assignment" vs "assignment_restriction". "sla" vs "sla_terms". This means coverage calculation may be inaccurate — types detected by rules won't match the strings in ALL_CLAUSE_TYPES.
+
+### Critical Findings Summary
+
+1. **Party name hardcoding** (lines 166-171): ONE_SIDED_INDICATORS only catch 5 party labels each for buyer/seller. Real contracts use dozens of different party designations. This causes most one-sided clauses to be classified as UNCLEAR.
+
+2. **`irrevocable` ≠ `perpetual`** (line 183): False perpetual detection for irrevocable licenses with fixed terms.
+
+3. **Clause type ID mismatch**: ALL_CLAUSE_TYPES uses different IDs than rules_library.py, causing inaccurate coverage metrics.
+
+4. **Written-out numbers not captured**: "twelve months" won't match the `\d+\s*months` pattern.
+
+5. **Context window is fixed at 500 chars** (lines 234-236): For long clauses, 500 chars before/after may not capture the full scope. An indemnification clause spanning 2000 chars would have scope analyzed based on only the edges.
+
+### Verdict
+- **REPLACE-WITH-AI**: Breadth, mutuality, and financial exposure analysis — these require semantic understanding
+- **KEEP as pre-filter**: Duration detection (structural patterns), trigger detection (specific legal terms), coverage report (taxonomy check)
+- **The scope_score composite model is sound** — the WEIGHTS and THRESHOLDS should be preserved even if detection methods change
