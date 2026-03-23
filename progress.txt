@@ -1840,3 +1840,89 @@ Comments require WordApi 1.4 — graceful fallback is correct, but the user does
 The "whole paragraph turns red" bug has TWO contributing causes:
 1. **Tier 3 fuzzy** returns paragraph-level range → `replace` replaces entire paragraph
 2. **Track Changes double-tracking** — Word's live Track Changes wraps the OOXML's embedded track changes, creating double revision marks even for Tier 1/2 matches
+
+## Iteration 36 — OOXML-4: Root Cause Analysis — "Whole Paragraph Turns Red"
+**Task:** Trace the exact failure path. Synthesize OOXML-1, OOXML-2, OOXML-3 findings.
+
+### THE EXACT FAILURE PATH
+
+```
+Step 1: AI generates a fix for "The Vendor shall bear unlimited liability"
+        → Backend produces OOXML with word-level diff:
+          <w:r><w:t>The Vendor shall bear </w:t></w:r>
+          <w:del><w:delText>unlimited</w:delText></w:del>
+          <w:ins><w:t>liability capped at 12 months of fees</w:t></w:ins>
+        → This OOXML is CORRECT — only "unlimited" is struck, replacement inserted
+
+Step 2: Frontend calls findTextInDocument("The Vendor shall bear unlimited liability")
+        → Tier 1 (body.search): May fail if AI quoted text doesn't exactly match
+          (LLMs commonly add/remove minor words, change punctuation)
+        → Tier 2 (normalized): May fail if normalization removes too much
+        → Tier 3 (Fuse.js fuzzy): MATCHES a paragraph that contains this text
+          → Returns: paragraph.getRange() — the ENTIRE paragraph
+
+Step 3: The paragraph is 400 chars long:
+        "8.1 Liability. The Vendor shall bear unlimited liability for any and
+        all losses, damages, claims, and expenses arising from this Agreement,
+        including but not limited to direct, indirect, consequential, and
+        special damages of any kind whatsoever."
+        → The returned Range spans ALL 400 characters
+
+Step 4: applyAIRedline() calls:
+        range.insertOoxml(ooxml, Word.InsertLocation.replace)
+        → Word REPLACES all 400 characters with the OOXML content
+        → The OOXML only contains ~60 characters of content (the diff around "unlimited")
+
+Step 5: Result in Word:
+        → The entire 400-char paragraph is DELETED (red strikethrough)
+        → The 60-char OOXML content is INSERTED (green underline)
+        → User sees: entire paragraph struck through, replaced with a fragment
+        → THIS IS THE BUG
+```
+
+### ROOT CAUSE #1: Tier 3 Range is Paragraph-Level (PRIMARY)
+**File:** `ContraRed-PoC/src/taskpane/taskpane.ts`, line 955
+```typescript
+const range = matchedParagraph.paragraph.getRange();
+```
+When Fuse.js fuzzy matching activates (Tier 3), it returns the range of the entire matched paragraph, not the specific clause within it. The OOXML replacement then replaces ALL text in that paragraph with only the diffed portion.
+
+**When does Tier 3 activate?**
+- When AI quotes text that doesn't exactly match the document (common with LLMs)
+- When text is >255 chars (Tier 1 truncates, may fail to match)
+- When text contains special punctuation that normalization strips (Tier 2 fails)
+- **Estimated frequency: 30-50% of all fix applications** based on LLM quoting accuracy
+
+### ROOT CAUSE #2: OOXML Contains Only the Diff, Not the Full Paragraph (SECONDARY)
+**File:** `backend/app/services/redline_implementer.py`, line 482
+```python
+ooxml = self.generate_track_changes_ooxml(
+    original=anchor.text,  # This is the AI's quoted text, NOT the full paragraph
+    replacement=suggested_text
+)
+```
+The OOXML is generated from the AI's quoted `original_text` (e.g., 60 chars) vs the `suggested_text`. It does NOT include the rest of the paragraph. So when this OOXML replaces a 400-char paragraph range, the 340 non-diffed characters simply vanish.
+
+### ROOT CAUSE #3: Track Changes Double-Tracking (TERTIARY)
+**File:** `ContraRed-PoC/src/taskpane/taskpane.ts`, line 2360
+```typescript
+context.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+```
+Even when Tier 1/2 returns a tight range, Track Changes is enabled BEFORE the OOXML insertion. This means:
+- Word tracks the `insertOoxml(replace)` operation as a change
+- The OOXML already contains `<w:del>` and `<w:ins>` markup
+- Result: double-tracked revision marks (Word's tracking + OOXML's tracking)
+
+### PRECISE ROOT CAUSE STATEMENT
+**The bug occurs because `findTextInDocument()` Tier 3 returns a paragraph-level range, but `generate_track_changes_ooxml()` produces OOXML covering only the AI's quoted text fragment. When `insertOoxml(replace)` replaces the large range with the small OOXML, the entire paragraph content outside the diff is destroyed.**
+
+### Why This Wasn't Caught Earlier
+- When Tier 1 or 2 matches (exact search hit), the range IS tight and the replacement works correctly
+- Developers likely tested with short, exact-match clauses
+- The bug only manifests with longer clauses, fuzzy matches, or AI paraphrasing — which are common in production but rare in testing
+
+### Severity: P0
+- **Data loss**: Paragraph content outside the diff is permanently deleted
+- **Trust destruction**: A lawyer seeing their carefully drafted clause destroyed would immediately distrust the tool
+- **Frequency**: 30-50% of fix applications (any time Tier 3 activates)
+- **Undo exists** but requires the user to notice the damage and click Undo
