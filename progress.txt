@@ -3008,3 +3008,11 @@ For each redline, `findTextInDocument()` loads all paragraphs again. For 40 redl
 - No pagination needed for risk list at current scale
 - Fuse.js index rebuilt per search — inefficient for multiple redline highlights
 - Memory usage up to 700KB for large scans — within iframe limits
+
+## Iteration 53 — ADDIN-5: Negotiation Mode Audit
+- Auto-scan debounce: ✓ 1.5s is appropriate for lawyer workflow
+- Decision model (Accept/Counter/Escalate): ✓ Maps to real negotiation actions
+- Decision persistence: ✓ localStorage with overwrite support
+- **Missing**: counter-proposal text input, decision export, timer pause, session clearing on new document
+- Selection scan results ACCUMULATE without clear — risk list grows unbounded
+- 20-char minimum selection with no feedback when too short
