@@ -2257,3 +2257,13 @@ This preserves the ContraRed attribution even though the revision itself shows t
 - [Track Changes behavior differences — GitHub #5334](https://github.com/OfficeDev/office-js/issues/5334)
 - [Enable Track Changes — GitHub #2285](https://github.com/OfficeDev/office-js/issues/2285)
 - [OOXML in Word add-ins — Microsoft Learn](https://learn.microsoft.com/en-us/office/dev/add-ins/word/create-better-add-ins-for-word-with-office-open-xml)
+
+## Iteration 42 — OOXML-10: Created REPLACEMENT_FIX_PROPOSAL.md
+**Task:** Create document with 3 solution options and recommendation.
+**File Created:** `REPLACEMENT_FIX_PROPOSAL.md` at project root.
+
+### Summary
+- **Option A (Surgical search+replace)**: paragraph.search(oldWord) + insertText(newWord) with Track Changes ON. Effort: 16h. RECOMMENDED.
+- **Option B (Improved OOXML)**: Fix findTextInDocument Tier 3 to narrow range + disable live tracking during OOXML insert. Effort: 8h.
+- **Option C (Hybrid)**: Route simple swaps to Option A, complex rewrites to Option B. Effort: 24h.
+- **Recommendation: Option A** — eliminates root cause entirely, simplest architecture, best cross-platform compatibility, aligns with Microsoft's intended Track Changes integration.
