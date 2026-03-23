@@ -2590,3 +2590,76 @@ if not raw_redlines:
 | 50-page contract | ✓ Yes | N/A | 0h |
 | 200+ page contract | ⚠️ Silent truncation | P1 | 2h |
 | Existing Track Changes | ⚠️ Confusing results | P2 | 4h |
+
+## Iteration 47 — PROMPT-5: Temperature + Fix Generation Quality Evaluation
+**Task:** Is temperature=0.1 optimal? Are fix prompts producing legally sound replacement language?
+
+### Temperature Analysis
+
+| Operation | Temperature | Assessment |
+|---|---|---|
+| Full contract analysis | 0.1 | **Appropriate** — contract review needs consistency and precision. Low temp reduces hallucination and ensures the same contract produces similar results across runs. |
+| Fix generation | 0.2 | **Appropriate** — slightly higher for creative clause drafting. Legal language needs variation to match contract tone, but not so much that it invents non-standard terms. |
+| Clause generation | 0.3 | **Appropriate** — most creative task, generating novel clause text. Slightly higher temp allows for adapting to different contract styles while staying legally sound. |
+| Clause analysis | 0.1 | **Appropriate** — same as full analysis, needs precision. |
+| Legal research | 0.2 | **CONCERN** — for case citations, even 0.2 may be too high. LLMs at any temperature hallucinate case citations. Lower to 0.0-0.1 would reduce (but not eliminate) fabricated citations. The research prompt's [VERIFIED/UNVERIFIED] labeling partially mitigates this. |
+
+**Overall verdict on temperature=0.1 for analysis**: OPTIMAL.
+- Too deterministic (0.0): May miss creative risk interpretations like "this clause could be read as unlimited liability via the backdoor of the indemnification cross-reference." Temperature=0.1 preserves enough variety to catch non-obvious risks.
+- Too creative (0.3+): Would increase hallucinated risks, inconsistent risk levels across re-scans of the same contract, and non-standard legal language in explanations.
+- Industry practice: Legal AI tools (Harvey, Spellbook, LegalFly) use temp 0.0-0.2 for analysis, 0.2-0.4 for drafting.
+
+### Fix Generation Prompt Quality Assessment
+
+**FIX_VIOLATION_PROMPT** (prompt_templates.py lines 319-347):
+
+**Strengths:**
+1. "SAME SCOPE" instruction (line 335): "If original is one sentence, replacement is one sentence" — prevents over-drafting
+2. "Must slot seamlessly into the surrounding context" — ensures grammatical and logical flow
+3. Jurisdiction-aware: "MUST be compliant with {jurisdiction_name} law"
+4. Surrounding context included when available — helps AI match the contract's tone
+5. "Be commercially reasonable and balanced" — prevents one-sided fix suggestions
+
+**Weaknesses:**
+1. **No legalese level matching**: The prompt doesn't instruct the AI to match the contract's formality level. A simple vendor agreement fix should use simpler language than an M&A SPA fix. The "match the contract's tone" instruction is too vague.
+
+2. **No defined term consistency**: If the contract defines "Confidential Information" with specific meaning, the fix should use that exact defined term, not "confidential data" or "proprietary information". The fix prompt doesn't inject defined terms context (unlike the analysis prompt).
+
+3. **No cross-reference preservation**: If the original text references "Section 5.2" or "Exhibit A", the fix should preserve those references. No instruction for this.
+
+4. **"No preamble, no instructions — just the replacement words" (line 337)**: Good for preventing AI from inserting meta-commentary. But sometimes the AI includes "The Vendor shall:" when the original was "The Provider shall:" — it doesn't preserve the contract's party naming convention.
+
+5. **No anti-hallucination for legal standards**: The fix prompt says "citing relevant legal standards" in reasoning but doesn't warn against fabricating statute numbers or case citations.
+
+**FIX_MISSING_PROMPT** (lines 349-377):
+
+**Strengths:**
+1. "Include proper clause structure (heading, body, sub-clauses)" — ensures completeness
+2. "Match the document's clause numbering style" — attempts style consistency
+3. "The clause must be complete and self-contained" — prevents fragments
+4. "Do NOT include the anchor text" — prevents duplication
+
+**Weaknesses:**
+1. **No length guidance**: A missing "Force Majeure" clause could be 3 lines or 3 pages. The prompt provides no guidance on appropriate length for the contract type.
+2. **No provision for schedules/exhibits**: Some missing clauses should reference a schedule rather than contain all detail inline (e.g., "Data Processing Agreement attached as Schedule 3").
+
+### Are Fixes Legally Sound?
+
+**Based on prompt design, the fixes should be:**
+- Jurisdiction-compliant ✓ (explicit instruction)
+- Commercially reasonable ✓ (explicit instruction)
+- Grammatically integrated ✓ (surrounding context + "slot seamlessly")
+- Appropriately scoped ✓ ("SAME SCOPE" instruction)
+
+**But fixes could fail to be legally sound when:**
+- AI doesn't have access to defined terms for fix generation (defined terms not injected)
+- AI uses a legal concept from the wrong jurisdiction despite the instruction
+- AI generates standard US/UK phrasing for an Indian law contract
+- The fix contradicts another clause in the contract that the AI hasn't seen (surrounding_context is optional and limited to 5,000 chars)
+
+### Recommendations
+1. Inject defined terms context into fix prompts (currently only in analysis prompt)
+2. Add party naming convention instruction: "Use the exact party names from the contract"
+3. Lower research prompt temperature to 0.1
+4. Add length guidance for missing clause generation ("match typical length for this clause type in a {contract_category} agreement")
+5. Add cross-reference preservation instruction
