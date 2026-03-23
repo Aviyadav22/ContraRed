@@ -2918,3 +2918,93 @@ Apply All shows a progress bar with "Applied 3/15 fixes" — this is excellent f
 ### State Persistence
 - localStorage stores analysis + fixedRisks — no max size check (could exceed 5-10MB limit)
 - 200-char document fingerprint too short for reliable change detection
+
+## Iteration 52 — ADDIN-4: Large Document Handling Audit
+**Task:** Memory issues with 50+ page contracts? Does body.paragraphs.load() choke? Chunking strategies?
+
+### Size Limits
+
+| Check | Limit | Location | Assessment |
+|---|---|---|---|
+| Frontend text limit | 500,000 chars | taskpane.ts:984 | ✓ Clear error message |
+| Backend prompt limit | 200,000 chars | gemini_analyzer.py:261 | ⚠️ Silent truncation |
+| Pipeline min | 100 chars | analysis_pipeline.py:323 | ✓ |
+| Frontend min | 50 chars | taskpane.ts:979 | ✓ |
+
+**Gap**: Frontend allows up to 500K chars but backend truncates at 200K — documents between 200K-500K chars pass frontend validation but are silently truncated by the backend. ~300K chars of contract text is dropped without warning.
+
+### `body.paragraphs.load()` — Will It Choke?
+
+**Tier 3 search (taskpane.ts lines 916-924):**
+```typescript
+const paragraphs = body.paragraphs;
+paragraphs.load('items/text');
+await context.sync();
+```
+This loads ALL paragraphs with their text into memory in one sync call.
+
+**For a 50-page contract:**
+- ~500-1000 paragraphs
+- ~100-200KB of text
+- Office.js transfers via JSON serialization across the iframe boundary
+- Each `context.sync()` serializes/deserializes the entire batch
+- **Assessment**: 500-1000 paragraphs is within Office.js comfort zone. No choking expected.
+
+**For a 200-page contract:**
+- ~2000-4000 paragraphs
+- ~400-800KB of text
+- **Assessment**: Could cause noticeable delay (1-5s) on `context.sync()`. Office.js has been tested with 10K+ paragraphs by the community. Should work but will be slow.
+
+**For a 500+ page contract (e.g., full M&A agreement with exhibits):**
+- ~5000-10000+ paragraphs
+- 1MB+ of text
+- **Risk**: `context.sync()` may timeout on slow connections or in Word Online
+- Already blocked by frontend 500K char limit
+
+### `getDocumentText()` — Full Body Load
+
+```typescript
+async function getDocumentText(): Promise<string> {
+  return Word.run(async (context) => {
+    const body = context.document.body;
+    body.load('text');
+    await context.sync();
+    return body.text;
+  });
+}
+```
+Loads the ENTIRE document text in one call. For a 200-page contract (500K chars), this is a single large string transfer. Office.js handles this efficiently for text-only loads.
+
+### Chunking/Pagination Strategies
+
+**Current**: NONE. The full document text is loaded at once and sent to the API in a single POST request.
+
+**Should ContraRed chunk?** For the AI analysis: NO. Gemini Pro's 1M token context window can handle the full document. Chunking would lose cross-clause context that the 4-step framework needs.
+
+**Should ContraRed paginate?** For the risk list UI: NOT YET. A 50-page contract typically generates 15-40 redlines, which is a manageable list. Pagination would add UX complexity without benefit until contracts generate 100+ redlines.
+
+### Memory Concerns
+
+**1. `currentAIAnalysis` stores full raw_response (line 315)**
+The `AIAnalysisResult` includes `raw_response` — the full Gemini JSON output. For a large contract with 40 redlines, this could be 50-100KB of JSON stored in a global variable. Combined with `lastScannedText` (up to 500K chars), total memory usage could reach 600-700KB in the taskpane iframe.
+
+**2. `Fuse.js` index on all paragraphs (line 930-936)**
+```typescript
+const fuse = new Fuse(paragraphData, {
+  keys: ['text'],
+  threshold: 0.25,
+  distance: 1000,
+});
+```
+Fuse.js builds an internal index of all paragraph texts. For 1000 paragraphs, this index could be several MB in memory. This is rebuilt on EVERY `findTextInDocument()` call — no caching.
+
+**3. `highlightAIRedlines()` iterates all redlines × all paragraphs**
+For each redline, `findTextInDocument()` loads all paragraphs again. For 40 redlines on a 1000-paragraph document: 40 × `paragraphs.load()` calls + 40 Fuse.js index builds.
+
+### Findings Summary
+- 50-page contracts: ✓ No issues expected
+- 200-page contracts: ⚠️ Slow paragraph loading, frontend allows but backend truncates
+- Frontend/backend size limit mismatch: 500K vs 200K chars — silent truncation gap
+- No pagination needed for risk list at current scale
+- Fuse.js index rebuilt per search — inefficient for multiple redline highlights
+- Memory usage up to 700KB for large scans — within iframe limits
