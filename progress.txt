@@ -3354,3 +3354,70 @@ BatchUpload uses `setInterval(3000)` for polling. The interval checks `isBatchPr
 - **Concurrent same-resource edits**: no optimistic locking — last write wins
 - **Fork double-click**: no mutation guard — can create duplicate forks
 - **No optimistic updates used anywhere** — all mutations wait for server response. This is SAFE but feels slower than it could be.
+
+## Iteration 62 — SEC-1: config.py Security Audit (208 lines)
+**Task:** Hardcoded secrets? Dangerous defaults? Env var validation on startup?
+
+### Hardcoded Secrets: NONE ✓
+All secrets default to empty strings. No "changeme", no hardcoded API keys, no test credentials.
+
+### Env Var Validation on Startup
+
+| Secret | Validated? | Production Enforcement |
+|---|---|---|
+| SECRET_KEY | ✓ | Raises ValueError if empty/placeholder in non-debug. Auto-generates random key in debug. |
+| DATABASE_URL | ✓ | Raises ValueError if empty in non-debug. |
+| ENCRYPTION_KEY | ✓ | Raises ValueError if empty in non-debug. |
+| GEMINI_API_KEY | ✗ | Empty string default, no validation — degrades gracefully at runtime. |
+| RAZORPAY_KEY_SECRET | ✗ | Empty string default, no validation. |
+| STRIPE_SECRET_KEY | ✗ | Empty string default, no validation. |
+| WORKOS_API_KEY | ✗ | Empty string default, no validation. |
+| REDIS_URL | ✗ | Empty string default — degrades to in-memory fallback. |
+
+**Assessment**: The 3 CRITICAL secrets (SECRET_KEY, DATABASE_URL, ENCRYPTION_KEY) are all validated with clear error messages. Non-critical secrets degrade gracefully. ✓ GOOD.
+
+### Security Findings
+
+**1. SECRET_KEY auto-generation in debug (line 65)**
+```python
+return secrets.token_hex(32)
+```
+In debug mode, a RANDOM secret key is generated on every startup. This means:
+- All JWTs from previous startup are invalidated
+- Users are forced to re-login on every server restart
+This is CORRECT for development — prevents debug keys from leaking to production.
+
+**2. CORS_ORIGINS defaults include localhost (lines 90-95)**
+```python
+CORS_ORIGINS: List[str] = [
+    "https://localhost:3000", "http://localhost:3000",
+    "https://localhost:5173", "http://localhost:5173",
+]
+```
+The DEFAULT includes localhost origins. In production, CORS_ORIGINS should be set via env var (which it is on Render — JSON array). But if the env var is missing, localhost origins are used in production — a pentester could run a local server on port 3000 to make cross-origin requests.
+**Mitigation**: The Render deployment DOES set CORS_ORIGINS. But this default is dangerous if a new deployment forgets to set it.
+
+**3. COOKIE_SAMESITE = "none" (line 113)**
+Required for the Word Add-in (which runs in an iframe cross-origin). But `SameSite=None` means cookies are sent on ALL cross-origin requests, increasing CSRF attack surface. The CSRF token header mitigates this. ✓
+
+**4. ZERO_DATA_RETENTION = True by default (line 129)**
+Excellent for enterprise clients — document text is never persisted to disk. This is a strong privacy default.
+
+**5. GEMINI_MODEL uses preview models (lines 145-148)**
+```python
+GEMINI_MODEL: str = "gemini-3.1-flash-lite-preview"
+GEMINI_ANALYSIS_MODEL: str = "gemini-3.1-pro-preview"
+```
+Using "preview" models in production — these may be deprecated or changed by Google without notice. Should pin to stable model versions for production reliability.
+
+**6. ACCESS_TOKEN_EXPIRE_MINUTES = 30 (line 68)**
+30-minute access tokens with 7-day refresh tokens. Standard and appropriate for a SaaS application. ✓
+
+**7. TOKEN_BLACKLIST_TTL_SECONDS = 604800 (line 189)**
+7 days — matches REFRESH_TOKEN_EXPIRE_DAYS. Revoked tokens are blacklisted for the full refresh window. ✓
+
+**8. No RATE_LIMIT configuration in Settings**
+Rate limits are configured elsewhere (in endpoint decorators), not in Settings. This makes it harder to adjust rate limits without code changes.
+
+### Verdict
+Config security is STRONG. The 3 critical secrets have startup validation. No hardcoded credentials. Auto-generated debug keys. ZERO_DATA_RETENTION default is excellent. Main concerns: localhost CORS default, preview model versions.
