@@ -3174,3 +3174,69 @@ The API client is **production-functional but not production-hardened**. Auth/CS
 - Non-wrapped list endpoints (tiers, conditions, dependencies, versions) return plain arrays from backend — no issue
 - `isAdmin()` is client-side check — backend must also enforce (it does)
 - Same auth pattern as Word add-in (HttpOnly cookies, CSRF, 120s timeout)
+
+## Iteration 58 — DASH-2: PlaybookEditor.tsx + Playbooks.tsx Dashboard Audit
+**Task:** Error boundaries, empty states, loading states, form validation.
+
+### Loading States
+| Component | Loading State | Assessment |
+|---|---|---|
+| Playbooks list | Spinner animation | ✓ Good |
+| PlaybookEditor (main) | Full-page spinner | ✓ Good |
+| Tiers (expanded rule) | "Loading tiers..." with spinner | ✓ Good |
+| Conditions list | No loading state | ⚠️ Shows nothing while loading |
+| Dependencies list | No loading state | ⚠️ Shows nothing while loading |
+| Versions list | No loading state | ⚠️ Shows nothing while loading |
+
+Conditions, dependencies, and versions queries use `enabled: !!id && activeTab === 'conditions'` — they only fetch when the tab is active. But there's no loading indicator during the fetch.
+
+### Empty States
+| Component | Empty State | Assessment |
+|---|---|---|
+| Playbooks list | ✓ Illustrated empty state with icon + "No playbooks yet" + CTA | ✓ EXCELLENT |
+| Rules list | ✓ Illustrated empty state with icon + "No rules yet" + CTA | ✓ EXCELLENT |
+| Conditions tab | No empty state | ⚠️ Shows nothing if 0 conditions |
+| Dependencies tab | No empty state | ⚠️ Shows nothing if 0 dependencies |
+| Versions tab | No empty state | ⚠️ Shows nothing if 0 versions |
+
+### Error Handling
+| Component | Error State | Assessment |
+|---|---|---|
+| Playbooks list | ✓ Red error banner with error message | ✓ Good |
+| PlaybookEditor | ✓ "Error loading playbook" + back link | ✓ Good |
+| Create playbook mutation | ✓ Navigates to new playbook on success | ✓ |
+| Delete playbook mutation | ✓ Invalidates query cache | ✓ |
+| Add rule mutation | ✓ Resets form on success | ✓ |
+| Tier upsert mutation | No error display | ⚠️ Silent failure |
+| Condition create mutation | No error display | ⚠️ Silent failure |
+| Dependency create mutation | No error display | ⚠️ Silent failure |
+| Version snapshot mutation | No error display | ⚠️ Silent failure |
+| Rollback mutation | No error display | ⚠️ Silent failure — DANGEROUS for destructive op |
+
+**No React Error Boundaries**: Neither component uses `<ErrorBoundary>`. A rendering crash in PlaybookEditor (e.g., undefined property access on a malformed API response) would show a white screen with no recovery option.
+
+### Form Validation
+| Form | Validation | Assessment |
+|---|---|---|
+| Create playbook | `name.trim()` check before submit | ⚠️ Minimal — no length/char validation |
+| Add rule | `!newRule.clause_type \|\| !newRule.primary_position` disables submit | ✓ Good |
+| Condition value | Raw JSON string `'{}'` — `JSON.parse` with catch (line 199) | ⚠️ Silent parse failure → empty object |
+| Dependency params | Same raw JSON pattern (line 247) | ⚠️ Silent parse failure → empty object |
+| Tier position text | No validation — empty tiers saved | ⚠️ Empty position text allowed |
+
+**Can a user create an invalid playbook rule?**
+- `clause_type`: Any string accepted — no dropdown, no validation against taxonomy
+- `risk_level`: Dropdown restricts to red/yellow/green ✓
+- `detection_patterns`: Any string accepted — invalid regex stored and crashes `from_playbook_rules()` (the ReDoS issue from REGEX-1)
+- `primary_position`: Any string >0 chars ✓
+- `suggested_language`: Any string, optional ✓
+
+**What happens on save failure?**
+- `addRuleMutation` has `onSuccess` but NO `onError` handler. If the API returns 400/500, React Query shows no error to the user. The form stays open but nothing happens — silent failure.
+
+### Critical Findings Summary
+1. **No error boundaries** — rendering crash = white screen
+2. **6 mutations have no error display** — including destructive rollback
+3. **Condition/dependency JSON input silently fails** on parse error → empty object saved
+4. **3 tabs (conditions, dependencies, versions) lack loading AND empty states**
+5. **Invalid regex in detection_patterns accepted** without validation
