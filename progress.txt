@@ -3240,3 +3240,23 @@ Conditions, dependencies, and versions queries use `enabled: !!id && activeTab =
 3. **Condition/dependency JSON input silently fails** on parse error → empty object saved
 4. **3 tabs (conditions, dependencies, versions) lack loading AND empty states**
 5. **Invalid regex in detection_patterns accepted** without validation
+
+## Iteration 59 — DASH-3: BatchUpload, Compare, Analytics, Dashboard Audit
+**Task:** Error handling, empty states, loading states, data freshness, pagination for 4 pages.
+
+### Per-Page Summary
+
+**BatchUpload.tsx**: Polling errors silently swallowed (line 288 `catch {}`) — user stuck with stale data. File validation error replaced by setTimeout hack. No retry logic. Polling interval 3s stops correctly when batch completes ✓.
+
+**Compare.tsx**: Error displayed in red box ✓. Empty states for "no differences" and "no matches" ✓. Text truncation at 500 chars is silent. Filter doesn't reset on new comparison.
+
+**Analytics.tsx**: 4 sub-tabs (overview, portfolio, team, reports). CRITICAL: ROI/risks/trends/users queries fail silently with no UI feedback. Export requires manual token retrieval. Reports limited to 20 with no pagination UI. Good empty states for each data type ✓.
+
+**Dashboard.tsx**: CRITICAL: no error handling if getDashboardStats fails — shows blank with default 0 values. Has skeleton pulse loader for stats ✓. Onboarding message when 0 documents ✓. isAdmin() called on every render.
+
+### Cross-Page Issues
+- **No staleTime/refetchInterval configured on ANY query** — data immediately stale
+- **No error boundaries on any page** — rendering crash = white screen
+- **No retry buttons on error states** (except Compare which shows error message)
+- **Text-only loading indicators** (no skeleton loaders except Dashboard)
+- **Hardcoded pagination limits** with no "load more" UI (Analytics reports: 20)
