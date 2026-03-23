@@ -14,8 +14,10 @@ async function getHttpsOptions() {
 module.exports = async (env, options) => {
     const dev = options.mode === "development";
 
-    // Determine API URL: use env var or fall back to localhost
-    const apiBaseUrl = process.env.API_BASE_URL || "http://localhost:8000/api/v1";
+    // Determine API URL: use env var or fall back to localhost.
+    // In dev mode, proxy through the HTTPS webpack-dev-server to avoid
+    // mixed-content blocks (HTTPS add-in → HTTP backend).
+    const apiBaseUrl = process.env.API_BASE_URL || (dev ? "/api/v1" : "http://localhost:8000/api/v1");
 
     const config = {
         devtool: dev ? "source-map" : false,
@@ -104,6 +106,20 @@ module.exports = async (env, options) => {
             static: {
                 directory: path.join(__dirname, "dist"),
             },
+            proxy: [
+                {
+                    context: ["/api"],
+                    target: "http://localhost:8000",
+                    changeOrigin: true,
+                    secure: false,
+                },
+                {
+                    context: ["/health"],
+                    target: "http://localhost:8000",
+                    changeOrigin: true,
+                    secure: false,
+                },
+            ],
         },
     };
 

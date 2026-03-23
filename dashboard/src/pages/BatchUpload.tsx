@@ -266,7 +266,7 @@ export default function BatchUpload() {
     const fileInputRef = useRef<HTMLInputElement>(null);
     const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-    const { data: playbooks } = useQuery({
+    const { data: playbooks = [] } = useQuery({
         queryKey: ['playbooks'],
         queryFn: listPlaybooks,
     });

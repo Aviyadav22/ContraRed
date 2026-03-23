@@ -369,7 +369,8 @@ export interface TeamMember {
 }
 
 export async function getTeamMembers(): Promise<TeamMember[]> {
-    return request('/team/members');
+    const res = await request<{ items: TeamMember[] }>('/team/members');
+    return Array.isArray(res) ? res : (res.items ?? []);
 }
 
 export async function changeTeamMemberRole(userId: string, role: string): Promise<TeamMember> {
@@ -388,7 +389,8 @@ export async function removeTeamMember(userId: string): Promise<void> {
 // ============================================================================
 
 export async function listPlaybooks(): Promise<Playbook[]> {
-    return request('/playbooks/');
+    const res = await request<{ items: Playbook[] }>('/playbooks/');
+    return Array.isArray(res) ? res : (res.items ?? []);
 }
 
 export async function getPlaybook(id: string): Promise<PlaybookDetail> {
@@ -644,7 +646,8 @@ export async function ratePlaybook(marketplaceId: string, rating: number, review
 
 export async function listClauses(clauseType?: string): Promise<ClauseLibraryItem[]> {
     const qs = clauseType ? `?clause_type=${encodeURIComponent(clauseType)}` : '';
-    return request(`/clauses/${qs}`);
+    const res = await request<{ items: ClauseLibraryItem[] }>(`/clauses/${qs}`);
+    return Array.isArray(res) ? res : (res.items ?? []);
 }
 
 export async function createClause(data: CreateClauseData): Promise<ClauseLibraryItem> {
@@ -1242,7 +1245,8 @@ export async function listFeedback(params?: {
     if (params?.limit) searchParams.set('limit', String(params.limit));
     if (params?.offset) searchParams.set('offset', String(params.offset));
     const qs = searchParams.toString();
-    return request(`/feedback/${qs ? '?' + qs : ''}`);
+    const res = await request<{ items: FeedbackItem[] }>(`/feedback/${qs ? '?' + qs : ''}`);
+    return Array.isArray(res) ? res : (res.items ?? []);
 }
 
 export async function getRuleEffectiveness(needsReviewOnly?: boolean): Promise<RuleEffectiveness[]> {

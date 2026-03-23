@@ -75,7 +75,7 @@ export default function Compare() {
     const [filterType, setFilterType] = useState<string>('all');
     const [error, setError] = useState<string | null>(null);
 
-    const { data: playbooks } = useQuery({
+    const { data: playbooks = [] } = useQuery({
         queryKey: ['playbooks'],
         queryFn: listPlaybooks,
     });
