@@ -2898,3 +2898,23 @@ Apply All shows a progress bar with "Applied 3/15 fixes" — this is excellent f
 - **Apply Fix loading: MISSING** — no indicator during 3-6s operation
 - **No real-time stage progress** — messages are cosmetic, not pipeline-driven
 - **No cancel capability** — can't abort a long-running scan
+
+## Iteration 51 — ADDIN-3: Button Debouncing + State Management Audit
+**Task:** Can users double-fire scans? What happens with re-scans? Is state robust?
+
+### Debouncing Summary
+- **Scan debouncing: ✓ Solid** — `isScanning`/`isSelectionScanning` boolean guards + button disable
+- **Fix application: ⚠️ Weak** — `fixedRisks.add()` check happens AFTER API call, not before. Double-click sends two API requests.
+- **Generate Fix/Research/Undo: ✗ No guard** — can double-fire, wasting API credits
+- **Search input: ✓ Good** — 200ms debounce timer
+- **Negotiation auto-scan: ✓ Good** — 1500ms debounce timer
+
+### Re-scan State Issues
+- Re-scanning clears `fixedRisks` but NOT `appliedFixesMap` — stale fix locations persist
+- Previously applied OOXML changes in the document are NOT undone on re-scan
+- `negotiationSession` not cleared on re-scan — orphaned decisions
+- `currentAIAnalysis` is a mutable global singleton — race condition between selection scan and full scan completion
+
+### State Persistence
+- localStorage stores analysis + fixedRisks — no max size check (could exceed 5-10MB limit)
+- 200-char document fingerprint too short for reliable change detection
