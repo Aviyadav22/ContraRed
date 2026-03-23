@@ -3685,3 +3685,78 @@ Rate limiting EXISTS on all expensive AI endpoints (20-30/min). Combined with su
 - [FastAPI Best Practices Production 2026](https://fastlaunchapi.dev/blog/fastapi-best-practices-production-2026)
 - [FastAPI Security Guide](https://davidmuraya.com/blog/fastapi-security-guide/)
 - [Securing FastAPI Applications](https://github.com/VolkanSah/Securing-FastAPI-Applications)
+
+## Iteration 69 — SEC-8: File Upload Handling in Batch Analysis
+
+### File Validation (documents.py lines 1061-1124)
+
+| Check | Implementation | Assessment |
+|---|---|---|
+| File extension | `.endswith(".docx")` | ⚠️ Extension-only, no magic byte check |
+| File size | `len(raw_bytes) > 20MB` | ✓ 20MB per file limit |
+| Batch size | `len(files) > 10` | ✓ Max 10 files per batch |
+| DOCX structure | `zipfile.ZipFile` + check `word/document.xml` | ✓ Validates ZIP + internal structure |
+| Text extraction | `re.sub(r"<[^>]+>", " ", xml_content)` | ⚠️ Regex HTML stripping (not a full XML parser) |
+| Minimum content | `len(text) < 50` | ✓ Rejects empty/near-empty documents |
+
+### Critical Findings
+
+**1. No magic byte validation — extension-only check (line 1065)**
+```python
+if not filename.lower().endswith(".docx"):
+```
+Only checks filename extension. A file named `malware.docx` that's actually a ZIP bomb or executable would pass this check. Should also verify ZIP magic bytes (`PK\x03\x04`) and DOCX content type.
+
+**2. ZIP bomb / decompression bomb risk (lines 1089-1094)**
+```python
+with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
+    xml_content = zf.read("word/document.xml").decode("utf-8", errors="replace")
+```
+- The 20MB file size check is on the COMPRESSED size
+- A malicious ZIP could be 10MB compressed but expand to 1GB+ decompressed
+- `zf.read("word/document.xml")` reads the ENTIRE decompressed XML into memory
+- **No decompression ratio limit** — a 10MB DOCX with a 500MB document.xml would OOM the server
+- **Mitigation**: Python's `zipfile` module does NOT protect against zip bombs
+
+**3. XML regex stripping is fragile (line 1093)**
+```python
+text = re.sub(r"<[^>]+>", " ", xml_content)
+```
+This strips XML tags with regex. Issues:
+- Doesn't handle CDATA sections, comments, or processing instructions properly
+- Could be exploited with crafted XML: `<tag attr=">">payload</tag>` → regex leaves `>">payload`
+- Doesn't extract text from Word's `<w:t>` elements specifically — extracts ALL text including metadata
+- The structure_extractor uses `python-docx` (proper XML parser) but batch analysis uses regex XML stripping (inconsistent)
+
+**4. `errors="replace"` silently corrupts non-UTF8 content (line 1092)**
+```python
+zf.read("word/document.xml").decode("utf-8", errors="replace")
+```
+Non-UTF8 bytes are replaced with `\ufffd`. For documents with non-English characters (Hindi, Chinese, Arabic), this could corrupt text. However, valid DOCX files always use UTF-8 encoding for XML.
+
+**5. Filename used without sanitization (line 1062)**
+```python
+filename = upload_file.filename or f"file_{idx}.docx"
+```
+The filename is used in error messages, logging, and the batch store dict. If an attacker uploads a file named `<script>alert(1)</script>.docx`, the filename is stored as-is. The backend doesn't render HTML, but if filenames appear in logs or dashboard UI, XSS could occur.
+
+**6. No antivirus/malware scanning**
+Uploaded files are processed (ZIP extracted, XML parsed) without any malware check. A DOCX file could contain:
+- Embedded macros (VBA)
+- External data connections
+- OLE objects with exploits
+ContraRed only extracts text (doesn't execute macros), so the risk is LOW — but the file COULD be served back to users if stored.
+
+**7. In-memory batch store loses state on restart (line 1016)**
+```python
+_batch_store: Dict[str, dict] = {}
+```
+Batch status is stored in a module-level dict. Server restart (Render.com auto-restart) loses ALL batch state. Users polling for batch status get 404 after restart.
+
+### Summary
+- File size limit: ✓ 20MB per file, 10 files max
+- File type validation: ⚠️ Extension-only, no magic bytes
+- ZIP bomb: ⚠️ No decompression size limit — potential OOM
+- Text extraction: ⚠️ Regex XML stripping instead of proper parser
+- Malware scanning: ✗ None (low risk since only text extracted)
+- Filename sanitization: ⚠️ Used as-is in storage/logging

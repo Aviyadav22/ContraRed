@@ -136,7 +136,7 @@ This is the critical "whole paragraph turns red" bug.
 - [x] SEC-5: Audit input validation across all endpoints. SQL injection risk (raw SQL queries)? XSS risk (user content rendered in HTML)? Prompt injection (contract text sent to Gemini could contain "Ignore previous instructions...")? Write findings to progress.txt.
 - [x] SEC-6: Audit rate limiting. Are expensive AI endpoints rate-limited? Can someone burn through Gemini API credits by spamming scans? Write findings to progress.txt.
 - [x] SEC-7: WEB_SEARCH — Search for "OWASP top 10 SaaS 2025" and "FastAPI security best practices production". Cross-reference findings with the codebase. Write any new vulnerabilities found to progress.txt.
-- [ ] SEC-8: Audit file upload handling in batch analysis. Are DOCX files sanitized? Can a malicious DOCX exploit the parser? Are file size limits enforced? Write findings to progress.txt.
+- [x] SEC-8: Audit file upload handling in batch analysis. Are DOCX files sanitized? Can a malicious DOCX exploit the parser? Are file size limits enforced? Write findings to progress.txt.
 
 ---
 
