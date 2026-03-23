@@ -3503,3 +3503,15 @@ Explicitly disables default PII collection. Combined with `_before_send` filter,
 4. **MFA brute-force** — 10/min rate limit but no per-token attempt counter; 50 attempts in 5-min window
 
 ### POSITIVE: bcrypt, token rotation, concurrent session limits, CSRF, account lockout, IP anomaly detection all well-implemented
+
+## Iteration 65 — SEC-4: All API Endpoints Authorization Audit
+**Total**: 134 endpoints across 12 files. **4 accidentally public routes found.**
+
+| Endpoint | Method | Risk | Issue |
+|---|---|---|---|
+| `/billing/plans` | GET | MEDIUM | Lists pricing — missing auth allows price scraping |
+| `/documents/manifest` | GET | LOW | Serves Word Add-in manifest without auth |
+| `/documents/installer` | GET | LOW | Serves installer ZIP without auth or rate limiting |
+| `/playbooks/templates/browse` | GET | MEDIUM | Lists all playbook templates without auth — reveals template library |
+
+**120/134 endpoints correctly protected** ✓. 10 correctly public (auth endpoints + webhooks). The 4 accidentally public routes are low-medium risk — no data exposure, but should be gated for usage tracking and rate limiting.
