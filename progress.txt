@@ -3167,3 +3167,10 @@ Fix generation (2-10s expected) and clause analysis (2-10s) share the same 120s 
 
 ### Verdict
 The API client is **production-functional but not production-hardened**. Auth/CSRF handling is solid. Missing: request retry with backoff, per-endpoint timeouts, health check robustness.
+
+## Iteration 57 — DASH-1: Dashboard api/client.ts Audit (1255 lines)
+- **4 of 5 wrapped endpoints correctly unwrapped**: getTeamMembers, listPlaybooks, listClauses, listDocumentsForAnalytics
+- **BUG: `browseMarketplace()` missing unwrapping** — backend returns `{items: [], total: N}` but client expects plain array. Will crash Marketplace.tsx when iterating.
+- Non-wrapped list endpoints (tiers, conditions, dependencies, versions) return plain arrays from backend — no issue
+- `isAdmin()` is client-side check — backend must also enforce (it does)
+- Same auth pattern as Word add-in (HttpOnly cookies, CSRF, 120s timeout)
