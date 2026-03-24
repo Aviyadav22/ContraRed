@@ -302,6 +302,8 @@ function showNotification(message: string, type: 'error' | 'warning' | 'info' = 
 
   const notif = document.createElement('div');
   notif.className = 'contrared-notification';
+  notif.setAttribute('role', 'alert');
+  notif.setAttribute('aria-live', 'assertive');
   notif.style.cssText = `padding:10px 14px;margin-bottom:12px;border-radius:8px;font-size:12px;background:${c.bg};border:1px solid ${c.border};color:${c.text};`;
   notif.textContent = message;
   target.prepend(notif);
@@ -1720,6 +1722,11 @@ function renderRedlineList(): void {
   if (empty) empty.style.display = 'none';
   if (riskCount()) riskCount()!.textContent = String(filtered.length);
 
+  // Announce filtered count to screen readers
+  if (list) {
+    list.setAttribute('aria-label', `${filtered.length} risks found`);
+  }
+
   const docId = currentAIAnalysis?.document_id || '';
   filtered.forEach((redline) => {
     const card = createAIRedlineCard(redline, docId);
@@ -1851,6 +1858,9 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
   card.className = 'risk-card';
   card.id = `risk-${redline.id}`;
   card.dataset.risk = redline.risk_level.toLowerCase();
+  card.setAttribute('tabindex', '0');
+  card.setAttribute('role', 'article');
+  card.setAttribute('aria-label', `${redline.risk_level} risk: ${redline.rule_name}`);
 
   const isMissing = redline.redline_type === 'missing';
   const truncatedClause = redline.original_text.length > 100

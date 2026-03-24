@@ -36,15 +36,15 @@
             --accent-subtle: #FDECEA;
             --accent-border: #F5B7B1;
 
-            /* Risk — desaturated, professional */
-            --risk-critical: #C0392B;
-            --risk-critical-bg: #FDECEA;
+            /* Risk — desaturated, professional (darkened for WCAG 4.5+ contrast) */
+            --risk-critical: #B91C1C;
+            --risk-critical-bg: #FEE2E2;
             --risk-critical-border: #F1948A;
-            --risk-medium: #B7770D;
-            --risk-medium-bg: #FEF9EC;
+            --risk-medium: #92400E;
+            --risk-medium-bg: #FEF3C7;
             --risk-medium-border: #F0C060;
-            --risk-low: #1A7A4A;
-            --risk-low-bg: #EDF7F1;
+            --risk-low: #166534;
+            --risk-low-bg: #DCFCE7;
             --risk-low-border: #82C9A0;
 
             /* Shadows & Radii */
@@ -1655,6 +1655,7 @@
 </head>
 
 <body>
+    <a href="#riskList" class="sr-only focus-visible" style="position:absolute;left:-9999px;top:0;z-index:9999;padding:8px 16px;background:#1E293B;color:#fff;text-decoration:none;" onfocus="this.style.left='0'" onblur="this.style.left='-9999px'">Skip to results</a>
     <div class="container">
         <!-- Header -->
         <header class="header" style="margin-bottom: var(--space-3); padding-bottom: var(--space-2);">
@@ -1892,6 +1893,9 @@
                 </div>
             </div>
 
+            <!-- Notification area for screen readers -->
+            <div id="notificationArea" role="alert" aria-live="assertive"></div>
+
             <!-- Risk Summary (hidden until scan) -->
             <section id="resultsSection" class="section" style="display: none;">
                 <div class="section-header">
@@ -1971,7 +1975,7 @@
                     <span id="riskCount" class="version-badge">0 items</span>
                 </div>
 
-                <div id="riskList" class="risk-list">
+                <div id="riskList" class="risk-list" aria-live="polite" aria-label="Contract risk analysis results">
                 </div>
 
                 <!-- Empty state -->
