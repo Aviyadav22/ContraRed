@@ -26,3 +26,6 @@ resend>=2.0.0  # Transactional email (password resets)
 sentry-sdk[fastapi]>=2.0.0  # Error monitoring (optional)
 openpyxl>=3.1.0  # Excel export (Phase 7)
 fpdf2>=2.7.0  # PDF report generation (Phase 7)
+
+# Development / CI tools
+pip-audit>=2.7.0
