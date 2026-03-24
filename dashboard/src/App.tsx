@@ -1,7 +1,7 @@
-import React, { Suspense } from 'react';
+import React, { Suspense, useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { isAuthenticated, isAdmin } from '@/api/client';
+import { isAuthenticated, isAdmin, validateSession, clearAuth } from '@/api/client';
 
 const Landing = React.lazy(() => import('@/pages/Landing'));
 const Login = React.lazy(() => import('@/pages/Login'));
@@ -33,25 +33,67 @@ const queryClient = new QueryClient({
   },
 });
 
-// Protected route wrapper
+// Protected route wrapper with server-side session validation
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  if (!isAuthenticated()) {
-    return <Navigate to="/login" replace />;
+  const [validated, setValidated] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    // Quick client check first
+    if (!isAuthenticated()) {
+      setValidated(false);
+      return;
+    }
+    // Server-side validation
+    validateSession()
+      .then((user) => setValidated(!!user))
+      .catch(() => {
+        clearAuth();
+        setValidated(false);
+      });
+  }, []);
+
+  if (validated === null) {
+    return <div className="flex items-center justify-center h-screen">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+    </div>;
   }
-  // Token expiry is now handled server-side via HttpOnly cookies.
-  // The server will return 401 if the token is expired, triggering
-  // automatic refresh or redirect to login.
+  if (!validated) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
-// Admin-only route wrapper
+// Admin-only route wrapper with server-side session + role validation
 function AdminRoute({ children }: { children: React.ReactNode }) {
-  if (!isAuthenticated()) {
-    return <Navigate to="/login" replace />;
+  const [validated, setValidated] = useState<'loading' | 'admin' | 'user' | 'unauthenticated'>('loading');
+
+  useEffect(() => {
+    if (!isAuthenticated()) {
+      setValidated('unauthenticated');
+      return;
+    }
+    validateSession()
+      .then((user) => {
+        if (user && (user.role === 'admin' || user.role === 'super_admin')) {
+          setValidated('admin');
+        } else if (user) {
+          setValidated('user');
+        } else {
+          clearAuth();
+          setValidated('unauthenticated');
+        }
+      })
+      .catch(() => {
+        clearAuth();
+        setValidated('unauthenticated');
+      });
+  }, []);
+
+  if (validated === 'loading') {
+    return <div className="flex items-center justify-center h-screen">
+      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+    </div>;
   }
-  if (!isAdmin()) {
-    return <Navigate to="/dashboard" replace />;
-  }
+  if (validated === 'unauthenticated') return <Navigate to="/login" replace />;
+  if (validated === 'user') return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 }
 

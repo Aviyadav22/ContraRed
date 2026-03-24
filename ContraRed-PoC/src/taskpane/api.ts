@@ -6,6 +6,11 @@
 // @ts-expect-error process.env injected by webpack DefinePlugin
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8000/api/v1';
 
+// Guard against localhost in production
+if (typeof window !== 'undefined' && window.location.protocol === 'https:' && API_BASE_URL.includes('localhost')) {
+    console.error('FATAL: API_BASE_URL points to localhost in production. Check environment variables.');
+}
+
 // ============================================================================
 // Types - Matched to Phase 2 Backend Schema
 // ============================================================================
