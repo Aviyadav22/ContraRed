@@ -2238,7 +2238,7 @@ async def generate_redline(
 # ============================================================================
 
 @router.get("/manifest", response_class=Response)
-async def download_manifest():
+async def download_manifest(current_user: User = Depends(get_current_user)):
     """
     Download the Word Add-in manifest.xml file.
     Fetches the raw file from GitHub and serves it with the correct
@@ -2268,7 +2268,7 @@ async def download_manifest():
         )
 
 @router.get("/installer", response_class=Response)
-async def download_installer():
+async def download_installer(current_user: User = Depends(get_current_user)):
     """
     Download the ContraRed installer package as a ZIP file.
     Contains Install-ContraRed.bat and manifest.xml.

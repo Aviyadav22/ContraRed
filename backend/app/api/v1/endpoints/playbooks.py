@@ -229,6 +229,7 @@ class TemplateListItem(BaseModel):
 async def browse_templates(
     category: Optional[str] = None,
     jurisdiction: Optional[str] = None,
+    current_user: User = Depends(get_current_user),
 ):
     """List available pre-built playbook templates."""
     from app.services.playbook_templates import list_templates, get_templates_by_category, get_templates_by_jurisdiction
