@@ -1,47 +1,49 @@
-import { Component, type ReactNode } from 'react';
+import React from 'react';
 
-interface Props {
-  children: ReactNode;
-  fallback?: ReactNode;
+interface ErrorBoundaryState {
+    hasError: boolean;
+    error: Error | null;
 }
 
-interface State {
-  hasError: boolean;
-  error: Error | null;
+interface ErrorBoundaryProps {
+    children: React.ReactNode;
+    fallback?: React.ReactNode;
 }
 
-export default class ErrorBoundary extends Component<Props, State> {
-  constructor(props: Props) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-
-  static getDerivedStateFromError(error: Error): State {
-    return { hasError: true, error };
-  }
-
-  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
-    console.error('ErrorBoundary caught:', error, errorInfo);
-  }
-
-  render() {
-    if (this.state.hasError) {
-      if (this.props.fallback) return this.props.fallback;
-      return (
-        <div style={{ padding: '2rem', textAlign: 'center' }}>
-          <h2 style={{ color: '#DC2626', marginBottom: '1rem' }}>Something went wrong</h2>
-          <p style={{ color: '#64748B', marginBottom: '1rem' }}>
-            {this.state.error?.message || 'An unexpected error occurred.'}
-          </p>
-          <button
-            onClick={() => this.setState({ hasError: false, error: null })}
-            style={{ padding: '0.5rem 1.5rem', background: '#1E293B', color: '#fff', border: 'none', borderRadius: '0.5rem', cursor: 'pointer' }}
-          >
-            Try Again
-          </button>
-        </div>
-      );
+export default class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+    constructor(props: ErrorBoundaryProps) {
+        super(props);
+        this.state = { hasError: false, error: null };
     }
-    return this.props.children;
-  }
+
+    static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+        return { hasError: true, error };
+    }
+
+    componentDidCatch(error: Error, errorInfo: React.ErrorInfo): void {
+        console.error('ErrorBoundary caught an error:', error, errorInfo);
+    }
+
+    render() {
+        if (this.state.hasError) {
+            if (this.props.fallback) {
+                return this.props.fallback;
+            }
+            return (
+                <div className="flex flex-col items-center justify-center min-h-[200px] p-8">
+                    <h2 className="text-lg font-semibold text-gray-900 mb-2">Something went wrong</h2>
+                    <p className="text-gray-600">
+                        Something went wrong. Please refresh the page or contact support.
+                    </p>
+                    <button
+                        onClick={() => this.setState({ hasError: false, error: null })}
+                        className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+                    >
+                        Try Again
+                    </button>
+                </div>
+            );
+        }
+        return this.props.children;
+    }
 }

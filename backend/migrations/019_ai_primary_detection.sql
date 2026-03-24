@@ -12,6 +12,14 @@ ALTER TABLE playbook_rules
 CREATE INDEX IF NOT EXISTS idx_playbook_rules_detection_mode
     ON playbook_rules(detection_mode);
 
-ALTER TABLE playbook_rules
-    ADD CONSTRAINT chk_detection_mode
-    CHECK (detection_mode IN ('ai_only', 'ai_with_keywords', 'keywords_only'));
+-- Constraint: detection_mode must be one of three values (idempotent, non-blocking)
+DO $$ BEGIN
+    ALTER TABLE playbook_rules
+        ADD CONSTRAINT chk_detection_mode
+        CHECK (detection_mode IN ('ai_only', 'ai_with_keywords', 'keywords_only'))
+        NOT VALID;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- Validate separately (takes SHARE UPDATE EXCLUSIVE lock, not ACCESS EXCLUSIVE)
+ALTER TABLE playbook_rules VALIDATE CONSTRAINT chk_detection_mode;

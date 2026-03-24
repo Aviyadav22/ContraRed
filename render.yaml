@@ -25,7 +25,7 @@ services:
       - key: AI_PROVIDER
         value: "gemini"
       - key: ANALYSIS_MODE
-        value: "demo"
+        value: "production"
       - key: RAZORPAY_KEY_ID
         sync: false
       - key: RAZORPAY_KEY_SECRET
