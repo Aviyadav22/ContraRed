@@ -35,6 +35,51 @@ router = APIRouter()
 
 
 # ============================================================================
+# Shared access-check helper
+# ============================================================================
+
+async def _get_playbook_or_403(
+    db: AsyncSession,
+    playbook_id: UUID,
+    current_user,
+    require_owner: bool = False,
+) -> "Playbook":
+    """Fetch a playbook and verify the current user has access.
+
+    Raises 404 if not found, 403 if no access.
+    If require_owner=True, only the creator can access (not just same-org).
+    """
+    result = await db.execute(
+        select(Playbook).where(Playbook.id == playbook_id)
+    )
+    playbook = result.scalar_one_or_none()
+    if not playbook:
+        raise HTTPException(status_code=404, detail="Playbook not found")
+
+    # Public playbooks are readable by anyone (but not writable)
+    if playbook.is_public and not require_owner:
+        return playbook
+
+    # Check ownership
+    is_owner = str(playbook.created_by) == str(current_user.id)
+    is_same_org = (
+        hasattr(current_user, 'organization_id')
+        and current_user.organization_id
+        and str(playbook.organization_id) == str(current_user.organization_id)
+    )
+    is_super = getattr(current_user, 'role', None) == 'super_admin'
+
+    if require_owner:
+        if not is_owner and not is_super:
+            raise HTTPException(status_code=403, detail="Access denied")
+    else:
+        if not is_owner and not is_same_org and not is_super:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    return playbook
+
+
+# ============================================================================
 # Schemas
 # ============================================================================
 
@@ -770,13 +815,7 @@ async def delete_playbook(
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a playbook. Requires ADMIN role."""
-    result = await db.execute(
-        select(Playbook).where(Playbook.id == playbook_id)
-    )
-    playbook = result.scalar_one_or_none()
-    
-    if not playbook:
-        raise HTTPException(status_code=404, detail="Playbook not found")
+    playbook = await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
 
     playbook_name = playbook.name
     await db.delete(playbook)
@@ -1140,6 +1179,19 @@ async def list_tiers(
     db: AsyncSession = Depends(get_db),
 ):
     """List all negotiation tiers for a rule."""
+    await _get_playbook_or_403(db, playbook_id, current_user)
+
+    # Verify rule belongs to this playbook
+    rule_result = await db.execute(
+        select(PlaybookRule).where(
+            PlaybookRule.id == rule_id,
+            PlaybookRule.playbook_id == playbook_id,
+        )
+    )
+    rule = rule_result.scalar_one_or_none()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found in this playbook")
+
     result = await db.execute(
         select(PlaybookRuleTier)
         .where(PlaybookRuleTier.rule_id == rule_id)
@@ -1164,6 +1216,8 @@ async def upsert_tiers(
     db: AsyncSession = Depends(get_db),
 ):
     """Create or replace all tiers for a rule (bulk upsert). Requires ADMIN role."""
+    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+
     # Verify rule belongs to playbook
     rule_result = await db.execute(
         select(PlaybookRule).where(PlaybookRule.id == rule_id, PlaybookRule.playbook_id == playbook_id)
@@ -1279,6 +1333,8 @@ async def list_conditions(
     db: AsyncSession = Depends(get_db),
 ):
     """List all conditions for a playbook."""
+    await _get_playbook_or_403(db, playbook_id, current_user)
+
     result = await db.execute(
         select(PlaybookCondition)
         .options(selectinload(PlaybookCondition.rule_overrides))
@@ -1306,6 +1362,8 @@ async def create_condition(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new condition for a playbook."""
+    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+
     condition = PlaybookCondition(
         playbook_id=playbook_id,
         name=data.name,
@@ -1336,6 +1394,8 @@ async def delete_condition(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a condition and its overrides."""
+    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+
     result = await db.execute(
         select(PlaybookCondition).where(
             PlaybookCondition.id == condition_id,
@@ -1358,6 +1418,18 @@ async def add_override(
     db: AsyncSession = Depends(get_db),
 ):
     """Add a rule override to a condition."""
+    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+
+    # Verify condition belongs to this playbook
+    cond_result = await db.execute(
+        select(PlaybookCondition).where(
+            PlaybookCondition.id == condition_id,
+            PlaybookCondition.playbook_id == playbook_id,
+        )
+    )
+    if not cond_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Condition not found in this playbook")
+
     override = PlaybookRuleOverride(
         condition_id=condition_id,
         rule_id=UUID(data.rule_id),
@@ -1391,8 +1463,23 @@ async def delete_override(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a rule override."""
+    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+
+    # Verify condition belongs to this playbook
+    cond_result = await db.execute(
+        select(PlaybookCondition).where(
+            PlaybookCondition.id == condition_id,
+            PlaybookCondition.playbook_id == playbook_id,
+        )
+    )
+    if not cond_result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Condition not found in this playbook")
+
     result = await db.execute(
-        select(PlaybookRuleOverride).where(PlaybookRuleOverride.id == override_id)
+        select(PlaybookRuleOverride).where(
+            PlaybookRuleOverride.id == override_id,
+            PlaybookRuleOverride.condition_id == condition_id,
+        )
     )
     override = result.scalar_one_or_none()
     if not override:
@@ -1434,6 +1521,8 @@ async def list_dependencies(
     db: AsyncSession = Depends(get_db),
 ):
     """List all cross-clause dependencies for a playbook."""
+    await _get_playbook_or_403(db, playbook_id, current_user)
+
     result = await db.execute(
         select(PlaybookRuleDependency).where(PlaybookRuleDependency.playbook_id == playbook_id)
     )
@@ -1456,6 +1545,8 @@ async def create_dependency(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a cross-clause dependency."""
+    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+
     dep = PlaybookRuleDependency(
         playbook_id=playbook_id,
         source_rule_id=UUID(data.source_rule_id),
@@ -1484,6 +1575,8 @@ async def delete_dependency(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a dependency."""
+    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+
     result = await db.execute(
         select(PlaybookRuleDependency).where(
             PlaybookRuleDependency.id == dep_id,
@@ -1534,6 +1627,8 @@ async def list_versions(
     db: AsyncSession = Depends(get_db),
 ):
     """List version history for a playbook."""
+    await _get_playbook_or_403(db, playbook_id, current_user)
+
     versions = await playbook_versioning_service.get_versions(db, playbook_id, limit)
     return [
         VersionResponse(
@@ -1554,6 +1649,8 @@ async def create_version_snapshot(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a version snapshot of the current playbook state."""
+    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+
     version = await playbook_versioning_service.create_snapshot(
         db, playbook_id, change_summary, current_user.id
     )
@@ -1574,6 +1671,8 @@ async def diff_versions(
     db: AsyncSession = Depends(get_db),
 ):
     """Compare two versions of a playbook."""
+    await _get_playbook_or_403(db, playbook_id, current_user)
+
     diff = await playbook_versioning_service.diff_versions(db, version_a_id, version_b_id)
     return DiffResponse(**diff)
 
@@ -1586,6 +1685,8 @@ async def get_version_detail(
     db: AsyncSession = Depends(get_db),
 ):
     """Get full snapshot for a specific version."""
+    await _get_playbook_or_403(db, playbook_id, current_user)
+
     version_data = await playbook_versioning_service.get_version(db, version_id)
     if not version_data:
         raise HTTPException(status_code=404, detail="Version not found")
@@ -1606,6 +1707,8 @@ async def rollback_to_version(
     db: AsyncSession = Depends(get_db),
 ):
     """Rollback a playbook to a previous version."""
+    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+
     await playbook_versioning_service.rollback(db, playbook_id, version_id, current_user.id)
     # Return the new version created by rollback
     versions = await playbook_versioning_service.get_versions(db, playbook_id, 1)
