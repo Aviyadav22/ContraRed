@@ -2,7 +2,7 @@
 Clause Classifier - Deterministic clause type identification.
 
 Stage 2 of the analysis pipeline: takes extracted contract text sections
-and classifies each into one of 30 clause categories using keyword matching
+and classifies each into one of 54 clause categories using keyword matching
 and structural analysis. Ambiguous clauses are marked for AI classification.
 
 Zero AI dependency for the deterministic path.
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Clause taxonomy — 30 categories across 8 groups
+# Clause taxonomy — 54 categories across 11 groups
 # ---------------------------------------------------------------------------
 
 class ClauseGroup(str, Enum):
@@ -31,10 +31,13 @@ class ClauseGroup(str, Enum):
     CONFIDENTIALITY = "confidentiality"
     GOVERNANCE = "governance"
     RESTRICTIVE = "restrictive"
+    TECHNOLOGY = "technology"
+    COMPLIANCE = "compliance"
+    OPERATIONAL = "operational"
 
 
 class ClauseType(str, Enum):
-    """The 30 clause categories."""
+    """The 54 clause categories (34 original + 20 expanded)."""
     # Formation
     DEFINITIONS = "definitions"
     RECITALS = "recitals"
@@ -56,6 +59,9 @@ class ClauseType(str, Enum):
     PRICE_ESCALATION = "price_escalation"
     TAXES = "taxes"
     AUDIT_RIGHTS = "audit_rights"
+    MOST_FAVORED_NATION = "most_favored_nation"
+    SET_OFF_RIGHTS = "set_off_rights"
+    CURRENCY = "currency"
 
     # Liability
     LIABILITY_CAP = "liability_cap"
@@ -67,6 +73,8 @@ class ClauseType(str, Enum):
     IP_OWNERSHIP = "ip_ownership"
     LICENSE_GRANT = "license_grant"
     IP_INDEMNIFICATION = "ip_indemnification"
+    MORAL_RIGHTS = "moral_rights"
+    BACKGROUND_IP = "background_ip"
 
     # Confidentiality
     CONFIDENTIALITY_OBLIGATIONS = "confidentiality_obligations"
@@ -84,6 +92,27 @@ class ClauseType(str, Enum):
     NON_COMPETE = "non_compete"
     NON_SOLICITATION = "non_solicitation"
     EXCLUSIVITY = "exclusivity"
+
+    # Technology / SaaS
+    SLA_TERMS = "sla_terms"
+    DATA_PORTABILITY = "data_portability"
+    SECURITY_STANDARDS = "security_standards"
+    API_RIGHTS = "api_rights"
+    ACCEPTABLE_USE = "acceptable_use"
+
+    # Compliance
+    ANTI_BRIBERY = "anti_bribery"
+    SANCTIONS_COMPLIANCE = "sanctions_compliance"
+    REGULATORY_COMPLIANCE = "regulatory_compliance"
+
+    # Operational
+    ASSIGNMENT = "assignment"
+    CHANGE_OF_CONTROL = "change_of_control"
+    SUBCONTRACTING = "subcontracting"
+    BUSINESS_CONTINUITY = "business_continuity"
+    TRANSITION_ASSISTANCE = "transition_assistance"
+    COUNTERPARTY_INSOLVENCY = "counterparty_insolvency"
+    RETURN_OF_MATERIALS = "return_of_materials"
 
     # Fallback
     UNKNOWN = "unknown"
@@ -107,6 +136,9 @@ _TYPE_TO_GROUP: Dict[ClauseType, ClauseGroup] = {
     ClauseType.PRICE_ESCALATION: ClauseGroup.FINANCIAL,
     ClauseType.TAXES: ClauseGroup.FINANCIAL,
     ClauseType.AUDIT_RIGHTS: ClauseGroup.FINANCIAL,
+    ClauseType.MOST_FAVORED_NATION: ClauseGroup.FINANCIAL,
+    ClauseType.SET_OFF_RIGHTS: ClauseGroup.FINANCIAL,
+    ClauseType.CURRENCY: ClauseGroup.FINANCIAL,
     ClauseType.LIABILITY_CAP: ClauseGroup.LIABILITY,
     ClauseType.CONSEQUENTIAL_DAMAGES: ClauseGroup.LIABILITY,
     ClauseType.INDEMNIFICATION_SCOPE: ClauseGroup.LIABILITY,
@@ -114,6 +146,8 @@ _TYPE_TO_GROUP: Dict[ClauseType, ClauseGroup] = {
     ClauseType.IP_OWNERSHIP: ClauseGroup.IP,
     ClauseType.LICENSE_GRANT: ClauseGroup.IP,
     ClauseType.IP_INDEMNIFICATION: ClauseGroup.IP,
+    ClauseType.MORAL_RIGHTS: ClauseGroup.IP,
+    ClauseType.BACKGROUND_IP: ClauseGroup.IP,
     ClauseType.CONFIDENTIALITY_OBLIGATIONS: ClauseGroup.CONFIDENTIALITY,
     ClauseType.CONFIDENTIALITY_EXCEPTIONS: ClauseGroup.CONFIDENTIALITY,
     ClauseType.DATA_PROTECTION: ClauseGroup.CONFIDENTIALITY,
@@ -125,7 +159,26 @@ _TYPE_TO_GROUP: Dict[ClauseType, ClauseGroup] = {
     ClauseType.NON_COMPETE: ClauseGroup.RESTRICTIVE,
     ClauseType.NON_SOLICITATION: ClauseGroup.RESTRICTIVE,
     ClauseType.EXCLUSIVITY: ClauseGroup.RESTRICTIVE,
-    ClauseType.UNKNOWN: ClauseGroup.FORMATION,  # fallback
+    # Technology / SaaS
+    ClauseType.SLA_TERMS: ClauseGroup.TECHNOLOGY,
+    ClauseType.DATA_PORTABILITY: ClauseGroup.TECHNOLOGY,
+    ClauseType.SECURITY_STANDARDS: ClauseGroup.TECHNOLOGY,
+    ClauseType.API_RIGHTS: ClauseGroup.TECHNOLOGY,
+    ClauseType.ACCEPTABLE_USE: ClauseGroup.TECHNOLOGY,
+    # Compliance
+    ClauseType.ANTI_BRIBERY: ClauseGroup.COMPLIANCE,
+    ClauseType.SANCTIONS_COMPLIANCE: ClauseGroup.COMPLIANCE,
+    ClauseType.REGULATORY_COMPLIANCE: ClauseGroup.COMPLIANCE,
+    # Operational
+    ClauseType.ASSIGNMENT: ClauseGroup.OPERATIONAL,
+    ClauseType.CHANGE_OF_CONTROL: ClauseGroup.OPERATIONAL,
+    ClauseType.SUBCONTRACTING: ClauseGroup.OPERATIONAL,
+    ClauseType.BUSINESS_CONTINUITY: ClauseGroup.OPERATIONAL,
+    ClauseType.TRANSITION_ASSISTANCE: ClauseGroup.OPERATIONAL,
+    ClauseType.COUNTERPARTY_INSOLVENCY: ClauseGroup.OPERATIONAL,
+    ClauseType.RETURN_OF_MATERIALS: ClauseGroup.OPERATIONAL,
+    # Fallback — unclassified clauses; no specific group applies
+    ClauseType.UNKNOWN: ClauseGroup.FORMATION,
 }
 
 
@@ -694,6 +747,314 @@ _CLASSIFIER_RULES: List[_ClassifierRule] = [
             r"\bexclusivity\s+(?:period|term|obligation)\b",
             r"\bshall\s+not\b.*\b(?:engage|contract|deal)\b.*\b(?:third\s+part(?:y|ies)|competitor)\b",
         ],
+    ),
+
+    # --- Technology / SaaS ---
+    _ClassifierRule(
+        clause_type=ClauseType.SLA_TERMS,
+        heading_patterns=[
+            r"\b(service\s+level|sla)\b",
+            r"\b(performance\s+standards?)\b",
+            r"\b(service\s+availability)\b",
+        ],
+        body_patterns=[
+            r"\b(uptime|availability|response\s+time)\b",
+            r"\b(service\s+credit|penalty|remedies?\s+for\s+failure)\b",
+            r"\b(measurement\s+period|reporting)\b",
+            r"\b(mean\s+time\s+to\s+(?:repair|recover|resolve)|MTTR)\b",
+            r"\b\d+\.?\d*\s*%\s*(?:uptime|availability)\b",
+        ],
+        weight=1.0,
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.DATA_PORTABILITY,
+        heading_patterns=[
+            r"\bdata\s+portability\b",
+            r"\bdata\s+(?:export|extraction|migration)\b",
+            r"\bdata\s+return\b",
+        ],
+        body_patterns=[
+            r"\bexport\b.*\bdata\b.*\b(?:format|machine[\s-]?readable)\b",
+            r"\bdata\s+portability\b",
+            r"\breturn\s+(?:all\s+)?(?:customer\s+)?data\b",
+            r"\b(?:CSV|JSON|XML|API)\b.*\bexport\b",
+        ],
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.SECURITY_STANDARDS,
+        heading_patterns=[
+            r"\bsecurity\s+(?:standards?|requirements?|measures?)\b",
+            r"\binformation\s+security\b",
+            r"\bcyber[\s-]?security\b",
+        ],
+        body_patterns=[
+            r"\b(?:ISO\s*27001|SOC\s*2|SOC\s*II|NIST|PCI[\s-]?DSS)\b",
+            r"\bencryption\b.*\b(?:at\s+rest|in\s+transit)\b",
+            r"\bsecurity\s+(?:audit|assessment|review|testing)\b",
+            r"\bpenetration\s+test(?:ing|s)?\b",
+            r"\baccess\s+control\b.*\b(?:authentication|authorization)\b",
+        ],
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.API_RIGHTS,
+        heading_patterns=[
+            r"\bAPI\s+(?:access|rights?|usage|terms?)\b",
+            r"\bapplication\s+programming\s+interface\b",
+            r"\bintegration\s+rights?\b",
+        ],
+        body_patterns=[
+            r"\bAPI\b.*\b(?:access|key|token|endpoint|rate\s+limit)\b",
+            r"\bprogrammatic\s+access\b",
+            r"\bintegrat(?:e|ion)\b.*\b(?:third[\s-]?party|system|platform)\b",
+            r"\brate\s+limit(?:ing|s)?\b",
+            r"\bwebhook\b",
+        ],
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.ACCEPTABLE_USE,
+        heading_patterns=[
+            r"\bacceptable\s+use\b",
+            r"\buse\s+(?:restrictions?|policy|policies)\b",
+            r"\bpermitted\s+use\b",
+            r"\bprohibited\s+(?:use|activit(?:y|ies))\b",
+        ],
+        body_patterns=[
+            r"\bshall\s+not\s+(?:use|access)\b.*\b(?:unlawful|illegal|harmful)\b",
+            r"\bacceptable\s+use\b",
+            r"\bprohibited\s+(?:uses?|activit(?:y|ies)|conduct)\b",
+            r"\breverse\s+engineer\b",
+            r"\bshall\s+not\b.*\b(?:scrape|crawl|mine|harvest)\b",
+        ],
+    ),
+
+    # --- Compliance ---
+    _ClassifierRule(
+        clause_type=ClauseType.ANTI_BRIBERY,
+        heading_patterns=[
+            r"\banti[\s-]?bribery\b",
+            r"\banti[\s-]?corruption\b",
+            r"\bFCPA\b",
+            r"\bbribery\s+act\b",
+        ],
+        body_patterns=[
+            r"\banti[\s-]?(?:bribery|corruption)\b",
+            r"\b(?:FCPA|Foreign\s+Corrupt\s+Practices\s+Act|UK\s+Bribery\s+Act)\b",
+            r"\b(?:bribe|kickback|facilitation\s+payment)\b",
+            r"\bgovernment\s+official\b.*\b(?:payment|gift|benefit)\b",
+            r"\bcorrupt(?:ly|ion)?\b.*\b(?:payment|advantage|influence)\b",
+        ],
+        weight=1.1,
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.SANCTIONS_COMPLIANCE,
+        heading_patterns=[
+            r"\bsanctions?\b",
+            r"\bexport\s+control\b",
+            r"\btrade\s+(?:compliance|restrictions?)\b",
+            r"\bembargo\b",
+        ],
+        body_patterns=[
+            r"\b(?:OFAC|BIS|EU\s+sanctions?|UN\s+sanctions?)\b",
+            r"\bsanction(?:s|ed)?\s+(?:list|party|parties|person|country|jurisdiction)\b",
+            r"\bexport\s+control\b.*\b(?:regulations?|laws?|compliance)\b",
+            r"\bembargo(?:ed|es)?\b",
+            r"\brestricted\s+(?:party|parties|country|countries|territory|territories)\b",
+        ],
+        weight=1.1,
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.REGULATORY_COMPLIANCE,
+        heading_patterns=[
+            r"\bregulatory\s+compliance\b",
+            r"\bcompliance\s+with\s+(?:laws?|regulations?)\b",
+            r"\blegal\s+compliance\b",
+        ],
+        body_patterns=[
+            r"\bcompl(?:y|iance)\b.*\b(?:applicable\s+)?(?:laws?|regulations?|statutes?|ordinances?)\b",
+            r"\bregulatory\s+(?:requirements?|obligations?|approvals?)\b",
+            r"\b(?:licen[cs]es?|permits?|authorizations?)\s+(?:required|necessary)\b.*\b(?:law|regulat)\b",
+            r"\bgovernment(?:al)?\s+(?:approval|authorization|consent)\b",
+        ],
+    ),
+
+    # --- Operational ---
+    _ClassifierRule(
+        clause_type=ClauseType.ASSIGNMENT,
+        heading_patterns=[
+            r"\bassignment\b(?!\s+of\s+(?:IP|intellectual))",
+            r"\btransfer\s+of\s+(?:rights?|obligations?)\b",
+            r"\bnovation\b",
+        ],
+        body_patterns=[
+            r"\bassign\b.*\b(?:this\s+agreement|rights?\s+(?:and|or)\s+obligations?)\b",
+            r"\bshall\s+not\s+(?:be\s+)?assign(?:ed|able)\b",
+            r"\bwithout\s+(?:the\s+)?(?:prior\s+)?(?:written\s+)?consent\b.*\bassign\b",
+            r"\bnovation\b",
+        ],
+        weight=1.0,
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.CHANGE_OF_CONTROL,
+        heading_patterns=[
+            r"\bchange\s+(?:of|in)\s+control\b",
+            r"\bownership\s+change\b",
+        ],
+        body_patterns=[
+            r"\bchange\s+(?:of|in)\s+control\b",
+            r"\bacquisition\s+of\b.*\b(?:majority|controlling)\b.*\b(?:interest|shares?|stock|equity)\b",
+            r"\bmerger\b.*\b(?:consolidation|acquisition)\b",
+            r"\b(?:50|fifty)\s*%\b.*\b(?:voting|ownership|equity)\b",
+        ],
+        weight=1.1,
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.SUBCONTRACTING,
+        heading_patterns=[
+            r"\bsub[\s-]?contract(?:ing|ors?)?\b",
+            r"\boutsourc(?:e|ing)\b",
+            r"\buse\s+of\s+(?:third[\s-]?part(?:y|ies)|sub[\s-]?contractors?)\b",
+        ],
+        body_patterns=[
+            r"\bsub[\s-]?contract(?:ing|or|ors?)?\b",
+            r"\boutsourc(?:e|ed|ing)\b.*\b(?:obligations?|services?|work)\b",
+            r"\bengage\s+(?:a\s+)?(?:third[\s-]?party|sub[\s-]?contractor)\b",
+            r"\bremain\s+(?:fully\s+)?(?:responsible|liable)\b.*\bsub[\s-]?contractor\b",
+        ],
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.BUSINESS_CONTINUITY,
+        heading_patterns=[
+            r"\bbusiness\s+continuity\b",
+            r"\bdisaster\s+recovery\b",
+            r"\b(?:BCP|DR)\s+(?:plan|requirements?)\b",
+        ],
+        body_patterns=[
+            r"\bbusiness\s+continuity\s+(?:plan|planning|measures?|procedures?)\b",
+            r"\bdisaster\s+recovery\b",
+            r"\brecovery\s+(?:point|time)\s+objective\b",
+            r"\b(?:RPO|RTO)\b",
+            r"\bbackup\b.*\b(?:data|systems?|operations?)\b",
+        ],
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.TRANSITION_ASSISTANCE,
+        heading_patterns=[
+            r"\btransition\s+(?:assistance|services?|plan)\b",
+            r"\bexit\s+(?:assistance|management|plan)\b",
+            r"\bhandover\b",
+        ],
+        body_patterns=[
+            r"\btransition\s+(?:assistance|services?|support|period)\b",
+            r"\bexit\s+(?:assistance|management|plan|strategy)\b",
+            r"\bknowledge\s+transfer\b",
+            r"\bhandover\b.*\b(?:period|services?|obligations?)\b",
+            r"\bwind[\s-]?down\b",
+        ],
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.COUNTERPARTY_INSOLVENCY,
+        heading_patterns=[
+            r"\binsolvency\b",
+            r"\bbankruptcy\b",
+            r"\bwinding[\s-]?up\b",
+            r"\bliquidation\b",
+        ],
+        body_patterns=[
+            r"\b(?:insolven(?:t|cy)|bankrupt(?:cy)?)\b",
+            r"\bwinding[\s-]?up\b.*\b(?:petition|order|resolution)\b",
+            r"\bliquidat(?:ion|or|ed)\b",
+            r"\breceiver(?:ship)?\b",
+            r"\badministrat(?:ion|or)\b.*\b(?:appoint(?:ed|ment)|petition)\b",
+        ],
+        weight=1.1,
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.RETURN_OF_MATERIALS,
+        heading_patterns=[
+            r"\breturn\s+of\s+(?:materials?|property|documents?)\b",
+            r"\breturn\s+(?:and|or)\s+(?:destruction|deletion)\b",
+        ],
+        body_patterns=[
+            r"\breturn\s+(?:or\s+)?(?:destroy|delete)\b.*\b(?:materials?|documents?|data|property)\b",
+            r"\bupon\s+(?:termination|expiration)\b.*\breturn\b",
+            r"\bcertif(?:y|ication)\b.*\b(?:destruction|deletion)\b",
+            r"\breturn\s+all\b.*\b(?:confidential|proprietary|materials?)\b",
+        ],
+    ),
+
+    # --- Financial (new) ---
+    _ClassifierRule(
+        clause_type=ClauseType.MOST_FAVORED_NATION,
+        heading_patterns=[
+            r"\bmost\s+favou?red\s+(?:nation|customer|pricing)\b",
+            r"\bMFN\b",
+            r"\bbest\s+(?:price|pricing|terms?)\b",
+        ],
+        body_patterns=[
+            r"\bmost\s+favou?red\s+(?:nation|customer)\b",
+            r"\bMFN\b",
+            r"\bno\s+less\s+favou?rable\b.*\b(?:terms?|pricing|conditions?)\b",
+            r"\b(?:equal|equivalent|comparable)\s+(?:terms?|pricing|conditions?)\b.*\b(?:other|third[\s-]?party|any)\s+(?:customer|client)\b",
+        ],
+        weight=1.1,
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.SET_OFF_RIGHTS,
+        heading_patterns=[
+            r"\bset[\s-]?off\b",
+            r"\boffset(?:ting)?\b",
+            r"\bcounterclaim\b",
+        ],
+        body_patterns=[
+            r"\bset[\s-]?off\b.*\b(?:amounts?|sums?|debts?|obligations?)\b",
+            r"\bdeduct\b.*\b(?:amounts?\s+)?(?:owed|due|owing)\b",
+            r"\boffset\b.*\b(?:against|from)\b.*\b(?:amounts?|payments?)\b",
+        ],
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.CURRENCY,
+        heading_patterns=[
+            r"\bcurrency\b",
+            r"\bforeign\s+exchange\b",
+            r"\bdenomination\b",
+        ],
+        body_patterns=[
+            r"\b(?:USD|EUR|GBP|INR|JPY|AUD|CAD)\b.*\b(?:denomination|currency|payment)\b",
+            r"\bcurrency\s+(?:conversion|exchange|fluctuation|risk)\b",
+            r"\b(?:United\s+States\s+Dollars?|Indian\s+Rupees?|Euros?|Sterling)\b",
+            r"\bforeign\s+exchange\s+(?:rate|risk|fluctuation)\b",
+        ],
+    ),
+
+    # --- IP (new) ---
+    _ClassifierRule(
+        clause_type=ClauseType.MORAL_RIGHTS,
+        heading_patterns=[
+            r"\bmoral\s+rights?\b",
+            r"\bauthors?\s+rights?\b",
+        ],
+        body_patterns=[
+            r"\bmoral\s+rights?\b",
+            r"\bwaiv(?:e|er)\b.*\bmoral\s+rights?\b",
+            r"\bright\s+of\s+(?:attribution|integrity|paternity)\b",
+            r"\bauthorship\b.*\b(?:waiv|relinquish)\b",
+        ],
+        weight=1.0,
+    ),
+    _ClassifierRule(
+        clause_type=ClauseType.BACKGROUND_IP,
+        heading_patterns=[
+            r"\bbackground\s+(?:IP|intellectual\s+property)\b",
+            r"\bpre[\s-]?existing\s+(?:IP|intellectual\s+property|materials?)\b",
+            r"\bforeground\s+(?:IP|intellectual\s+property)\b",
+        ],
+        body_patterns=[
+            r"\bbackground\s+(?:IP|intellectual\s+property)\b",
+            r"\bpre[\s-]?existing\s+(?:IP|intellectual\s+property|materials?|works?)\b",
+            r"\bforeground\s+(?:IP|intellectual\s+property)\b",
+            r"\b(?:retain|reserve)\b.*\b(?:ownership|rights?|title)\b.*\bpre[\s-]?existing\b",
+        ],
+        weight=1.1,
     ),
 ]
 
