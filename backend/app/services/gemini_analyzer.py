@@ -213,9 +213,9 @@ class GeminiAnalyzer:
                 if clause_context:
                     line += f"\n  CONTEXT: {clause_context}"
                 if unacceptable:
-                    line += f"\n  RED FLAGS: {', '.join(unacceptable)}"
+                    line += f"\n  RED FLAGS: {', '.join(str(s) for s in unacceptable)}"
                 if acceptable:
-                    line += f"\n  SAFE SIGNALS: {', '.join(acceptable)}"
+                    line += f"\n  SAFE SIGNALS: {', '.join(str(s) for s in acceptable)}"
                 if acceptable_pos:
                     line += f"\n  ACCEPTABLE IF: {acceptable_pos}"
 

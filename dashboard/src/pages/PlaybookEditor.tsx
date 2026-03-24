@@ -393,7 +393,7 @@ export default function PlaybookEditor() {
             queryClient.invalidateQueries({ queryKey: ['playbook', id] });
             setShowAddRule(false);
             setEditingRuleId(null);
-            setNewRule({ clause_type: '', primary_position: '', risk_level: 'yellow', match_type: 'exact', is_deal_breaker: false, detection_patterns: [] });
+            setNewRule({ clause_type: '', primary_position: '', risk_level: 'yellow', match_type: 'exact', is_deal_breaker: false, detection_patterns: [], detection_mode: 'keywords_only' });
             setPatternInput('');
         },
         onError: () => alert('Failed to update rule.'),
@@ -752,7 +752,7 @@ export default function PlaybookEditor() {
                     </div>
                     <div className="flex justify-end gap-3 mt-6 pt-5 border-t border-slate-100">
                         <button
-                            onClick={() => { setShowAddRule(false); setEditingRuleId(null); setNewRule({ clause_type: '', primary_position: '', risk_level: 'yellow', match_type: 'exact', is_deal_breaker: false, detection_patterns: [] }); setPatternInput(''); }}
+                            onClick={() => { setShowAddRule(false); setEditingRuleId(null); setNewRule({ clause_type: '', primary_position: '', risk_level: 'yellow', match_type: 'exact', is_deal_breaker: false, detection_patterns: [], detection_mode: 'keywords_only' }); setPatternInput(''); }}
                             className="px-5 py-2.5 text-sm font-medium text-slate-500 bg-transparent border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
                         >
                             Cancel
@@ -811,7 +811,10 @@ export default function PlaybookEditor() {
                                                 risk_level: rule.risk_level,
                                                 match_type: rule.match_type,
                                                 is_deal_breaker: rule.is_deal_breaker,
-                                                detection_patterns: [...rule.detection_patterns],
+                                                detection_patterns: [...(rule.detection_patterns || [])],
+                                                detection_mode: rule.detection_mode || 'keywords_only',
+                                                risk_description: rule.risk_description || '',
+                                                acceptable_position: rule.acceptable_position || '',
                                             });
                                             setPatternInput('');
                                             setShowAddRule(true);
