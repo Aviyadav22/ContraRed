@@ -25,6 +25,12 @@ const MATCH_TYPES = [
     { value: 'regex', label: 'Regex', hint: 'For power users' },
 ];
 
+const DETECTION_MODES = [
+    { value: 'keywords_only', label: 'Keywords Only', hint: 'Regex pattern matching' },
+    { value: 'ai_with_keywords', label: 'AI + Keywords', hint: 'AI detection with keyword pre-filtering' },
+    { value: 'ai_only', label: 'AI Only', hint: 'Pure AI detection for context-dependent rules' },
+];
+
 const TIER_LABELS = ['Ideal', 'Acceptable', 'Walk-Away', 'Escalate'];
 
 const CONDITION_TYPES = [
@@ -285,6 +291,7 @@ export default function PlaybookEditor() {
         match_type: 'exact',
         is_deal_breaker: false,
         detection_patterns: [],
+        detection_mode: 'keywords_only',
     });
     const [patternInput, setPatternInput] = useState('');
     const [editingRuleId, setEditingRuleId] = useState<string | null>(null);
@@ -369,7 +376,7 @@ export default function PlaybookEditor() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['playbook', id] });
             setShowAddRule(false);
-            setNewRule({ clause_type: '', primary_position: '', risk_level: 'yellow', match_type: 'exact', is_deal_breaker: false, detection_patterns: [] });
+            setNewRule({ clause_type: '', primary_position: '', risk_level: 'yellow', match_type: 'exact', is_deal_breaker: false, detection_patterns: [], detection_mode: 'keywords_only' });
             setPatternInput('');
         },
     });
@@ -645,6 +652,48 @@ export default function PlaybookEditor() {
                                 {MATCH_TYPES.find(t => t.value === newRule.match_type)?.hint}
                             </p>
                         </div>
+                        <div>
+                            <label className={labelClass}>Detection Mode</label>
+                            <select
+                                value={newRule.detection_mode || 'keywords_only'}
+                                onChange={(e) => setNewRule(prev => ({ ...prev, detection_mode: e.target.value }))}
+                                className={inputClass}
+                            >
+                                {DETECTION_MODES.map(m => (
+                                    <option key={m.value} value={m.value}>{m.label} — {m.hint}</option>
+                                ))}
+                            </select>
+                        </div>
+                        {newRule.detection_mode && newRule.detection_mode !== 'keywords_only' && (
+                            <div className="md:col-span-2">
+                                <label className={labelClass}>
+                                    Risk Description
+                                    <span className="text-xs text-slate-400 ml-1 font-normal">(what the AI should look for)</span>
+                                </label>
+                                <textarea
+                                    value={newRule.risk_description || ''}
+                                    onChange={(e) => setNewRule(prev => ({ ...prev, risk_description: e.target.value }))}
+                                    placeholder="Describe the risk in natural language, e.g., 'Liability cap is missing, unlimited, or disproportionately high relative to contract value'"
+                                    className={`${inputClass} min-h-[72px]`}
+                                    rows={3}
+                                />
+                            </div>
+                        )}
+                        {newRule.detection_mode && newRule.detection_mode !== 'keywords_only' && (
+                            <div className="md:col-span-2">
+                                <label className={labelClass}>
+                                    Acceptable Position
+                                    <span className="text-xs text-slate-400 ml-1 font-normal">(what's OK — prevents false positives)</span>
+                                </label>
+                                <textarea
+                                    value={newRule.acceptable_position || ''}
+                                    onChange={(e) => setNewRule(prev => ({ ...prev, acceptable_position: e.target.value }))}
+                                    placeholder="e.g., 'Mutual liability capped at 12 months of fees paid'"
+                                    className={`${inputClass} min-h-[52px]`}
+                                    rows={2}
+                                />
+                            </div>
+                        )}
                         <div className="flex items-center gap-2.5 pt-6">
                             <input
                                 type="checkbox"
@@ -667,6 +716,7 @@ export default function PlaybookEditor() {
                                 placeholder="e.g., Liability capped at 12 months of fees paid"
                             />
                         </div>
+                        {(!newRule.detection_mode || newRule.detection_mode !== 'ai_only') && (
                         <div className="md:col-span-2">
                             <label className={labelClass}>Detection Patterns</label>
                             <div className="flex gap-2 mb-2">
@@ -698,6 +748,7 @@ export default function PlaybookEditor() {
                                 ))}
                             </div>
                         </div>
+                        )}
                     </div>
                     <div className="flex justify-end gap-3 mt-6 pt-5 border-t border-slate-100">
                         <button
@@ -1478,6 +1529,15 @@ function RuleRow({
                         {rule.is_deal_breaker && (
                             <span className="ml-1 text-[11px] font-bold bg-red-50 text-red-600 px-1.5 py-0.5 rounded">
                                 DEAL BREAKER
+                            </span>
+                        )}
+                        {rule.detection_mode && rule.detection_mode !== 'keywords_only' && (
+                            <span className={`ml-1 px-1.5 py-0.5 text-xs rounded ${
+                                rule.detection_mode === 'ai_only'
+                                    ? 'bg-purple-50 text-purple-600'
+                                    : 'bg-blue-50 text-blue-600'
+                            }`}>
+                                {rule.detection_mode === 'ai_only' ? 'AI' : 'AI+KW'}
                             </span>
                         )}
                     </div>
