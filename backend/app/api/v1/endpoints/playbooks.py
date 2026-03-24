@@ -74,6 +74,13 @@ class RuleCreate(BaseModel):
     detection_patterns: List[str] = Field(default_factory=list)
     match_type: str = "exact"  # exact|fuzzy|regex - 'exact' auto-escapes for non-regex users
     suggested_language: Optional[str] = Field(default=None, max_length=5000)
+    # P2 #29: AI-primary detection fields
+    detection_mode: str = "keywords_only"
+    risk_description: Optional[str] = Field(default=None, max_length=5000)
+    acceptable_position: Optional[str] = Field(default=None, max_length=5000)
+    unacceptable_signals: Optional[List[str]] = None
+    acceptable_signals: Optional[List[str]] = None
+    clause_context: Optional[str] = Field(default=None, max_length=5000)
 
 
 class RuleUpdate(BaseModel):
@@ -85,6 +92,13 @@ class RuleUpdate(BaseModel):
     detection_patterns: Optional[List[str]] = None
     match_type: Optional[str] = None  # exact|fuzzy|regex
     suggested_language: Optional[str] = None
+    # P2 #29: AI-primary detection fields
+    detection_mode: Optional[str] = None
+    risk_description: Optional[str] = None
+    acceptable_position: Optional[str] = None
+    unacceptable_signals: Optional[List[str]] = None
+    acceptable_signals: Optional[List[str]] = None
+    clause_context: Optional[str] = None
 
 
 class RuleResponse(BaseModel):
@@ -98,7 +112,14 @@ class RuleResponse(BaseModel):
     match_type: str = "exact"
     suggested_language: Optional[str]
     order_index: int
-    
+    # P2 #29: AI-primary detection fields
+    detection_mode: str = "keywords_only"
+    risk_description: Optional[str] = None
+    acceptable_position: Optional[str] = None
+    unacceptable_signals: Optional[List[str]] = None
+    acceptable_signals: Optional[List[str]] = None
+    clause_context: Optional[str] = None
+
     class Config:
         from_attributes = True
 
@@ -415,6 +436,13 @@ async def fork_playbook(
             category=rule.category,
             subcategory=rule.subcategory,
             tags=rule.tags,
+            # P2 #29: Copy AI-primary detection fields
+            detection_mode=rule.detection_mode,
+            risk_description=rule.risk_description,
+            acceptable_position=rule.acceptable_position,
+            unacceptable_signals=rule.unacceptable_signals,
+            acceptable_signals=rule.acceptable_signals,
+            clause_context=rule.clause_context,
         )
         db.add(new_rule)
         await db.flush()
@@ -646,6 +674,12 @@ async def get_playbook(
                 match_type=r.detection_patterns.get("match_type", "exact") if isinstance(r.detection_patterns, dict) else "exact",
                 suggested_language=r.suggested_language.get("text") if r.suggested_language else None,
                 order_index=r.order_index,
+                detection_mode=r.detection_mode or "keywords_only",
+                risk_description=r.risk_description,
+                acceptable_position=r.acceptable_position,
+                unacceptable_signals=r.unacceptable_signals,
+                acceptable_signals=r.acceptable_signals,
+                clause_context=r.clause_context,
             )
             for r in sorted_rules
         ],
@@ -833,14 +867,21 @@ async def add_rule(
         detection_patterns={"patterns": rule_data.detection_patterns, "match_type": rule_data.match_type},
         suggested_language={"text": rule_data.suggested_language} if rule_data.suggested_language else None,
         order_index=max_order + 1,
+        # P2 #29: AI-primary detection fields
+        detection_mode=rule_data.detection_mode,
+        risk_description=rule_data.risk_description,
+        acceptable_position=rule_data.acceptable_position,
+        unacceptable_signals=rule_data.unacceptable_signals,
+        acceptable_signals=rule_data.acceptable_signals,
+        clause_context=rule_data.clause_context,
     )
-    
+
     db.add(rule)
     playbook.version += 1
-    
+
     await db.commit()
     await db.refresh(rule)
-    
+
     return RuleResponse(
         id=str(rule.id),
         clause_type=rule.clause_type,
@@ -852,6 +893,12 @@ async def add_rule(
         match_type=rule_data.match_type,
         suggested_language=rule_data.suggested_language,
         order_index=rule.order_index,
+        detection_mode=rule.detection_mode,
+        risk_description=rule.risk_description,
+        acceptable_position=rule.acceptable_position,
+        unacceptable_signals=rule.unacceptable_signals,
+        acceptable_signals=rule.acceptable_signals,
+        clause_context=rule.clause_context,
     )
 
 
@@ -907,12 +954,25 @@ async def update_rule(
         rule.detection_patterns = {"patterns": update_data.detection_patterns, "match_type": update_data.match_type or existing_match_type}
     if update_data.suggested_language is not None:
         rule.suggested_language = {"text": update_data.suggested_language}
-    
+    # P2 #29: AI-primary detection fields
+    if update_data.detection_mode is not None:
+        rule.detection_mode = update_data.detection_mode
+    if update_data.risk_description is not None:
+        rule.risk_description = update_data.risk_description
+    if update_data.acceptable_position is not None:
+        rule.acceptable_position = update_data.acceptable_position
+    if update_data.unacceptable_signals is not None:
+        rule.unacceptable_signals = update_data.unacceptable_signals
+    if update_data.acceptable_signals is not None:
+        rule.acceptable_signals = update_data.acceptable_signals
+    if update_data.clause_context is not None:
+        rule.clause_context = update_data.clause_context
+
     playbook.version += 1
-    
+
     await db.commit()
     await db.refresh(rule)
-    
+
     return RuleResponse(
         id=str(rule.id),
         clause_type=rule.clause_type,
@@ -924,6 +984,12 @@ async def update_rule(
         match_type=rule.detection_patterns.get("match_type", "exact") if isinstance(rule.detection_patterns, dict) else "exact",
         suggested_language=rule.suggested_language.get("text") if rule.suggested_language else None,
         order_index=rule.order_index,
+        detection_mode=rule.detection_mode or "keywords_only",
+        risk_description=rule.risk_description,
+        acceptable_position=rule.acceptable_position,
+        unacceptable_signals=rule.unacceptable_signals,
+        acceptable_signals=rule.acceptable_signals,
+        clause_context=rule.clause_context,
     )
 
 
@@ -1010,6 +1076,12 @@ async def reorder_rules(
             match_type=r.detection_patterns.get("match_type", "exact") if isinstance(r.detection_patterns, dict) else "exact",
             suggested_language=r.suggested_language.get("text") if r.suggested_language else None,
             order_index=r.order_index,
+            detection_mode=r.detection_mode or "keywords_only",
+            risk_description=r.risk_description,
+            acceptable_position=r.acceptable_position,
+            unacceptable_signals=r.unacceptable_signals,
+            acceptable_signals=r.acceptable_signals,
+            clause_context=r.clause_context,
         )
         for r in sorted_rules
     ]

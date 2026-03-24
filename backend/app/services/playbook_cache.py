@@ -91,6 +91,12 @@ def get_cached_rules_dicts(
             d["is_deal_breaker"] = rule.is_deal_breaker
         if include_verification:
             d["verification_prompt"] = rule.verification_prompt or ""
+        d["detection_mode"] = rule.detection_mode or "keywords_only"
+        d["risk_description"] = rule.risk_description or ""
+        d["acceptable_position"] = rule.acceptable_position or ""
+        d["unacceptable_signals"] = rule.unacceptable_signals or []
+        d["acceptable_signals"] = rule.acceptable_signals or []
+        d["clause_context"] = rule.clause_context or ""
         rules.append(d)
 
     _rules_dict_cache[key] = rules

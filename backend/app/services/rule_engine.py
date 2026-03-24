@@ -77,6 +77,7 @@ class SmartRule(RulePattern):
       - context_window: characters around match to check for negative patterns (default 500)
       - escalation_conditions: regex patterns that, if found in context, raise risk one level
       - de_escalation_conditions: regex patterns that, if found in context, lower risk one level
+      - detection_mode: 'keywords_only' | 'ai_with_keywords' | 'ai_only' (P2 #29)
 
     Backward-compatible: a SmartRule can be used anywhere a RulePattern is expected.
     """
@@ -84,6 +85,7 @@ class SmartRule(RulePattern):
     context_window: int = 500
     escalation_conditions: List[str] = field(default_factory=list)
     de_escalation_conditions: List[str] = field(default_factory=list)
+    detection_mode: str = "keywords_only"
 
 
 @dataclass
@@ -648,15 +650,18 @@ class RuleEngine:
     def from_playbook_rules(cls, playbook_rules: list) -> "RuleEngine":
         """
         Create a RuleEngine from PlaybookRule database objects.
-        
+
         Args:
             playbook_rules: List of PlaybookRule model instances
-            
+
         Returns:
             RuleEngine configured with the playbook's rules
         """
         rules = []
         for rule in playbook_rules:
+            # P2 #29: Determine detection mode
+            detection_mode = getattr(rule, 'detection_mode', None) or "keywords_only"
+
             # Parse detection patterns from JSONB
             raw_patterns = []
             match_type = "exact"  # Default to safe mode
@@ -664,31 +669,37 @@ class RuleEngine:
                 raw_patterns = rule.detection_patterns.get("patterns", [])
                 raw_patterns = raw_patterns if isinstance(raw_patterns, list) else []
                 match_type = rule.detection_patterns.get("match_type", "exact")
-            
-            # Convert patterns based on match_type
-            safe_patterns = []
-            for pattern in raw_patterns:
-                if not pattern:
-                    continue
-                try:
-                    if match_type == "exact":
-                        # Escape special regex characters for non-regex users
-                        safe_patterns.append(r"\b" + re.escape(pattern) + r"\b")
-                    elif match_type == "fuzzy":
-                        # Word boundary matching without full regex
-                        safe_patterns.append(r"\b" + re.escape(pattern))
-                    else:  # regex - use as-is but validate (with ReDoS protection)
-                        _safe_compile_regex(pattern)
-                        safe_patterns.append(pattern)
-                except (re.error, ValueError) as e:
-                    # Skip invalid/unsafe regex patterns instead of crashing
-                    logger.warning("Invalid regex pattern '%s' in rule %s: %s", pattern, rule.id, e)
-                    continue
-            
-            # Skip rules with no valid patterns
-            if not safe_patterns:
+
+            # P2 #29: For ai_only rules, skip regex pattern compilation entirely.
+            # The rule will be detected purely by AI via the prompt context.
+            if detection_mode == "ai_only":
+                safe_patterns = []
+            else:
+                # Convert patterns based on match_type
+                safe_patterns = []
+                for pattern in raw_patterns:
+                    if not pattern:
+                        continue
+                    try:
+                        if match_type == "exact":
+                            # Escape special regex characters for non-regex users
+                            safe_patterns.append(r"\b" + re.escape(pattern) + r"\b")
+                        elif match_type == "fuzzy":
+                            # Word boundary matching without full regex
+                            safe_patterns.append(r"\b" + re.escape(pattern))
+                        else:  # regex - use as-is but validate (with ReDoS protection)
+                            _safe_compile_regex(pattern)
+                            safe_patterns.append(pattern)
+                    except (re.error, ValueError) as e:
+                        # Skip invalid/unsafe regex patterns instead of crashing
+                        logger.warning("Invalid regex pattern '%s' in rule %s: %s", pattern, rule.id, e)
+                        continue
+
+            # Skip rules with no valid patterns UNLESS detection_mode is ai_only
+            # (ai_only rules have no patterns — they rely entirely on AI)
+            if not safe_patterns and detection_mode != "ai_only":
                 continue
-            
+
             # Map risk level
             risk_map = {
                 "red": RiskLevel.RED,
@@ -696,12 +707,12 @@ class RuleEngine:
                 "green": RiskLevel.GREEN,
             }
             risk_level = risk_map.get(rule.risk_level.value.lower(), RiskLevel.YELLOW)
-            
+
             # Get suggested language
             suggested_text = None
             if rule.suggested_language:
                 suggested_text = rule.suggested_language.get("text")
-            
+
             # Phase 4: Create SmartRule with escalation/de-escalation from detection_patterns
             negative_pats = []
             escalation_pats = []
@@ -716,7 +727,8 @@ class RuleEngine:
                 deescalation_pats = deescalation_pats if isinstance(deescalation_pats, list) else []
                 context_win = rule.detection_patterns.get("context_window", 500)
 
-            if negative_pats or escalation_pats or deescalation_pats:
+            # P2 #29: Always create SmartRule to store detection_mode
+            if negative_pats or escalation_pats or deescalation_pats or detection_mode != "keywords_only":
                 rules.append(SmartRule(
                     id=str(rule.id),
                     name=rule.clause_type,
@@ -730,6 +742,7 @@ class RuleEngine:
                     context_window=context_win,
                     escalation_conditions=escalation_pats,
                     de_escalation_conditions=deescalation_pats,
+                    detection_mode=detection_mode,
                 ))
             else:
                 rules.append(RulePattern(

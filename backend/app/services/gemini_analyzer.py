@@ -184,12 +184,7 @@ class GeminiAnalyzer:
         return self._enabled
 
     def format_playbook_rules(self, playbook_rules: List[Dict]) -> str:
-        """
-        Format playbook rules into structured text for Gemini.
-
-        Converts DB rules into:
-        - Rule: Name | Risk: LEVEL | Position: Description
-        """
+        """Format playbook rules into structured text for Gemini, branching on detection_mode."""
         if not playbook_rules:
             return "No specific playbook rules provided. Apply standard commercial contract best practices."
 
@@ -201,15 +196,36 @@ class GeminiAnalyzer:
             fallback = rule.get('fallback_position', '')
             deal_breaker = rule.get('is_deal_breaker', False)
             verification = rule.get('verification_prompt', '')
+            detection_mode = rule.get('detection_mode', 'keywords_only')
+            risk_description = rule.get('risk_description', '')
+            acceptable_pos = rule.get('acceptable_position', '')
+            unacceptable = rule.get('unacceptable_signals', [])
+            acceptable = rule.get('acceptable_signals', [])
+            clause_context = rule.get('clause_context', '')
 
             line = f"Rule #{i}: {name} | Risk: {risk}"
             if deal_breaker:
                 line += " | DEAL-BREAKER (must flag if violated)"
+
+            # AI-primary rules: inject natural language description
+            if detection_mode in ('ai_only', 'ai_with_keywords') and risk_description:
+                line += f"\n  RISK TO DETECT: {risk_description}"
+                if clause_context:
+                    line += f"\n  CONTEXT: {clause_context}"
+                if unacceptable:
+                    line += f"\n  RED FLAGS: {', '.join(unacceptable)}"
+                if acceptable:
+                    line += f"\n  SAFE SIGNALS: {', '.join(acceptable)}"
+                if acceptable_pos:
+                    line += f"\n  ACCEPTABLE IF: {acceptable_pos}"
+
+            # Position info (always included)
             line += f"\n  Position: {position}"
             if fallback:
                 line += f"\n  Fallback: {fallback}"
             if verification:
                 line += f"\n  Check: {verification}"
+
             lines.append(line)
 
         return "\n".join(lines)
