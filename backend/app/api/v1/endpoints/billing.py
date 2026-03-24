@@ -341,7 +341,7 @@ async def get_subscription(
 
 
 @router.get("/plans", response_model=List[PlanInfo])
-async def list_plans():
+async def list_plans(current_user: User = Depends(get_current_user)):
     """List all available subscription plans with pricing."""
     plans = []
     for plan_id, info in PLAN_CATALOG.items():

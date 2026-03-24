@@ -13,7 +13,8 @@ import json
 import logging
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Optional, List
+import time
+from typing import Dict, Optional, List
 from fastapi import APIRouter, Body, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -58,6 +59,46 @@ limiter = Limiter(key_func=get_remote_address)
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
+
+# ---------------------------------------------------------------------------
+# MFA per-token attempt limiting (#44)
+# ---------------------------------------------------------------------------
+
+_mfa_attempts: Dict[str, int] = {}
+_mfa_attempt_timestamps: Dict[str, float] = {}
+_MFA_MAX_ATTEMPTS = 5
+
+
+def _check_mfa_attempts(jti: str) -> None:
+    """Check if MFA token has exceeded max attempts. Raises 429 if exceeded."""
+    attempts = _mfa_attempts.get(jti, 0)
+    if attempts >= _MFA_MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many MFA attempts. Please log in again to get a new challenge.",
+        )
+
+
+def _record_mfa_attempt(jti: str) -> int:
+    """Record a failed MFA attempt. Returns total attempts."""
+    _mfa_attempts[jti] = _mfa_attempts.get(jti, 0) + 1
+    _mfa_attempt_timestamps[jti] = time.time()
+    return _mfa_attempts[jti]
+
+
+def _clear_mfa_attempts(jti: str) -> None:
+    """Clear MFA attempts on success."""
+    _mfa_attempts.pop(jti, None)
+    _mfa_attempt_timestamps.pop(jti, None)
+
+
+def _cleanup_old_mfa_attempts() -> None:
+    """Remove MFA attempt records older than 10 minutes."""
+    cutoff = time.time() - 600
+    expired = [jti for jti, ts in _mfa_attempt_timestamps.items() if ts < cutoff]
+    for jti in expired:
+        _mfa_attempts.pop(jti, None)
+        _mfa_attempt_timestamps.pop(jti, None)
 
 
 def _get_client_ip(request: Request) -> Optional[str]:
@@ -672,6 +713,9 @@ async def mfa_challenge(
     sends it here along with the 6-digit TOTP code (or backup code).
     On success, returns full access + refresh tokens.
     """
+    # Cleanup stale MFA attempt records
+    _cleanup_old_mfa_attempts()
+
     # Decode the MFA challenge token (must be type "mfa_challenge", NOT "access")
     token_data = decode_token(data.mfa_challenge_token, expected_type="mfa_challenge")
     if token_data is None:
@@ -679,6 +723,9 @@ async def mfa_challenge(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired MFA challenge token. Please log in again.",
         )
+
+    # Check per-token attempt limit
+    _check_mfa_attempts(token_data.jti)
 
     # Fetch user
     result = await db.execute(select(User).where(User.id == token_data.user_id))
@@ -700,6 +747,7 @@ async def mfa_challenge(
     valid = await verify_mfa(user, data.code, db)
 
     if not valid:
+        remaining = _MFA_MAX_ATTEMPTS - _record_mfa_attempt(token_data.jti)
         await log_audit_event(
             db, user=user, action="mfa_verify_failed", resource_type="auth",
             resource_name=user.email, status="failure",
@@ -709,10 +757,11 @@ async def mfa_challenge(
         await db.commit()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid MFA code",
+            detail=f"Invalid MFA code. {remaining} attempts remaining.",
         )
 
-    # MFA verified — complete login
+    # MFA verified — clear attempt tracking and complete login
+    _clear_mfa_attempts(token_data.jti)
     user.last_login = datetime.now(timezone.utc)
     client_ip = _get_client_ip(request)
 
