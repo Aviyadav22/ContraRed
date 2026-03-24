@@ -467,6 +467,7 @@ Office.onReady((info) => {
     // Negotiation mode buttons (Phase 8.4)
     document.getElementById('negotiationBtn')?.addEventListener('click', toggleNegotiationMode);
     document.getElementById('exitNegotiationBtn')?.addEventListener('click', toggleNegotiationMode);
+    document.getElementById('exportNegotiationBtn')?.addEventListener('click', exportNegotiationDecisions);
 
   } else {
     if (statusText()) statusText()!.textContent = 'Not running in Word';
@@ -1324,6 +1325,137 @@ function recordNegotiationDecision(riskId: string, decision: 'accept' | 'counter
   if (existing >= 0) negotiationSession.decisions[existing] = entry;
   else negotiationSession.decisions.push(entry);
   saveNegotiationSession();
+}
+
+// ============================================================================
+// Negotiation Export (Phase 8.5)
+// ============================================================================
+
+/** Export negotiation decisions as a downloadable HTML report. */
+async function exportNegotiationDecisions(): Promise<void> {
+  if (!negotiationSession || !currentAIAnalysis) {
+    showNotification('No negotiation session to export', 'warning');
+    return;
+  }
+
+  const decisions = negotiationSession.decisions;
+  const redlines = currentAIAnalysis.redlines || [];
+
+  // Build report content
+  const now = new Date();
+  const elapsed = Math.floor((Date.now() - negotiationSession.started_at) / 1000);
+  const elapsedStr = elapsed >= 60
+    ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s`
+    : `${elapsed}s`;
+
+  let reportHtml = `
+    <h1 style="font-family:Calibri;font-size:20pt;color:#1E293B;">ContraRed Negotiation Report</h1>
+    <p style="font-family:Calibri;font-size:11pt;color:#64748B;">
+      Generated: ${now.toLocaleDateString()} ${now.toLocaleTimeString()}<br/>
+      Negotiation Duration: ${elapsedStr}<br/>
+      Document: ${escapeHtml(negotiationSession.document_name || 'Untitled')}
+    </p>
+    <hr/>
+  `;
+
+  // Summary counts
+  let accepted = 0, countered = 0, escalated = 0, undecided = 0;
+
+  redlines.forEach(r => {
+    const dec = decisions.find(d => d.risk_id === r.id);
+    if (dec?.decision === 'accept') accepted++;
+    else if (dec?.decision === 'counter') countered++;
+    else if (dec?.decision === 'escalate') escalated++;
+    else undecided++;
+  });
+
+  reportHtml += `
+    <h2 style="font-family:Calibri;font-size:14pt;">Summary</h2>
+    <table style="border-collapse:collapse;width:100%;font-family:Calibri;font-size:11pt;">
+      <tr>
+        <td style="padding:6px 12px;background:#DCFCE7;border:1px solid #ddd;"><strong>Accepted</strong></td>
+        <td style="padding:6px 12px;border:1px solid #ddd;text-align:center;">${accepted}</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 12px;background:#FEF3C7;border:1px solid #ddd;"><strong>Counter-proposed</strong></td>
+        <td style="padding:6px 12px;border:1px solid #ddd;text-align:center;">${countered}</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 12px;background:#FEE2E2;border:1px solid #ddd;"><strong>Escalated</strong></td>
+        <td style="padding:6px 12px;border:1px solid #ddd;text-align:center;">${escalated}</td>
+      </tr>
+      <tr>
+        <td style="padding:6px 12px;background:#F1F5F9;border:1px solid #ddd;"><strong>Undecided</strong></td>
+        <td style="padding:6px 12px;border:1px solid #ddd;text-align:center;">${undecided}</td>
+      </tr>
+    </table>
+  `;
+
+  // Detailed decisions table
+  reportHtml += `
+    <h2 style="font-family:Calibri;font-size:14pt;margin-top:20px;">Detailed Decisions</h2>
+    <table style="border-collapse:collapse;width:100%;font-family:Calibri;font-size:10pt;">
+      <tr style="background:#1E293B;color:#fff;">
+        <th style="padding:8px;border:1px solid #ddd;text-align:left;">Clause</th>
+        <th style="padding:8px;border:1px solid #ddd;text-align:center;">Risk</th>
+        <th style="padding:8px;border:1px solid #ddd;text-align:center;">Decision</th>
+        <th style="padding:8px;border:1px solid #ddd;text-align:left;">AI Recommendation</th>
+      </tr>
+  `;
+
+  redlines.forEach(r => {
+    const dec = decisions.find(d => d.risk_id === r.id);
+    const decision = dec?.decision || 'undecided';
+    const riskColor = r.risk_level === 'RED' ? '#FEE2E2' : r.risk_level === 'YELLOW' ? '#FEF3C7' : '#DCFCE7';
+    const decisionColor = decision === 'accept' ? '#166534' : decision === 'counter' ? '#92400E' : decision === 'escalate' ? '#B91C1C' : '#64748B';
+    const decisionLabel = decision.charAt(0).toUpperCase() + decision.slice(1);
+
+    reportHtml += `
+      <tr>
+        <td style="padding:6px 8px;border:1px solid #ddd;">${escapeHtml(r.rule_name || 'Unknown')}</td>
+        <td style="padding:6px 8px;border:1px solid #ddd;text-align:center;background:${riskColor};">${r.risk_level || 'N/A'}</td>
+        <td style="padding:6px 8px;border:1px solid #ddd;text-align:center;color:${decisionColor};font-weight:bold;">${decisionLabel}</td>
+        <td style="padding:6px 8px;border:1px solid #ddd;font-size:9pt;">${escapeHtml((r.recommendation || r.explanation || '').substring(0, 200))}</td>
+      </tr>
+    `;
+  });
+
+  reportHtml += '</table>';
+
+  // Add notes if any
+  const notes = negotiationSession.notes || '';
+  if (notes.trim()) {
+    reportHtml += `
+      <h2 style="font-family:Calibri;font-size:14pt;margin-top:20px;">Notes</h2>
+      <p style="font-family:Calibri;font-size:11pt;white-space:pre-wrap;">${escapeHtml(notes)}</p>
+    `;
+  }
+
+  reportHtml += `
+    <hr/>
+    <p style="font-family:Calibri;font-size:9pt;color:#94A3B8;margin-top:20px;">
+      Generated by ContraRed AI Contract Review<br/>
+      This report is for internal use only and does not constitute legal advice.
+    </p>
+  `;
+
+  // Download as HTML file
+  const blob = new Blob([`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>ContraRed Negotiation Report</title></head>
+<body style="max-width:800px;margin:40px auto;padding:20px;">
+${reportHtml}
+</body></html>`], { type: 'text/html' });
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `ContraRed_Negotiation_${now.toISOString().slice(0, 10)}.html`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  showNotification('Negotiation report exported', 'info');
 }
 
 // ============================================================================
