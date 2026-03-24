@@ -69,6 +69,206 @@ const TABS = [
 const inputClass = "w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-900 outline-none bg-white focus:ring-2 focus:ring-slate-900 focus:border-transparent";
 const labelClass = "block text-[13px] font-semibold text-slate-700 mb-1.5";
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Structured Editors (replace raw JSON inputs)
+// ══════════════════════════════════════════════════════════════════════════════
+
+function ConditionValueEditor({ conditionType, value, onChange }: {
+  conditionType: string;
+  value: string;
+  onChange: (val: string) => void;
+}) {
+  let parsed: Record<string, any> = {};
+  try { parsed = JSON.parse(value); } catch { parsed = {}; }
+
+  const updateField = (field: string, val: any) => {
+    const updated = { ...parsed, [field]: val };
+    onChange(JSON.stringify(updated));
+  };
+
+  switch (conditionType) {
+    case 'counterparty_type':
+      return (
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-700">Counterparty Type</label>
+          <select
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            value={parsed.value || ''}
+            onChange={e => updateField('value', e.target.value)}
+          >
+            <option value="">Select type...</option>
+            <option value="enterprise">Enterprise</option>
+            <option value="fortune_500">Fortune 500</option>
+            <option value="startup">Startup</option>
+            <option value="government">Government</option>
+            <option value="non_profit">Non-Profit</option>
+            <option value="individual">Individual</option>
+          </select>
+        </div>
+      );
+
+    case 'deal_size':
+      return (
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-700">Deal Size Range</label>
+          <div className="flex gap-2 items-center">
+            <input
+              type="number"
+              placeholder="Min ($)"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              value={parsed.min || ''}
+              onChange={e => updateField('min', Number(e.target.value) || 0)}
+            />
+            <span className="text-gray-500">to</span>
+            <input
+              type="number"
+              placeholder="Max ($)"
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              value={parsed.max || ''}
+              onChange={e => updateField('max', Number(e.target.value) || 0)}
+            />
+          </div>
+        </div>
+      );
+
+    case 'jurisdiction':
+      return (
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-700">Jurisdiction</label>
+          <select
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            value={parsed.value || ''}
+            onChange={e => updateField('value', e.target.value)}
+          >
+            <option value="">Select jurisdiction...</option>
+            <option value="IN">India</option>
+            <option value="DE-US">Delaware, USA</option>
+            <option value="NY-US">New York, USA</option>
+            <option value="CA-US">California, USA</option>
+            <option value="GB-EW">England & Wales</option>
+            <option value="SG">Singapore</option>
+            <option value="AE-DIFC">UAE - DIFC</option>
+            <option value="AE">UAE - Onshore</option>
+            <option value="DE">Germany</option>
+            <option value="FR">France</option>
+            <option value="HK">Hong Kong</option>
+            <option value="AU">Australia</option>
+            <option value="JP">Japan</option>
+          </select>
+        </div>
+      );
+
+    case 'contract_side':
+      return (
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-700">Contract Side</label>
+          <select
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            value={parsed.value || ''}
+            onChange={e => updateField('value', e.target.value)}
+          >
+            <option value="">Select side...</option>
+            <option value="buyer">Buyer / Client</option>
+            <option value="seller">Seller / Vendor</option>
+          </select>
+        </div>
+      );
+
+    case 'custom':
+    default:
+      return (
+        <div className="space-y-2">
+          <label className="block text-sm font-medium text-gray-700">Custom Value (JSON)</label>
+          <textarea
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono"
+            rows={3}
+            value={value}
+            onChange={e => onChange(e.target.value)}
+            placeholder='{"key": "value"}'
+          />
+        </div>
+      );
+  }
+}
+
+function DependencyParamsEditor({ effect, value, onChange }: {
+  effect: string;
+  value: string;
+  onChange: (val: string) => void;
+}) {
+  let parsed: Record<string, any> = {};
+  try { parsed = JSON.parse(value); } catch { parsed = {}; }
+
+  const updateField = (field: string, val: any) => {
+    const updated = { ...parsed, [field]: val };
+    onChange(JSON.stringify(updated));
+  };
+
+  // Suppress unused variable warning — effect reserved for future per-effect layouts
+  void effect;
+
+  return (
+    <div className="space-y-3">
+      <div>
+        <label className="block text-sm font-medium text-gray-700">Override Risk Level</label>
+        <select
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          value={parsed.risk_level || ''}
+          onChange={e => updateField('risk_level', e.target.value)}
+        >
+          <option value="">No change</option>
+          <option value="red">Critical (Red)</option>
+          <option value="yellow">Warning (Yellow)</option>
+          <option value="green">Safe (Green)</option>
+        </select>
+      </div>
+      <div>
+        <label className="block text-sm font-medium text-gray-700">Override Position Text</label>
+        <textarea
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          rows={2}
+          value={parsed.position_text || ''}
+          onChange={e => updateField('position_text', e.target.value)}
+          placeholder="Override negotiation position..."
+        />
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id="dep-suppress"
+          checked={parsed.suppress || false}
+          onChange={e => updateField('suppress', e.target.checked)}
+          className="rounded border-gray-300"
+        />
+        <label htmlFor="dep-suppress" className="text-sm text-gray-700">Suppress this rule when dependency triggers</label>
+      </div>
+    </div>
+  );
+}
+
+function ConditionPreview({ condition }: { condition: { condition_type: string; operator: string; condition_value: string } }) {
+  let parsed: Record<string, any> = {};
+  try { parsed = JSON.parse(condition.condition_value); } catch { return null; }
+
+  const typeLabel: Record<string, string> = {
+    counterparty_type: 'Counterparty',
+    deal_size: 'Deal size',
+    jurisdiction: 'Jurisdiction',
+    contract_side: 'Contract side',
+    custom: 'Custom',
+  };
+
+  const type = typeLabel[condition.condition_type] || condition.condition_type;
+  const op = condition.operator;
+  const val = parsed.value || (parsed.min && parsed.max ? `$${parsed.min.toLocaleString()} - $${parsed.max.toLocaleString()}` : JSON.stringify(parsed));
+
+  return (
+    <p className="text-xs text-indigo-600 mt-1 italic">
+      When {type} {op} {val}
+    </p>
+  );
+}
+
 export default function PlaybookEditor() {
     const { id } = useParams<{ id: string }>();
     const navigate = useNavigate();
@@ -613,9 +813,21 @@ export default function PlaybookEditor() {
                                 onChange={(e) => setNewCondition(prev => ({ ...prev, operator: e.target.value }))}
                                 className={inputClass}
                             >
-                                {OPERATORS.map(op => (
-                                    <option key={op.value} value={op.value}>{op.label}</option>
-                                ))}
+                                {newCondition.condition_type === 'deal_size' ? (
+                                    <>
+                                        <option value="between">Between</option>
+                                        <option value="greater_than">Greater than</option>
+                                        <option value="less_than">Less than</option>
+                                        <option value="equals">Equals</option>
+                                    </>
+                                ) : (
+                                    <>
+                                        <option value="equals">Equals</option>
+                                        <option value="not_equals">Not equals</option>
+                                        <option value="in">In (any of)</option>
+                                        <option value="contains">Contains</option>
+                                    </>
+                                )}
                             </select>
                         </div>
                         <div>
@@ -629,13 +841,12 @@ export default function PlaybookEditor() {
                             />
                         </div>
                         <div className="md:col-span-2">
-                            <label className={labelClass}>Condition Value (JSON)</label>
-                            <textarea
+                            <ConditionValueEditor
+                                conditionType={newCondition.condition_type}
                                 value={newCondition.condition_value}
-                                onChange={(e) => setNewCondition(prev => ({ ...prev, condition_value: e.target.value }))}
-                                className={`${inputClass} min-h-[80px] font-mono text-xs`}
-                                placeholder='{"values": ["enterprise", "government"]}'
+                                onChange={(val) => setNewCondition(prev => ({ ...prev, condition_value: val }))}
                             />
+                            <ConditionPreview condition={newCondition} />
                         </div>
                         <div className="md:col-span-2">
                             <label className={labelClass}>Description</label>
@@ -892,12 +1103,11 @@ export default function PlaybookEditor() {
                             </select>
                         </div>
                         <div className="md:col-span-2">
-                            <label className={labelClass}>Effect Parameters (JSON)</label>
-                            <textarea
+                            <label className={labelClass}>Effect Parameters</label>
+                            <DependencyParamsEditor
+                                effect={newDep.effect}
                                 value={newDep.effect_params}
-                                onChange={(e) => setNewDep(prev => ({ ...prev, effect_params: e.target.value }))}
-                                className={`${inputClass} min-h-[80px] font-mono text-xs`}
-                                placeholder='{"new_risk_level": "red"}'
+                                onChange={(val) => setNewDep(prev => ({ ...prev, effect_params: val }))}
                             />
                         </div>
                     </div>
