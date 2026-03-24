@@ -4,6 +4,7 @@ Full CRUD for playbooks, rules, tiers, conditions, dependencies, versions, marke
 """
 
 from typing import List, Optional, Any
+import uuid
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field, field_validator
@@ -394,7 +395,8 @@ async def fork_playbook(
     db.add(new_pb)
     await db.flush()
 
-    # Copy rules and tiers
+    # Copy rules and tiers, building a map of old rule IDs to new rule IDs
+    rule_id_map = {}  # str(old_rule_id) -> str(new_rule_id)
     for rule in (source.rules_list or []):
         new_rule = PlaybookRule(
             playbook_id=new_pb.id,
@@ -412,6 +414,7 @@ async def fork_playbook(
         )
         db.add(new_rule)
         await db.flush()
+        rule_id_map[str(rule.id)] = str(new_rule.id)
 
         for tier in (rule.tiers or []):
             new_tier = PlaybookRuleTier(
@@ -422,6 +425,63 @@ async def fork_playbook(
                 risk_level_at_tier=tier.risk_level_at_tier,
             )
             db.add(new_tier)
+
+    # Copy conditions and their overrides
+    old_conditions = await db.execute(
+        select(PlaybookCondition).where(PlaybookCondition.playbook_id == source.id)
+    )
+    for old_cond in old_conditions.scalars().all():
+        new_cond = PlaybookCondition(
+            id=uuid.uuid4(),
+            playbook_id=new_pb.id,
+            condition_type=old_cond.condition_type,
+            operator=old_cond.operator,
+            condition_value=old_cond.condition_value,
+            priority=old_cond.priority,
+            is_active=old_cond.is_active,
+        )
+        db.add(new_cond)
+        await db.flush()
+
+        # Copy overrides for this condition, remapping rule_ids
+        old_overrides = await db.execute(
+            select(PlaybookRuleOverride).where(PlaybookRuleOverride.condition_id == old_cond.id)
+        )
+        for old_ov in old_overrides.scalars().all():
+            new_rule_id = rule_id_map.get(str(old_ov.rule_id))
+            if new_rule_id:
+                new_ov = PlaybookRuleOverride(
+                    id=uuid.uuid4(),
+                    condition_id=new_cond.id,
+                    rule_id=uuid.UUID(new_rule_id),
+                    override_risk_level=old_ov.override_risk_level,
+                    override_position_text=old_ov.override_position_text,
+                    override_is_deal_breaker=old_ov.override_is_deal_breaker,
+                    override_tier_level=old_ov.override_tier_level,
+                    suppress_rule=old_ov.suppress_rule,
+                )
+                db.add(new_ov)
+
+    # Copy dependencies, remapping rule_ids
+    if rule_id_map:
+        old_deps = await db.execute(
+            select(PlaybookRuleDependency).where(
+                PlaybookRuleDependency.source_rule_id.in_([uuid.UUID(k) for k in rule_id_map.keys()])
+            )
+        )
+        for old_dep in old_deps.scalars().all():
+            new_source = rule_id_map.get(str(old_dep.source_rule_id))
+            new_target = rule_id_map.get(str(old_dep.target_rule_id))
+            if new_source and new_target:
+                new_dep = PlaybookRuleDependency(
+                    id=uuid.uuid4(),
+                    source_rule_id=uuid.UUID(new_source),
+                    target_rule_id=uuid.UUID(new_target),
+                    trigger_condition=old_dep.trigger_condition,
+                    effect=old_dep.effect,
+                    effect_params=old_dep.effect_params,
+                )
+                db.add(new_dep)
 
     # Increment download count
     mp.download_count = (mp.download_count or 0) + 1
