@@ -69,6 +69,14 @@ class PlaybookRule(Base):
     subcategory: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     tags: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=list)
 
+    # P2 #29: AI-primary detection
+    detection_mode: Mapped[str] = mapped_column(String(30), default="keywords_only")
+    risk_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    acceptable_position: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    unacceptable_signals: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    acceptable_signals: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+    clause_context: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
     playbook: Mapped["Playbook"] = relationship("Playbook", back_populates="rules_list")
     tiers: Mapped[List["PlaybookRuleTier"]] = relationship("PlaybookRuleTier", back_populates="rule", cascade="all, delete-orphan")
     overrides: Mapped[List["PlaybookRuleOverride"]] = relationship("PlaybookRuleOverride", back_populates="rule", cascade="all, delete-orphan")
