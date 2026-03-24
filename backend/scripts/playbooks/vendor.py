@@ -1,17 +1,28 @@
 """Vendor / Procurement Agreement — Default playbook."""
 import uuid
 
-def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False, ai_verify=True, prompt=None, order=0):
+def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False,
+       ai_verify=True, prompt=None, order=0,
+       detection_mode="keywords_only", risk_description=None,
+       acceptable_position=None, unacceptable_signals=None,
+       acceptable_signals=None, clause_context=None):
     sl = {"preferred": primary}
     if fallback:
         sl["fallback"] = fallback
-    return {
+    d = {
         "id": str(uuid.uuid4()), "clause_type": clause_type, "primary_position": primary,
         "fallback_position": fallback, "risk_level": risk, "is_deal_breaker": deal_breaker,
         "detection_patterns": {"match_type": "regex", "patterns": patterns},
         "suggested_language": sl, "requires_ai_verification": ai_verify,
         "verification_prompt": prompt, "order_index": order,
     }
+    d["detection_mode"] = detection_mode
+    d["risk_description"] = risk_description
+    d["acceptable_position"] = acceptable_position
+    d["unacceptable_signals"] = unacceptable_signals or []
+    d["acceptable_signals"] = acceptable_signals or []
+    d["clause_context"] = clause_context
+    return d
 
 VENDOR = {
     "name": "Vendor / Procurement Agreement",
@@ -31,7 +42,12 @@ VENDOR = {
            [r"(?i)\b(acceptance\s+(criteria|testing|process))\b", r"(?i)\b(inspection\s+period)\b",
             r"(?i)\b(reject(ion)?\s+(process|right|notice))\b"],
            "Buyer shall have fifteen (15) business days from delivery to inspect and accept or reject the goods/services. Rejection must be communicated in writing with reasons. Vendor shall remedy defects within ten (10) business days of rejection notice at no additional cost.",
-           prompt="Check if acceptance/rejection process is defined. Flag if missing.", order=1),
+           prompt="Check if acceptance/rejection process is defined. Flag if missing.", order=1,
+           detection_mode="ai_with_keywords",
+           risk_description="No defined acceptance/rejection process or timeline",
+           unacceptable_signals=["deemed accepted upon delivery", "no rejection right", "no inspection period"],
+           acceptable_signals=["inspection period", "acceptance criteria defined", "right to reject non-conforming goods"],
+           acceptable_position="30-day inspection with defined criteria; right to reject non-conforming goods"),
         _r("payment_terms",
            "Payment terms should be milestone-based. Advance payment should not exceed 30%.",
            "yellow",
@@ -45,7 +61,12 @@ VENDOR = {
            [r"(?i)\b(warrant(y|ies))\b", r"(?i)\b(as[\s-]?is)\b",
             r"(?i)\b(no\s+warrant(y|ies))\b", r"(?i)\b(disclaim(s|ing)?\s+all\s+warrant(y|ies))\b"],
            "Vendor warrants that: (a) goods shall be free from defects in material and workmanship for twelve (12) months from acceptance; (b) goods shall conform to specifications in the Purchase Order; (c) services shall be performed in a professional manner. Vendor shall repair or replace defective goods at its expense.",
-           prompt="Check if express warranties exist. Flag 'as-is' or warranty disclaimers.", order=3),
+           prompt="Check if express warranties exist. Flag 'as-is' or warranty disclaimers.", order=3,
+           detection_mode="ai_with_keywords",
+           risk_description="Goods/services sold as-is with no express warranties",
+           unacceptable_signals=["as-is", "no warranties express or implied", "all warranties disclaimed"],
+           acceptable_signals=["warranty of merchantability", "fit for intended purpose", "12 months warranty period"],
+           acceptable_position="Express warranty: conforms to specs, free from defects, fit for purpose, 12-month warranty"),
         _r("limitation_of_liability",
            "Liability capped at contract value. Unlimited liability is a deal-breaker.",
            "red",
@@ -53,13 +74,23 @@ VENDOR = {
             r"(?i)\b(unlimited\s+liability)\b"],
            "Vendor's aggregate liability shall not exceed the total value of the relevant Purchase Order. Neither Party shall be liable for indirect or consequential damages, except for Vendor's indemnification obligations.",
            deal_breaker=True,
-           prompt="Check liability cap. Flag unlimited liability.", order=4),
+           prompt="Check liability cap. Flag unlimited liability.", order=4,
+           detection_mode="ai_with_keywords",
+           risk_description="Liability cap missing or set too low for potential damages from defects",
+           unacceptable_signals=["vendor liability limited to price of individual order", "as-is basis"],
+           acceptable_signals=["capped at total contract value", "capped at 12 months of fees"],
+           acceptable_position="Vendor liability capped at total contract value or 12 months fees"),
         _r("indemnification",
            "Vendor must indemnify for defective goods and IP infringement.",
            "red",
            [r"(?i)\b(indemnif(y|ication|ies))\b", r"(?i)\b(hold\s+harmless)\b"],
            "Vendor shall indemnify Buyer against: (a) third-party claims arising from defective goods/services; (b) claims of intellectual property infringement; (c) death or personal injury caused by Vendor's negligence.",
-           prompt="Check if vendor indemnifies for defects and IP infringement.", order=5),
+           prompt="Check if vendor indemnifies for defects and IP infringement.", order=5,
+           detection_mode="ai_with_keywords",
+           risk_description="Vendor does not indemnify for defective goods or IP infringement",
+           unacceptable_signals=["buyer assumes all risk", "no vendor indemnification", "vendor not liable for defects"],
+           acceptable_signals=["vendor indemnifies for defective goods", "IP infringement indemnification"],
+           acceptable_position="Vendor indemnifies for defective goods and third-party IP infringement"),
         _r("termination_non_performance",
            "Must have termination right for vendor non-performance with cure period.",
            "yellow",

@@ -1,17 +1,28 @@
 """Joint Venture / Partnership Agreement — Default playbook."""
 import uuid
 
-def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False, ai_verify=True, prompt=None, order=0):
+def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False,
+       ai_verify=True, prompt=None, order=0,
+       detection_mode="keywords_only", risk_description=None,
+       acceptable_position=None, unacceptable_signals=None,
+       acceptable_signals=None, clause_context=None):
     sl = {"preferred": primary}
     if fallback:
         sl["fallback"] = fallback
-    return {
+    d = {
         "id": str(uuid.uuid4()), "clause_type": clause_type, "primary_position": primary,
         "fallback_position": fallback, "risk_level": risk, "is_deal_breaker": deal_breaker,
         "detection_patterns": {"match_type": "regex", "patterns": patterns},
         "suggested_language": sl, "requires_ai_verification": ai_verify,
         "verification_prompt": prompt, "order_index": order,
     }
+    d["detection_mode"] = detection_mode
+    d["risk_description"] = risk_description
+    d["acceptable_position"] = acceptable_position
+    d["unacceptable_signals"] = unacceptable_signals or []
+    d["acceptable_signals"] = acceptable_signals or []
+    d["clause_context"] = clause_context
+    return d
 
 JOINT_VENTURE = {
     "name": "Joint Venture / Partnership Agreement",
@@ -26,7 +37,12 @@ JOINT_VENTURE = {
             r"(?i)\b(distribution\s+of\s+(profits?|income|revenue))\b"],
            "Profits and losses of the Joint Venture shall be shared between the Parties in proportion to their respective capital contributions, unless otherwise agreed in writing. Distributions shall be made quarterly after provision for working capital and reserves.",
            deal_breaker=True,
-           prompt="Check profit/loss sharing ratio. Flag if disproportionate to capital contribution or effort without justification.", order=0),
+           prompt="Check profit/loss sharing ratio. Flag if disproportionate to capital contribution or effort without justification.", order=0,
+           detection_mode="ai_with_keywords",
+           risk_description="Profit/loss distribution disproportionate to capital contribution or effort",
+           unacceptable_signals=["losses borne solely by", "disproportionate distribution", "profits at managing partner's discretion"],
+           acceptable_signals=["proportionate to capital contribution", "defined formula"],
+           acceptable_position="Sharing proportionate to capital contribution, with defined formula"),
         _r("governance_decision_making",
            "Governance must be balanced. Flag if one party has unilateral control over key decisions.",
            "red",
@@ -35,7 +51,12 @@ JOINT_VENTURE = {
             r"(?i)\b(unilateral\s+(control|decision|authority))\b"],
            "The JV shall be managed by a Management Committee with equal representation from each Party. Key decisions (capital expenditure >INR [X], new contracts >INR [Y], changes to business plan, admission of new partners) shall require unanimous consent.",
            deal_breaker=True,
-           prompt="Check governance structure. Flag if one party has unilateral decision-making power over key matters.", order=1),
+           prompt="Check governance structure. Flag if one party has unilateral decision-making power over key matters.", order=1,
+           detection_mode="ai_with_keywords",
+           risk_description="One party has unilateral control over JV decisions",
+           unacceptable_signals=["sole discretion of managing partner", "unilateral decision-making", "no minority protection"],
+           acceptable_signals=["unanimous consent for major decisions", "board representation proportionate to shareholding"],
+           acceptable_position="Proportionate board representation; major decisions require unanimous consent"),
         _r("capital_contribution",
            "Capital contributions must be clearly defined with timelines and consequences for default.",
            "yellow",
@@ -51,7 +72,12 @@ JOINT_VENTURE = {
             r"(?i)\b(ownership\s+of\s+(joint|shared)\s+IP)\b"],
            "IP created by the JV shall be jointly owned by the Parties in proportion to their equity shares. Each Party retains exclusive ownership of its pre-existing IP. Upon dissolution, JV IP shall be licensed non-exclusively to each Party for continued use.",
            deal_breaker=True,
-           prompt="Check JV IP ownership. Flag if one party takes all JV-created IP without fair allocation.", order=3),
+           prompt="Check JV IP ownership. Flag if one party takes all JV-created IP without fair allocation.", order=3,
+           detection_mode="ai_with_keywords",
+           risk_description="One party takes all JV-created IP regardless of contribution",
+           unacceptable_signals=["all JV IP belongs to Party A", "sole ownership regardless of contribution"],
+           acceptable_signals=["jointly owned IP", "IP allocated based on contribution"],
+           acceptable_position="JV-created IP jointly owned; allocation based on contribution for domain-specific work"),
         _r("non_compete_between_partners",
            "Non-compete between JV partners should be reasonable in scope and duration.",
            "yellow",
@@ -67,7 +93,12 @@ JOINT_VENTURE = {
             r"(?i)\b(right\s+of\s+first\s+refusal|ROFR)\b", r"(?i)\b(tag[\s-]?along|drag[\s-]?along)\b"],
            "A Party wishing to exit shall first offer its interest to the other Party at fair market value (Right of First Refusal). If not exercised within sixty (60) days, the exiting Party may sell to a third party on terms no more favorable than offered to the continuing Party. Tag-along and drag-along rights shall apply to third-party sales.",
            deal_breaker=True,
-           prompt="Check if exit/buy-out mechanism exists. Flag if missing — this is a deal-breaker.", order=5),
+           prompt="Check if exit/buy-out mechanism exists. Flag if missing — this is a deal-breaker.", order=5,
+           detection_mode="ai_with_keywords",
+           risk_description="No exit mechanism or buy-out formula defined",
+           unacceptable_signals=["no exit provision", "lock-in with no buyout", "no valuation mechanism"],
+           acceptable_signals=["buy-out at fair market value", "independent valuation", "shotgun clause"],
+           acceptable_position="Exit after 2-year lock-in at fair market value by independent valuer"),
         _r("deadlock_resolution",
            "Must have a deadlock resolution mechanism. Prefer arbitration or expert determination.",
            "yellow",
@@ -75,7 +106,12 @@ JOINT_VENTURE = {
             r"(?i)\b(dispute\s+between\s+(the\s+)?partners)\b",
             r"(?i)\b(impasse|stalemate)\b"],
            "In the event of a deadlock on any key decision, the Parties shall first attempt resolution through negotiation over thirty (30) days, then mediation over thirty (30) days, and finally binding arbitration under the Arbitration and Conciliation Act, 1996.",
-           prompt="Check if deadlock resolution mechanism exists. Flag if missing.", order=6),
+           prompt="Check if deadlock resolution mechanism exists. Flag if missing.", order=6,
+           detection_mode="ai_with_keywords",
+           risk_description="No deadlock resolution mechanism for equal partnerships",
+           unacceptable_signals=["no deadlock provision", "status quo prevails indefinitely"],
+           acceptable_signals=["escalation to CEOs", "mediation followed by arbitration", "external mediator"],
+           acceptable_position="3-tier: CEO escalation → mediation → arbitration under Indian Arbitration Act"),
         _r("confidentiality",
            "Mutual confidentiality between JV partners.",
            "yellow",

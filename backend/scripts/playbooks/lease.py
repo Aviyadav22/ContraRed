@@ -1,17 +1,28 @@
 """Lease / License Agreement (Commercial Property) — Default playbook."""
 import uuid
 
-def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False, ai_verify=True, prompt=None, order=0):
+def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False,
+       ai_verify=True, prompt=None, order=0,
+       detection_mode="keywords_only", risk_description=None,
+       acceptable_position=None, unacceptable_signals=None,
+       acceptable_signals=None, clause_context=None):
     sl = {"preferred": primary}
     if fallback:
         sl["fallback"] = fallback
-    return {
+    d = {
         "id": str(uuid.uuid4()), "clause_type": clause_type, "primary_position": primary,
         "fallback_position": fallback, "risk_level": risk, "is_deal_breaker": deal_breaker,
         "detection_patterns": {"match_type": "regex", "patterns": patterns},
         "suggested_language": sl, "requires_ai_verification": ai_verify,
         "verification_prompt": prompt, "order_index": order,
     }
+    d["detection_mode"] = detection_mode
+    d["risk_description"] = risk_description
+    d["acceptable_position"] = acceptable_position
+    d["unacceptable_signals"] = unacceptable_signals or []
+    d["acceptable_signals"] = acceptable_signals or []
+    d["clause_context"] = clause_context
+    return d
 
 LEASE = {
     "name": "Lease / License Agreement (Commercial Property)",
@@ -25,7 +36,13 @@ LEASE = {
             r"(?i)\b(annual\s+(increase|escalation)\s+of\s+\d+%)\b",
             r"(?i)\b(rent\s+shall\s+(increase|be\s+revised))\b"],
            fallback="The monthly rent shall escalate by 8% (eight percent) per annum.",
-           prompt="Check rent escalation percentage. Flag if >10% annual increase. Indian standard is 5-8%.", order=0),
+           prompt="Check rent escalation percentage. Flag if >10% annual increase. Indian standard is 5-8%.", order=0,
+           detection_mode="ai_with_keywords",
+           risk_description="Annual rent escalation exceeds 10% or is uncapped",
+           unacceptable_signals=["15% annual escalation", "escalation at landlord discretion", "uncapped rent increase"],
+           acceptable_signals=["5% annual escalation", "CPI-linked", "escalation every 2-3 years"],
+           clause_context="Standard commercial rent escalation in India is 5-8% per annum",
+           acceptable_position="5% annual or CPI (whichever lower), applied every 12 months"),
         _r("lock_in_period",
            "Lock-in period should not exceed 3 years. Flag >3 years with no exit option.",
            "red",
@@ -33,7 +50,12 @@ LEASE = {
             r"(?i)\b(cannot\s+(be\s+)?terminat(e|ed)\s+during)\b"],
            "The initial lock-in period shall be twenty-four (24) months from the Lease Commencement Date. During the lock-in period, neither Party may terminate this Lease except for material breach.",
            deal_breaker=True,
-           prompt="Check lock-in duration. Flag if >3 years. Acceptable: 1-2 years for startups, up to 3 years for established businesses.", order=1),
+           prompt="Check lock-in duration. Flag if >3 years. Acceptable: 1-2 years for startups, up to 3 years for established businesses.", order=1,
+           detection_mode="ai_with_keywords",
+           risk_description="Lock-in exceeds 3 years with no early exit option",
+           unacceptable_signals=["5 year lock-in", "no early exit", "entire remaining rent payable on early termination"],
+           acceptable_signals=["1-2 year lock-in", "early exit with 3 months notice", "exit penalty capped at 3 months rent"],
+           acceptable_position="Lock-in 1-2 years with break clause; exit penalty capped at 3 months rent"),
         _r("security_deposit",
            "Security deposit should be 3-6 months rent (Indian standard). Flag if >6 months.",
            "yellow",
@@ -56,7 +78,12 @@ LEASE = {
             r"(?i)\b(break\s+clause)\b", r"(?i)\b(premature\s+termination)\b"],
            "After the lock-in period, either Party may terminate this Lease by providing ninety (90) days' prior written notice. The Lessee shall not be liable for rent beyond the notice period. Security deposit shall be refunded per the terms herein.",
            deal_breaker=True,
-           prompt="Check if early exit clause exists after lock-in. Flag if missing — this is a deal-breaker.", order=4),
+           prompt="Check if early exit clause exists after lock-in. Flag if missing — this is a deal-breaker.", order=4,
+           detection_mode="ai_with_keywords",
+           risk_description="No early termination clause or exit requires full remaining rent",
+           unacceptable_signals=["no early termination", "full remaining rent payable", "termination only by mutual consent"],
+           acceptable_signals=["3 months notice for early exit", "penalty limited to security deposit", "break clause"],
+           acceptable_position="Early exit with 3 months notice after lock-in; penalty limited to 3 months rent"),
         _r("permitted_use",
            "Permitted use must allow business operations. Flag restrictive use clauses.",
            "yellow",

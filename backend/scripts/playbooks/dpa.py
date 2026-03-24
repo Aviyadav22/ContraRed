@@ -1,17 +1,28 @@
 """Data Processing Agreement — Default playbook (DPDP Act 2023 compliant)."""
 import uuid
 
-def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False, ai_verify=True, prompt=None, order=0):
+def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False,
+       ai_verify=True, prompt=None, order=0,
+       detection_mode="keywords_only", risk_description=None,
+       acceptable_position=None, unacceptable_signals=None,
+       acceptable_signals=None, clause_context=None):
     sl = {"preferred": primary}
     if fallback:
         sl["fallback"] = fallback
-    return {
+    d = {
         "id": str(uuid.uuid4()), "clause_type": clause_type, "primary_position": primary,
         "fallback_position": fallback, "risk_level": risk, "is_deal_breaker": deal_breaker,
         "detection_patterns": {"match_type": "regex", "patterns": patterns},
         "suggested_language": sl, "requires_ai_verification": ai_verify,
         "verification_prompt": prompt, "order_index": order,
     }
+    d["detection_mode"] = detection_mode
+    d["risk_description"] = risk_description
+    d["acceptable_position"] = acceptable_position
+    d["unacceptable_signals"] = unacceptable_signals or []
+    d["acceptable_signals"] = acceptable_signals or []
+    d["clause_context"] = clause_context
+    return d
 
 DPA = {
     "name": "Data Processing Agreement (DPA)",
@@ -40,7 +51,12 @@ DPA = {
            [r"(?i)\b(sub[\s-]?processor)\b", r"(?i)\b(sub[\s-]?contract(or|ing)?)\b",
             r"(?i)\b(third[\s-]?party\s+process(or|ing))\b"],
            "The Processor shall not engage any sub-processor without prior written consent of the Data Fiduciary. The Processor shall maintain a list of approved sub-processors and notify the Data Fiduciary of any changes at least thirty (30) days in advance.",
-           prompt="Check sub-processor controls. Flag if processor can freely engage sub-processors without notification.", order=2),
+           prompt="Check sub-processor controls. Flag if processor can freely engage sub-processors without notification.", order=2,
+           detection_mode="ai_with_keywords",
+           risk_description="No notification or approval when processor adds sub-processors",
+           unacceptable_signals=["processor may engage any sub-processor", "no notification required", "blanket authorization"],
+           acceptable_signals=["prior written consent", "30 days notice", "right to object", "list of current sub-processors"],
+           acceptable_position="Prior consent or 30-day notice for new sub-processors with right to object"),
         _r("data_breach_notification",
            "Breach notification must be 'without undue delay' per DPDP Act. Flag if >72 hours.",
            "red",
@@ -49,7 +65,13 @@ DPA = {
             r"(?i)\b(personal\s+data\s+breach)\b"],
            "The Processor shall notify the Data Fiduciary of any Personal Data Breach without undue delay and in any event within seventy-two (72) hours of becoming aware of such breach. The notification shall include: (a) nature of the breach; (b) categories and approximate number of affected data principals; (c) likely consequences; (d) measures taken or proposed.",
            deal_breaker=True,
-           prompt="Check breach notification timeline. Flag if >72 hours. DPDP Act requires 'without undue delay'.", order=3),
+           prompt="Check breach notification timeline. Flag if >72 hours. DPDP Act requires 'without undue delay'.", order=3,
+           detection_mode="ai_with_keywords",
+           risk_description="Breach notification exceeds 72 hours or lacks specificity",
+           unacceptable_signals=["notify within 7 days", "reasonable time", "at processor's discretion"],
+           acceptable_signals=["within 72 hours", "without undue delay", "detailed breach report"],
+           clause_context="DPDP Act 2023 requires notification without undue delay. 72 hours is the global standard.",
+           acceptable_position="Notification within 72 hours with detailed report"),
         _r("data_deletion_return",
            "Must include data deletion/return clause upon termination. No deletion clause = deal-breaker.",
            "red",
@@ -58,7 +80,12 @@ DPA = {
             r"(?i)\b(post[\s-]?termination\s+data)\b"],
            "Upon termination of this Agreement, the Processor shall, at the Data Fiduciary's election, return or permanently delete all Personal Data within thirty (30) days and provide written certification of deletion. The Processor shall not retain any copies except as required by applicable law.",
            deal_breaker=True,
-           prompt="Check if data deletion/return clause exists for termination. Flag if missing.", order=4),
+           prompt="Check if data deletion/return clause exists for termination. Flag if missing.", order=4,
+           detection_mode="ai_with_keywords",
+           risk_description="No data deletion or return clause on contract termination",
+           unacceptable_signals=["no deletion obligation", "data retained after termination", "deletion at processor discretion"],
+           acceptable_signals=["delete within 30 days", "return or delete at fiduciary's choice", "certification of deletion"],
+           acceptable_position="All data deleted or returned within 30 days with written certification"),
         _r("cross_border_transfer",
            "Cross-border data transfer outside India must have adequate safeguards per DPDP Act 2023.",
            "red",
@@ -68,7 +95,13 @@ DPA = {
             r"(?i)\b(data\s+transfer\s+to\s+(a\s+)?third\s+country)\b"],
            "The Processor shall not transfer Personal Data outside India except to countries or territories notified by the Central Government under the DPDP Act, 2023. Any permitted cross-border transfer shall be subject to appropriate contractual safeguards ensuring equivalent data protection standards.",
            deal_breaker=True,
-           prompt="Check if data goes outside India. Flag cross-border transfers without safeguards per DPDP Act.", order=5),
+           prompt="Check if data goes outside India. Flag cross-border transfers without safeguards per DPDP Act.", order=5,
+           detection_mode="ai_with_keywords",
+           risk_description="Personal data transferred outside India without adequate safeguards",
+           unacceptable_signals=["data may be processed anywhere", "no restriction on transfer", "stored outside India at discretion"],
+           acceptable_signals=["data remains in India", "standard contractual clauses", "DPDP Act compliant transfer"],
+           clause_context="DPDP Act 2023 may restrict transfers to certain countries",
+           acceptable_position="Data in India by default; transfers only to whitelisted jurisdictions with SCCs"),
         _r("security_measures",
            "Must specify concrete technical and organizational security measures, not vague promises.",
            "yellow",
@@ -89,7 +122,12 @@ DPA = {
            [r"(?i)\b(indemnif(y|ication)).{0,60}(data|breach|processing)\b",
             r"(?i)\b(liab(le|ility)).{0,60}(data\s+breach|processing)\b"],
            "The Processor shall indemnify and hold harmless the Data Fiduciary against any losses, claims, damages, or penalties arising from the Processor's breach of this Agreement or applicable data protection laws, including fines imposed by the Data Protection Board of India.",
-           prompt="Check if processor liability for breaches is addressed. Flag if no indemnification for data breaches.", order=8),
+           prompt="Check if processor liability for breaches is addressed. Flag if no indemnification for data breaches.", order=8,
+           detection_mode="ai_with_keywords",
+           risk_description="Processor has no indemnification obligation for its breaches",
+           unacceptable_signals=["processor not liable for breaches", "fiduciary bears all liability"],
+           acceptable_signals=["processor indemnifies for its breach", "processor liable for non-compliance"],
+           acceptable_position="Processor indemnifies for all losses from its breach of DPA terms"),
         _r("governing_law",
            "Must be Indian law for DPDP Act compliance.",
            "green",
