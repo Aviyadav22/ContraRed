@@ -108,10 +108,14 @@ async def seed():
                     text("""
                         INSERT INTO playbook_rules (id, playbook_id, clause_type, primary_position, fallback_position,
                             risk_level, is_deal_breaker, detection_patterns, suggested_language, order_index,
-                            requires_ai_verification, verification_prompt)
+                            requires_ai_verification, verification_prompt,
+                            detection_mode, risk_description, acceptable_position,
+                            unacceptable_signals, acceptable_signals, clause_context)
                         VALUES (:id, :playbook_id, :clause_type, :primary_position, :fallback_position,
                             :risk_level, :is_deal_breaker, CAST(:detection_patterns AS jsonb), CAST(:suggested_language AS jsonb),
-                            :order_index, :requires_ai_verification, :verification_prompt)
+                            :order_index, :requires_ai_verification, :verification_prompt,
+                            :detection_mode, :risk_description, :acceptable_position,
+                            CAST(:unacceptable_signals AS jsonb), CAST(:acceptable_signals AS jsonb), :clause_context)
                     """),
                     {
                         "id": rule["id"],
@@ -126,6 +130,12 @@ async def seed():
                         "order_index": rule.get("order_index", i),
                         "requires_ai_verification": rule.get("requires_ai_verification", True),
                         "verification_prompt": rule.get("verification_prompt"),
+                        "detection_mode": rule.get("detection_mode", "keywords_only"),
+                        "risk_description": rule.get("risk_description"),
+                        "acceptable_position": rule.get("acceptable_position"),
+                        "unacceptable_signals": __import__("json").dumps(rule.get("unacceptable_signals", [])),
+                        "acceptable_signals": __import__("json").dumps(rule.get("acceptable_signals", [])),
+                        "clause_context": rule.get("clause_context"),
                     }
                 )
 

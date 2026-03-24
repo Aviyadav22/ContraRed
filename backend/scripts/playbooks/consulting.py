@@ -1,17 +1,28 @@
 """Consulting / Professional Services Agreement — Default playbook."""
 import uuid
 
-def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False, ai_verify=True, prompt=None, order=0):
+def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False,
+       ai_verify=True, prompt=None, order=0,
+       detection_mode="keywords_only", risk_description=None,
+       acceptable_position=None, unacceptable_signals=None,
+       acceptable_signals=None, clause_context=None):
     sl = {"preferred": primary}
     if fallback:
         sl["fallback"] = fallback
-    return {
+    d = {
         "id": str(uuid.uuid4()), "clause_type": clause_type, "primary_position": primary,
         "fallback_position": fallback, "risk_level": risk, "is_deal_breaker": deal_breaker,
         "detection_patterns": {"match_type": "regex", "patterns": patterns},
         "suggested_language": sl, "requires_ai_verification": ai_verify,
         "verification_prompt": prompt, "order_index": order,
     }
+    d["detection_mode"] = detection_mode
+    d["risk_description"] = risk_description
+    d["acceptable_position"] = acceptable_position
+    d["unacceptable_signals"] = unacceptable_signals or []
+    d["acceptable_signals"] = acceptable_signals or []
+    d["clause_context"] = clause_context
+    return d
 
 CONSULTING = {
     "name": "Consulting / Professional Services Agreement",
@@ -24,7 +35,12 @@ CONSULTING = {
            [r"(?i)\b(scope\s+of\s+work)\b", r"(?i)\b(deliverable(s)?)\b",
             r"(?i)\b(statement\s+of\s+work|SOW)\b", r"(?i)\b(services?\s+to\s+be\s+(provided|performed))\b"],
            "The Consultant shall provide the services described in the Statement of Work (SOW) attached hereto. Each SOW shall specify deliverables, milestones, timelines, and acceptance criteria.",
-           prompt="Check if scope is clearly defined. Flag vague or open-ended scope.", order=0),
+           prompt="Check if scope is clearly defined. Flag vague or open-ended scope.", order=0,
+           detection_mode="ai_with_keywords",
+           risk_description="Scope is vague, open-ended, or lacks clear deliverables",
+           unacceptable_signals=["as directed by client", "all services reasonably requested", "scope to be determined"],
+           acceptable_signals=["specific deliverables listed", "defined milestones", "change order process"],
+           acceptable_position="Defined deliverables with milestones, acceptance criteria, and change order process"),
         _r("payment_milestones",
            "Payment should be milestone-based, not lump-sum upfront. Protect both parties.",
            "yellow",
@@ -40,7 +56,12 @@ CONSULTING = {
             r"(?i)\b(all\s+IP\s+(shall\s+)?(belong|vest|remain))\b"],
            "All work product created by Consultant specifically for Client under this Agreement shall be assigned to Client upon full payment (Work Product IP). Consultant retains all rights in its pre-existing intellectual property, tools, and methodologies (Consultant IP), and grants Client a non-exclusive, perpetual license to use Consultant IP as embedded in the deliverables.",
            deal_breaker=True,
-           prompt="Check IP allocation. Flag if consultant retains all IP including work product, or if client claims consultant's pre-existing IP.", order=2),
+           prompt="Check IP allocation. Flag if consultant retains all IP including work product, or if client claims consultant's pre-existing IP.", order=2,
+           detection_mode="ai_with_keywords",
+           risk_description="Consultant retains all IP including work product paid for by client",
+           unacceptable_signals=["consultant retains all IP", "client receives limited license only", "no assignment of work product"],
+           acceptable_signals=["work product assigned to client", "consultant retains pre-existing IP"],
+           acceptable_position="Work product IP assigned to client; consultant retains pre-existing IP"),
         _r("limitation_of_liability",
            "Liability should be capped at fees paid under the relevant SOW.",
            "red",
@@ -48,13 +69,23 @@ CONSULTING = {
             r"(?i)\b(unlimited\s+liability)\b"],
            "Consultant's aggregate liability shall not exceed the total fees paid or payable under the relevant SOW. Neither Party shall be liable for indirect, consequential, or punitive damages.",
            deal_breaker=True,
-           prompt="Check liability cap. Flag unlimited liability.", order=3),
+           prompt="Check liability cap. Flag unlimited liability.", order=3,
+           detection_mode="ai_with_keywords",
+           risk_description="Liability cap missing or unlimited for consulting engagement",
+           unacceptable_signals=["unlimited liability", "no cap", "all damages without limitation"],
+           acceptable_signals=["capped at fees paid", "limited to total contract value"],
+           acceptable_position="Mutual liability capped at total fees paid"),
         _r("indemnification",
            "Mutual indemnification, capped at fees paid.",
            "yellow",
            [r"(?i)\b(indemnif(y|ication|ies))\b", r"(?i)\b(hold\s+harmless)\b"],
            "Each Party shall indemnify the other against third-party claims arising from breach of this Agreement or negligence, subject to the limitation of liability cap.",
-           prompt="Check if indemnification is mutual and capped.", order=4),
+           prompt="Check if indemnification is mutual and capped.", order=4,
+           detection_mode="ai_with_keywords",
+           risk_description="Indemnification not mutual or exceeds total fees paid",
+           unacceptable_signals=["consultant shall indemnify without limitation", "one-sided indemnification"],
+           acceptable_signals=["mutual indemnification", "capped at fees paid", "limited to direct damages"],
+           acceptable_position="Mutual indemnification capped at total fees paid, limited to direct damages"),
         _r("confidentiality",
            "Mutual confidentiality with reasonable term (3 years).",
            "yellow",
@@ -82,7 +113,13 @@ CONSULTING = {
             r"(?i)\b(restriction\s+on\s+competition)\b"],
            "Remove non-compete clause. Post-engagement non-compete restrictions are void under Section 27 of the Indian Contract Act, 1872. During the engagement, Consultant agrees not to perform conflicting services for Client's direct competitors.",
            deal_breaker=True,
-           prompt="Check if post-engagement non-compete exists. Unenforceable in India. During-engagement restrictions are acceptable.", order=8),
+           prompt="Check if post-engagement non-compete exists. Unenforceable in India. During-engagement restrictions are acceptable.", order=8,
+           detection_mode="ai_with_keywords",
+           risk_description="Non-compete for consultant, generally unenforceable in India under Section 27",
+           unacceptable_signals=["consultant shall not compete", "non-compete", "restrained from providing services to competitors"],
+           acceptable_signals=["non-solicitation only", "no non-compete clause"],
+           clause_context="Section 27 Indian Contract Act makes post-engagement non-competes void for consultants",
+           acceptable_position="Remove non-compete; replace with 12-month non-solicitation"),
         _r("governing_law",
            "Indian law.",
            "green",
