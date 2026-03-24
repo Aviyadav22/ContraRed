@@ -1,17 +1,28 @@
 """Employment Agreement — Default playbook (India-specific)."""
 import uuid
 
-def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False, ai_verify=True, prompt=None, order=0):
+def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False,
+       ai_verify=True, prompt=None, order=0,
+       detection_mode="keywords_only", risk_description=None,
+       acceptable_position=None, unacceptable_signals=None,
+       acceptable_signals=None, clause_context=None):
     sl = {"preferred": primary}
     if fallback:
         sl["fallback"] = fallback
-    return {
+    d = {
         "id": str(uuid.uuid4()), "clause_type": clause_type, "primary_position": primary,
         "fallback_position": fallback, "risk_level": risk, "is_deal_breaker": deal_breaker,
         "detection_patterns": {"match_type": "regex", "patterns": patterns},
         "suggested_language": sl, "requires_ai_verification": ai_verify,
         "verification_prompt": prompt, "order_index": order,
     }
+    d["detection_mode"] = detection_mode
+    d["risk_description"] = risk_description
+    d["acceptable_position"] = acceptable_position
+    d["unacceptable_signals"] = unacceptable_signals or []
+    d["acceptable_signals"] = acceptable_signals or []
+    d["clause_context"] = clause_context
+    return d
 
 EMPLOYMENT = {
     "name": "Employment Agreement (India)",
@@ -24,14 +35,24 @@ EMPLOYMENT = {
            [r"(?i)\b(probation(ary)?\s+(period|term))\b", r"(?i)\b(probation\s+of\s+\d+\s+months)\b",
             r"(?i)\b(initial\s+probation)\b"],
            "The Employee shall be on probation for a period of six (6) months from the date of joining. During probation, either Party may terminate employment with fifteen (15) days' written notice.",
-           prompt="Check probation duration. Flag if >6 months. Standard: 3-6 months.", order=0),
+           prompt="Check probation duration. Flag if >6 months. Standard: 3-6 months.", order=0,
+           detection_mode="ai_with_keywords",
+           risk_description="Probation exceeds 6 months or allows termination without notice",
+           unacceptable_signals=["12 months probation", "termination without notice during probation", "indefinite probation"],
+           acceptable_signals=["3 months probation", "6 months probation", "performance review at end of probation"],
+           acceptable_position="3-6 months with 7-day notice and written performance review"),
         _r("notice_period",
            "Either Party may terminate this employment by providing ninety (90) days' written notice or payment of salary in lieu of notice.",
            "yellow",
            [r"(?i)\b(notice\s+period)\b", r"(?i)\b(\d+\s+(month|day|week)s?\s+notice)\b",
             r"(?i)\b(prior\s+(written\s+)?notice\s+of\s+\d+)\b"],
            fallback="Either Party may terminate with sixty (60) days' written notice or salary in lieu thereof.",
-           prompt="Check notice period length. Flag if >3 months for non-CXO roles.", order=1),
+           prompt="Check notice period length. Flag if >3 months for non-CXO roles.", order=1,
+           detection_mode="ai_with_keywords",
+           risk_description="Notice period exceeds 3 months for non-senior roles or is asymmetric",
+           unacceptable_signals=["6 months notice", "employee must give 3 months but employer can terminate immediately"],
+           acceptable_signals=["30 days notice", "mutual notice period", "notice commensurate with seniority"],
+           acceptable_position="Mutual notice: 1 month junior, 2 months mid, 3 months senior only"),
         _r("non_compete",
            "Non-compete clauses are largely UNENFORCEABLE in India under Section 27 of the Indian Contract Act, 1872. Flag presence as RED risk.",
            "red",
@@ -40,14 +61,25 @@ EMPLOYMENT = {
             r"(?i)\b(refrain\s+from\s+(engag|compet))\b"],
            "Remove post-employment non-compete clause. Non-compete restrictions post-termination are void under Section 27 of the Indian Contract Act, 1872 as held by the Supreme Court of India in Superintendence Company of India (P) Ltd v. Krishan Murgai (1981).",
            deal_breaker=True,
-           prompt="Check if post-employment non-compete exists. This is unenforceable in India under Section 27 ICA. Flag as deal-breaker.", order=2),
+           prompt="Check if post-employment non-compete exists. This is unenforceable in India under Section 27 ICA. Flag as deal-breaker.", order=2,
+           detection_mode="ai_with_keywords",
+           risk_description="Non-compete clause present (unenforceable under S.27 Indian Contract Act)",
+           unacceptable_signals=["shall not compete", "non-compete", "restrained from working"],
+           acceptable_signals=["non-solicitation only", "no non-compete clause"],
+           clause_context="Section 27 of the Indian Contract Act 1872 renders post-employment non-competes void",
+           acceptable_position="Remove non-compete; replace with reasonable non-solicitation"),
         _r("non_solicitation",
            "Non-solicitation is enforceable if reasonable. Limit to 12 months post-termination.",
            "yellow",
            [r"(?i)\b(non[\s-]?solicit(ation)?)\b", r"(?i)\bshall\s+not\s+(solicit|hire|recruit)\b",
             r"(?i)\b(solicit|entice).{0,60}(employee|client|customer)\b"],
            "For a period of twelve (12) months following termination, the Employee shall not directly solicit any employee or customer of the Company with whom the Employee had material contact during the last twelve (12) months of employment.",
-           prompt="Check non-solicitation scope and duration. Flag if >12 months or unreasonably broad.", order=3),
+           prompt="Check non-solicitation scope and duration. Flag if >12 months or unreasonably broad.", order=3,
+           detection_mode="ai_with_keywords",
+           risk_description="Non-solicitation exceeds 12 months or scope unreasonably broad",
+           unacceptable_signals=["24 months non-solicitation", "shall not solicit any employee", "worldwide non-solicitation"],
+           acceptable_signals=["12 months non-solicitation", "employees directly supervised", "clients directly serviced"],
+           acceptable_position="Non-solicitation limited to 12 months, covering only direct reports and clients"),
         _r("ip_assignment_work_for_hire",
            "Work-for-hire IP assignment is standard for employees. Flag if it extends to personal projects created outside work hours.",
            "yellow",
@@ -55,7 +87,12 @@ EMPLOYMENT = {
             r"(?i)\b(invention(s)?\s+assign(ment)?)\b", r"(?i)\b(all\s+work\s+product)\b",
             r"(?i)\b(company\s+(owns?|property)\s+(all\s+)?IP)\b"],
            "All intellectual property created by the Employee in the course of employment and using Company resources shall be the exclusive property of the Company. This does not apply to inventions or works created entirely on the Employee's own time without use of Company resources and unrelated to Company business.",
-           prompt="Check if IP assignment covers personal projects outside work hours. Flag if it extends beyond work scope.", order=4),
+           prompt="Check if IP assignment covers personal projects outside work hours. Flag if it extends beyond work scope.", order=4,
+           detection_mode="ai_with_keywords",
+           risk_description="IP assignment covers personal projects or work outside employment",
+           unacceptable_signals=["all inventions whether or not related to employment", "personal projects", "work done outside office hours"],
+           acceptable_signals=["in the course of employment", "using company resources", "excludes personal projects"],
+           acceptable_position="IP assignment limited to work in course of employment using company resources"),
         _r("confidentiality",
            "Post-termination confidentiality should be limited to 2 years.",
            "yellow",
@@ -63,7 +100,12 @@ EMPLOYMENT = {
             r"(?i)\b(perpetual\s+confidentiality)\b",
             r"(?i)\b(non[\s-]?disclosure)\b"],
            "The Employee shall maintain confidentiality of Company's proprietary information during employment and for a period of two (2) years following termination.",
-           prompt="Check confidentiality term. Flag if perpetual. Acceptable: 2 years post-termination.", order=5),
+           prompt="Check confidentiality term. Flag if perpetual. Acceptable: 2 years post-termination.", order=5,
+           detection_mode="ai_with_keywords",
+           risk_description="Post-termination confidentiality exceeds 2 years for general information",
+           unacceptable_signals=["perpetual confidentiality", "5 years post-termination for all information"],
+           acceptable_signals=["2 years post-termination", "trade secrets indefinitely"],
+           acceptable_position="General: 2 years post-termination; trade secrets: indefinite"),
         _r("termination_for_cause",
            "Must list specific grounds for termination for cause.",
            "yellow",
@@ -92,7 +134,12 @@ EMPLOYMENT = {
             r"(?i)\b(any\s+(geographic|territor))\b"],
            "Any restrictive covenants shall be limited to the specific geographic territory where the Employee operated and for a maximum period of twelve (12) months. Worldwide or unreasonable geographic restrictions are unenforceable.",
            deal_breaker=True,
-           prompt="Check geographic and temporal scope of restrictive covenants. Flag worldwide restrictions or duration >12 months.", order=9),
+           prompt="Check geographic and temporal scope of restrictive covenants. Flag worldwide restrictions or duration >12 months.", order=9,
+           detection_mode="ai_with_keywords",
+           risk_description="Geographic or temporal scope of restrictions is unreasonable",
+           unacceptable_signals=["worldwide restriction", "any industry", "5 year restriction"],
+           acceptable_signals=["limited geographic scope", "12 months", "directly competing business only"],
+           acceptable_position="Limited to directly competing businesses within same city/state for 12 months"),
         _r("bonus_variable_pay",
            "Bonus/variable pay criteria should be clearly defined, not entirely discretionary.",
            "yellow",

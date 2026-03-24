@@ -1,11 +1,15 @@
 """NDA Mutual — Default playbook for mutual non-disclosure agreements."""
 import uuid
 
-def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False, ai_verify=True, prompt=None, order=0):
+def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False,
+       ai_verify=True, prompt=None, order=0,
+       detection_mode="keywords_only", risk_description=None,
+       acceptable_position=None, unacceptable_signals=None,
+       acceptable_signals=None, clause_context=None):
     sl = {"preferred": primary}
     if fallback:
         sl["fallback"] = fallback
-    return {
+    d = {
         "id": str(uuid.uuid4()),
         "clause_type": clause_type,
         "primary_position": primary,
@@ -18,6 +22,13 @@ def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False, 
         "verification_prompt": prompt,
         "order_index": order,
     }
+    d["detection_mode"] = detection_mode
+    d["risk_description"] = risk_description
+    d["acceptable_position"] = acceptable_position
+    d["unacceptable_signals"] = unacceptable_signals or []
+    d["acceptable_signals"] = acceptable_signals or []
+    d["clause_context"] = clause_context
+    return d
 
 NDA_MUTUAL = {
     "name": "NDA — Mutual",
@@ -38,6 +49,11 @@ NDA_MUTUAL = {
             ai_verify=True,
             prompt="Check if the definition of Confidential Information is overly broad (e.g., 'any and all information') without reasonable exclusions. Flag if standard carve-outs are missing.",
             order=0,
+            detection_mode="ai_with_keywords",
+            risk_description="Definition overly broad without carve-outs for public/independent info",
+            unacceptable_signals=["any and all information", "broadest possible definition"],
+            acceptable_signals=["clearly marked as confidential", "excludes publicly available", "standard carve-outs"],
+            acceptable_position="Limited to information marked confidential, with standard exclusions",
         ),
         _r(
             clause_type="confidentiality_term",
@@ -53,6 +69,11 @@ NDA_MUTUAL = {
             ai_verify=True,
             prompt="Check if the confidentiality term is perpetual or unreasonably long (>5 years). Acceptable range is 2-5 years.",
             order=1,
+            detection_mode="ai_with_keywords",
+            risk_description="Confidentiality obligation is perpetual with no sunset clause",
+            unacceptable_signals=["shall survive in perpetuity", "indefinite confidentiality", "obligations continue forever"],
+            acceptable_signals=["3 years from disclosure", "5 years from termination", "obligations expire"],
+            acceptable_position="3 years from disclosure (5 years for trade secrets)",
         ),
         _r(
             clause_type="permitted_disclosures",
@@ -67,6 +88,11 @@ NDA_MUTUAL = {
             ai_verify=True,
             prompt="Check if the NDA allows disclosure when legally required (court order, regulatory mandate). Flag if no permitted disclosure exceptions exist.",
             order=2,
+            detection_mode="ai_with_keywords",
+            risk_description="No exceptions for legally required disclosures",
+            unacceptable_signals=["no disclosure under any circumstances", "prior written consent required for all disclosures"],
+            acceptable_signals=["required by law or regulation", "court order or subpoena", "with prior notice"],
+            acceptable_position="Permitted: court orders, regulatory requirements, with prior notice where legally possible",
         ),
         _r(
             clause_type="return_of_information",
@@ -95,6 +121,12 @@ NDA_MUTUAL = {
             ai_verify=True,
             prompt="Check if non-solicitation is included in this NDA. Flag if duration exceeds 12 months or scope is unreasonable.",
             order=4,
+            detection_mode="ai_with_keywords",
+            risk_description="Non-solicitation in a mutual NDA is scope overreach",
+            unacceptable_signals=["shall not solicit", "non-solicitation", "shall not hire"],
+            acceptable_signals=["no non-solicitation clause present"],
+            clause_context="Non-solicitation in an NDA represents overreach beyond protecting confidential information",
+            acceptable_position="Remove non-solicitation from NDA entirely",
         ),
         _r(
             clause_type="remedies_injunctive_relief",

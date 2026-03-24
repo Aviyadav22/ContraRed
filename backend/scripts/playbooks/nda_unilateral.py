@@ -1,11 +1,15 @@
 """NDA Unilateral — Default playbook for one-way non-disclosure agreements."""
 import uuid
 
-def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False, ai_verify=True, prompt=None, order=0):
+def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False,
+       ai_verify=True, prompt=None, order=0,
+       detection_mode="keywords_only", risk_description=None,
+       acceptable_position=None, unacceptable_signals=None,
+       acceptable_signals=None, clause_context=None):
     sl = {"preferred": primary}
     if fallback:
         sl["fallback"] = fallback
-    return {
+    d = {
         "id": str(uuid.uuid4()),
         "clause_type": clause_type,
         "primary_position": primary,
@@ -18,6 +22,13 @@ def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False, 
         "verification_prompt": prompt,
         "order_index": order,
     }
+    d["detection_mode"] = detection_mode
+    d["risk_description"] = risk_description
+    d["acceptable_position"] = acceptable_position
+    d["unacceptable_signals"] = unacceptable_signals or []
+    d["acceptable_signals"] = acceptable_signals or []
+    d["clause_context"] = clause_context
+    return d
 
 NDA_UNILATERAL = {
     "name": "NDA — Unilateral",
@@ -89,6 +100,12 @@ NDA_UNILATERAL = {
             fallback="Remove non-compete clause entirely. Non-compete restrictions are inappropriate in an NDA and are largely unenforceable in India under Section 27 of the Indian Contract Act, 1872.",
             prompt="Check if a non-compete clause is embedded in this NDA. This is a deal-breaker — NDAs should not restrict competition.",
             order=4,
+            detection_mode="ai_with_keywords",
+            risk_description="Non-compete in a simple NDA is significant overreach",
+            unacceptable_signals=["shall not compete", "non-compete"],
+            acceptable_signals=["no non-compete clause present"],
+            clause_context="Non-compete in an NDA is a red flag — suggests restricting competition not protecting information",
+            acceptable_position="Remove non-compete entirely",
         ),
         _r(
             clause_type="ip_assignment_in_nda",
@@ -104,6 +121,12 @@ NDA_UNILATERAL = {
             fallback="Remove IP assignment clause entirely. An NDA should protect confidential information, not transfer intellectual property rights. Each party retains all IP rights in its own confidential information.",
             prompt="Check if IP assignment or transfer language exists in this NDA. This is a deal-breaker — NDAs should not transfer IP.",
             order=5,
+            detection_mode="ai_with_keywords",
+            risk_description="IP assignment in an NDA — should not transfer IP rights",
+            unacceptable_signals=["assigns all intellectual property", "IP shall vest in", "transfer of IP rights"],
+            acceptable_signals=["no IP assignment", "each party retains its own IP"],
+            clause_context="IP assignment in an NDA is inappropriate",
+            acceptable_position="Remove IP assignment; each party retains its own IP",
         ),
         _r(
             clause_type="reverse_engineering_prohibition",
@@ -117,6 +140,11 @@ NDA_UNILATERAL = {
             fallback="The Receiving Party shall not reverse engineer, decompile, or disassemble any software or technology disclosed as Confidential Information, except as permitted by applicable law for interoperability purposes.",
             prompt="Check if reverse engineering prohibition is present and whether it's overly broad or includes an interoperability exception.",
             order=6,
+            detection_mode="ai_with_keywords",
+            risk_description="Reverse engineering prohibition overly broad beyond disclosed information",
+            unacceptable_signals=["shall not reverse engineer any product", "prohibition on all reverse engineering"],
+            acceptable_signals=["limited to confidential information", "interoperability exception"],
+            acceptable_position="Prohibition limited to disclosed materials; interoperability exception preserved",
         ),
         _r(
             clause_type="non_solicitation_in_nda",
