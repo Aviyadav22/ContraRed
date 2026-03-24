@@ -76,6 +76,14 @@ class RuleCreate(BaseModel):
     suggested_language: Optional[str] = Field(default=None, max_length=5000)
     # P2 #29: AI-primary detection fields
     detection_mode: str = "keywords_only"
+
+    @field_validator("detection_mode")
+    @classmethod
+    def validate_detection_mode(cls, v: str) -> str:
+        allowed = {"ai_only", "ai_with_keywords", "keywords_only"}
+        if v not in allowed:
+            raise ValueError(f"detection_mode must be one of {allowed}, got '{v}'")
+        return v
     risk_description: Optional[str] = Field(default=None, max_length=5000)
     acceptable_position: Optional[str] = Field(default=None, max_length=5000)
     unacceptable_signals: Optional[List[str]] = None
@@ -94,6 +102,15 @@ class RuleUpdate(BaseModel):
     suggested_language: Optional[str] = None
     # P2 #29: AI-primary detection fields
     detection_mode: Optional[str] = None
+
+    @field_validator("detection_mode")
+    @classmethod
+    def validate_detection_mode(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            allowed = {"ai_only", "ai_with_keywords", "keywords_only"}
+            if v not in allowed:
+                raise ValueError(f"detection_mode must be one of {allowed}, got '{v}'")
+        return v
     risk_description: Optional[str] = None
     acceptable_position: Optional[str] = None
     unacceptable_signals: Optional[List[str]] = None

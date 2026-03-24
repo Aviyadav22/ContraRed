@@ -1,28 +1,5 @@
 """Joint Venture / Partnership Agreement — Default playbook."""
-import uuid
-
-def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False,
-       ai_verify=True, prompt=None, order=0,
-       detection_mode="keywords_only", risk_description=None,
-       acceptable_position=None, unacceptable_signals=None,
-       acceptable_signals=None, clause_context=None):
-    sl = {"preferred": primary}
-    if fallback:
-        sl["fallback"] = fallback
-    d = {
-        "id": str(uuid.uuid4()), "clause_type": clause_type, "primary_position": primary,
-        "fallback_position": fallback, "risk_level": risk, "is_deal_breaker": deal_breaker,
-        "detection_patterns": {"match_type": "regex", "patterns": patterns},
-        "suggested_language": sl, "requires_ai_verification": ai_verify,
-        "verification_prompt": prompt, "order_index": order,
-    }
-    d["detection_mode"] = detection_mode
-    d["risk_description"] = risk_description
-    d["acceptable_position"] = acceptable_position
-    d["unacceptable_signals"] = unacceptable_signals or []
-    d["acceptable_signals"] = acceptable_signals or []
-    d["clause_context"] = clause_context
-    return d
+from scripts.playbooks._helpers import _r  # noqa: F401
 
 JOINT_VENTURE = {
     "name": "Joint Venture / Partnership Agreement",
