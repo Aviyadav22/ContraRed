@@ -315,23 +315,93 @@ class ConfidenceScorer:
             return 0.3  # Baseline
 
         CORROBORATION_MAP = {
-            "Unlimited Liability": ["Broad Indemnification", "Unilateral Termination"],
-            "Broad Indemnification": ["Unlimited Liability", "Broad IP Assignment"],
-            "Unilateral Termination": ["Unlimited Liability", "Auto-Renewal"],
-            "Broad IP Assignment": ["Broad Indemnification", "Non-Compete Clause"],
-            "Auto-Renewal": ["Unilateral Termination", "Assignment Restriction"],
-            "Non-Compete Clause": ["Non-Solicitation Clause", "Exclusive Dealing"],
-            "Non-Solicitation Clause": ["Non-Compete Clause"],
-            "Exclusive Dealing": ["Non-Compete Clause", "Assignment Restriction"],
-            "Perpetual Confidentiality": ["Non-Solicitation Clause"],
+            # Liability cluster
+            "Unlimited Liability": ["Liability Cap", "Consequential Damages", "Broad Indemnification"],
+            "Liability Cap": ["Unlimited Liability", "Consequential Damages", "Insurance Requirement"],
+            "Consequential Damages": ["Unlimited Liability", "Liability Cap"],
+            "Broad Indemnification": ["Unlimited Liability", "Indemnification Procedure", "Third Party Claims", "IP Indemnification"],
+            "Indemnification Procedure": ["Broad Indemnification", "Third Party Claims"],
+            "Third Party Claims": ["Broad Indemnification", "Indemnification Procedure"],
+            "Insurance Requirement": ["Liability Cap", "Insurance Adequacy"],
+            "Insurance Adequacy": ["Insurance Requirement", "Liability Cap"],
+
+            # IP cluster
+            "IP Assignment": ["IP Ownership", "Work for Hire", "Background IP", "Moral Rights"],
+            "IP Ownership": ["IP Assignment", "License Grant", "Background IP"],
+            "License Grant": ["IP Ownership", "Open Source", "Reverse Engineering"],
+            "Background IP": ["IP Assignment", "IP Ownership"],
+            "IP Indemnification": ["Broad Indemnification", "Non-Infringement"],
+            "Open Source": ["License Grant", "Reverse Engineering"],
+            "Moral Rights": ["IP Assignment", "IP Ownership"],
+
+            # Confidentiality cluster
+            "Confidentiality Obligations": ["Confidentiality Exceptions", "Confidentiality Term", "Return of Materials", "Data Protection"],
+            "Confidentiality Exceptions": ["Confidentiality Obligations"],
+            "Confidentiality Term": ["Confidentiality Obligations", "Survival Clause"],
+            "Perpetual Confidentiality": ["Non-Solicitation Clause", "Confidentiality Term", "Survival Clause"],
+            "Return of Materials": ["Confidentiality Obligations", "Transition Assistance"],
+
+            # Data cluster
+            "Data Protection": ["Data Processing Agreement", "Breach Notification", "Cross-Border Transfer", "Confidentiality Obligations"],
+            "Data Processing Agreement": ["Data Protection", "Security Standards"],
+            "Breach Notification": ["Data Protection", "Insurance Requirement"],
+            "Cross-Border Transfer": ["Data Protection", "Governing Law"],
+            "Security Standards": ["Data Processing Agreement", "SLA Terms"],
+
+            # Termination cluster
+            "Termination for Cause": ["Cure Period", "Termination for Convenience"],
+            "Termination for Convenience": ["Termination for Cause", "Transition Assistance"],
+            "Cure Period": ["Termination for Cause"],
+            "Transition Assistance": ["Termination for Convenience", "Return of Materials", "Data Portability"],
+            "Survival Clause": ["Confidentiality Term", "Perpetual Confidentiality", "Limitation Period"],
+
+            # Restrictive cluster
+            "Non-Compete": ["Non-Solicitation Clause", "Exclusive Dealing"],
+            "Non-Solicitation Clause": ["Non-Compete", "Customer Non-Solicitation", "Perpetual Confidentiality"],
+            "Customer Non-Solicitation": ["Non-Solicitation Clause", "Non-Compete"],
+            "Exclusive Dealing": ["Non-Compete", "Most Favored Nation"],
+            "Reverse Engineering": ["License Grant", "Open Source"],
+
+            # Financial cluster
+            "Payment Terms": ["Late Payment", "Set-Off Rights", "Currency Clause"],
+            "Late Payment": ["Payment Terms"],
+            "Price Escalation": ["Most Favored Nation", "Payment Terms"],
+            "Most Favored Nation": ["Price Escalation", "Exclusive Dealing"],
+            "Set-Off Rights": ["Payment Terms", "Audit Rights"],
+            "Audit Rights": ["Set-Off Rights", "Payment Terms"],
+
+            # SaaS cluster
+            "SLA Terms": ["SLA Credits", "Service Level", "Security Standards"],
+            "SLA Credits": ["SLA Terms", "Liability Cap"],
+            "Data Portability": ["Transition Assistance", "Data Protection"],
+            "API Rights": ["License Grant", "Acceptable Use"],
+            "Acceptable Use": ["API Rights", "Termination for Cause"],
+
+            # Governance cluster
+            "Governing Law": ["Jurisdiction Clause", "Arbitration"],
+            "Jurisdiction Clause": ["Governing Law", "Arbitration"],
+            "Arbitration": ["Governing Law", "Jurisdiction Clause", "Mediation"],
+            "Mediation": ["Arbitration"],
+
+            # Operational cluster
+            "Force Majeure": ["Business Continuity", "Termination for Convenience"],
+            "Assignment Restriction": ["Change of Control"],
+            "Change of Control": ["Assignment Restriction", "Termination for Cause"],
+            "Auto-Renewal": ["Termination for Convenience", "Contract Duration"],
+            "Counterparty Insolvency": ["Termination for Cause", "Set-Off Rights"],
+            "Business Continuity": ["Force Majeure", "SLA Terms"],
         }
+
+        # Normalize map keys for case-insensitive lookup
+        normalized_map = {k.lower(): v for k, v in CORROBORATION_MAP.items()}
+        normalized_flagged = {r.lower() for r in all_flagged_rules}
 
         score = 0.3  # Baseline
 
         for rule_name in related_rule_names:
-            corroborators = CORROBORATION_MAP.get(rule_name, [])
+            corroborators = normalized_map.get(rule_name.lower(), [])
             for corroborator in corroborators:
-                if corroborator in all_flagged_rules:
+                if corroborator.lower() in normalized_flagged:
                     score += 0.25
                     break  # One corroboration per rule is enough
 
