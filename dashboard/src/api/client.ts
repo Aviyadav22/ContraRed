@@ -44,6 +44,12 @@ export interface PlaybookRule {
     match_type: string;
     suggested_language?: string;
     order_index: number;
+    detection_mode: string;
+    risk_description?: string;
+    acceptable_position?: string;
+    unacceptable_signals?: string[];
+    acceptable_signals?: string[];
+    clause_context?: string;
 }
 
 export interface PlaybookDetail extends Playbook {
@@ -66,6 +72,12 @@ export interface CreateRuleData {
     detection_patterns?: string[];
     match_type?: string;
     suggested_language?: string;
+    detection_mode?: string;
+    risk_description?: string;
+    acceptable_position?: string;
+    unacceptable_signals?: string[];
+    acceptable_signals?: string[];
+    clause_context?: string;
 }
 
 export interface ClauseLibraryItem {
