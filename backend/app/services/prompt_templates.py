@@ -13,7 +13,7 @@ Template variables:
 The LEGACY_PROMPT is kept for fallback if the new pipeline fails.
 """
 
-from typing import Optional, Dict
+from typing import Any, Dict, List, Optional
 
 
 # ---------------------------------------------------------------------------
@@ -462,6 +462,60 @@ Return ONLY a valid JSON object:
 # ---------------------------------------------------------------------------
 # Helper functions for template rendering
 # ---------------------------------------------------------------------------
+
+def filter_rules_by_contract_type(
+    rules: List[Dict[str, Any]], contract_type: str
+) -> List[Dict[str, Any]]:
+    """Filter playbook rules to only those relevant to the detected contract type.
+
+    When *contract_type* is ``"general"`` (i.e. the type could not be
+    determined), **all** rules are returned unchanged so we don't lose
+    coverage.
+
+    Args:
+        rules: List of playbook rule dictionaries (each must have a ``"name"``
+            or ``"rule_name"`` key).
+        contract_type: Detected contract type — one of ``"nda"``, ``"saas"``,
+            ``"employment"``, ``"msa"``, ``"ma"``, or ``"general"``.
+
+    Returns:
+        A (possibly shorter) list of rule dictionaries applicable to the
+        given contract type.
+    """
+    from .rules_library import RULE_TYPE_APPLICABILITY
+
+    if contract_type == "general":
+        return rules  # Unknown type — send everything
+
+    filtered: List[Dict[str, Any]] = []
+    for rule in rules:
+        rule_name = (
+            rule.get("name", rule.get("rule_name", ""))
+            if isinstance(rule, dict)
+            else getattr(rule, "name", "")
+        )
+        # Normalise to snake_case id form used in RULE_TYPE_APPLICABILITY
+        rule_id = rule_name.lower().replace(" ", "_").replace("-", "_")
+        applicable_types = RULE_TYPE_APPLICABILITY.get(rule_id, ["general"])
+        if "general" in applicable_types or contract_type in applicable_types:
+            filtered.append(rule)
+
+    return filtered
+
+
+# ---------------------------------------------------------------------------
+# Human-readable labels for detected contract types
+# ---------------------------------------------------------------------------
+
+CONTRACT_TYPE_LABELS: Dict[str, str] = {
+    "nda": "Non-Disclosure Agreement",
+    "saas": "SaaS Agreement",
+    "employment": "Employment Agreement",
+    "msa": "Master Services Agreement",
+    "ma": "M&A / Share Purchase Agreement",
+    "general": "General Commercial Agreement",
+}
+
 
 def render_system_prompt(
     jurisdiction_context: str = "",

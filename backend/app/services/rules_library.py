@@ -18,7 +18,7 @@ Categories:
   11. SaaS / Technology (6 rules)
 """
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from app.services.rule_engine import RulePattern, SmartRule, RiskLevel
 
@@ -1631,3 +1631,114 @@ def get_category_summary() -> dict:
         Dict mapping category name to count of rules.
     """
     return {cat: len(rules) for cat, rules in _CATEGORY_MAP.items()}
+
+
+# ---------------------------------------------------------------------------
+# Contract-type applicability mapping for pre-filtering.
+#
+# Keys are rule IDs (matching RulePattern.id).  Values are lists of contract
+# types where the rule is relevant.  The special value ``"general"`` means the
+# rule applies to ALL contract types and should never be filtered out.
+# ---------------------------------------------------------------------------
+
+RULE_TYPE_APPLICABILITY: Dict[str, List[str]] = {
+    # Formation — applies to ALL
+    "definitions_clause": ["general"],
+    "recitals_clause": ["general"],
+    "entire_agreement": ["general"],
+    "amendments_clause": ["general"],
+    "severability": ["general"],
+
+    # Term & Termination — applies to ALL (with exceptions)
+    "contract_duration": ["general"],
+    "auto_renewal": ["saas", "msa", "nda"],
+    "termination_for_cause": ["general"],
+    "termination_for_convenience": ["general"],
+    "cure_period": ["general"],
+    "survival_clause": ["general"],
+    "transition_assistance": ["msa", "saas"],
+
+    # Financial — applies to most
+    "payment_terms": ["msa", "saas", "ma"],
+    "late_payment": ["msa", "saas"],
+    "price_escalation": ["msa", "saas"],
+    "taxes_clause": ["msa", "saas", "ma"],
+    "set_off_rights": ["msa", "ma"],
+    "audit_rights": ["msa", "saas", "ma"],
+    "most_favored_nation": ["msa", "saas"],
+    "currency_clause": ["msa", "saas", "ma"],
+
+    # Liability — applies to ALL
+    "unlimited_liability": ["general"],
+    "liability_cap": ["general"],
+    "consequential_damages": ["general"],
+    "broad_indemnification": ["general"],
+    "indemnification_procedure": ["general"],
+    "third_party_claims": ["general"],
+    "limitation_period": ["general"],
+    "insurance_requirement": ["msa", "saas", "employment"],
+
+    # IP — context-dependent
+    "ip_assignment": ["msa", "employment", "ma"],
+    "ip_ownership": ["msa", "employment", "ma"],
+    "license_grant": ["saas", "msa", "nda"],
+    "background_ip": ["msa", "employment"],
+    "ip_indemnification": ["saas", "msa"],
+    "open_source": ["saas", "msa"],
+    "moral_rights": ["employment", "msa"],
+
+    # Confidentiality — applies to most
+    "confidentiality_obligations": ["general"],
+    "confidentiality_exceptions": ["general"],
+    "confidentiality_term": ["nda", "msa", "saas", "employment"],
+    "return_of_materials": ["nda", "msa"],
+    "data_protection": ["saas", "msa", "employment"],
+    "data_processing_agreement": ["saas"],
+    "breach_notification": ["saas", "msa"],
+    "cross_border_transfer": ["saas", "msa"],
+
+    # Reps & Warranties
+    "general_reps_warranties": ["general"],
+    "as_is_disclaimer": ["saas", "msa"],
+    "service_level": ["saas", "msa"],
+    "authority_rep": ["general"],
+    "non_infringement": ["saas", "msa"],
+    "compliance_warranty": ["general"],
+
+    # Restrictive
+    "non_compete": ["employment", "ma", "msa"],
+    "non_solicitation": ["employment", "ma", "msa", "nda"],
+    "customer_non_solicitation": ["employment", "ma"],
+    "exclusive_dealing": ["msa", "ma"],
+    "reverse_engineering": ["saas", "msa"],
+
+    # Governance — applies to ALL
+    "governing_law": ["general"],
+    "jurisdiction_clause": ["general"],
+    "arbitration": ["general"],
+    "mediation": ["general"],
+    "injunctive_relief": ["general"],
+    "jury_waiver": ["general"],
+
+    # Operational
+    "force_majeure": ["general"],
+    "assignment_restriction": ["general"],
+    "change_of_control": ["msa", "saas", "ma"],
+    "subcontracting": ["msa"],
+    "notice_provision": ["general"],
+    "anti_bribery": ["msa", "ma"],
+    "sanctions_compliance": ["msa", "ma"],
+    "regulatory_compliance": ["general"],
+    "business_continuity": ["saas", "msa"],
+    "counterparty_insolvency": ["msa", "saas", "ma"],
+    "payment_escalation_cap": ["msa", "saas"],
+
+    # SaaS / Technology
+    "sla_terms": ["saas"],
+    "sla_credits": ["saas"],
+    "data_portability": ["saas"],
+    "security_standards": ["saas"],
+    "acceptable_use": ["saas"],
+    "api_rights": ["saas"],
+    "insurance_adequacy": ["saas", "msa"],
+}

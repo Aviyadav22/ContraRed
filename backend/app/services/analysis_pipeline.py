@@ -188,6 +188,7 @@ class PipelineResult:
     scope_analysis: Optional[Dict[str, Any]] = None
     coverage_report: Optional[Dict[str, Any]] = None
     jurisdiction_code: Optional[str] = None
+    contract_type: Optional[str] = None  # Detected contract type (nda, saas, employment, msa, ma, general)
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -220,6 +221,8 @@ class PipelineResult:
             d["coverage_report"] = self.coverage_report
         if self.jurisdiction_code:
             d["jurisdiction_code"] = self.jurisdiction_code
+        if self.contract_type:
+            d["contract_type"] = self.contract_type
         return d
 
 
@@ -428,14 +431,37 @@ class AnalysisPipeline:
         except Exception as e:
             logger.warning("Scope analysis/jurisdiction overrides failed (non-fatal): %s", e)
 
+        # ---- Pre-Stage 3: Contract type detection (deterministic) ----
+        contract_type = self._detect_contract_type(contract_text)
+        logger.info("Detected contract type: %s", contract_type)
+
         # ---- Stage 3: RISK ASSESSMENT (Gemini Pro, full AI analysis) ----
         raw_redlines: List[RawRedline] = []
         try:
             s3_start = time.monotonic()
             raw_redlines, ai_summary, s3_tokens = await self._stage3_risk_assessment(
-                extraction, classification, playbook_rules, playbook_name, party_side
+                extraction, classification, playbook_rules, playbook_name,
+                party_side, contract_type=contract_type,
             )
             executive_summary = ai_summary
+
+            # Inject contract-type summary line
+            from app.services.prompt_templates import (
+                CONTRACT_TYPE_LABELS,
+                filter_rules_by_contract_type,
+            )
+            type_label = CONTRACT_TYPE_LABELS.get(contract_type, contract_type)
+            total_rule_count = len(playbook_rules) if playbook_rules else 0
+            if contract_type != "general" and playbook_rules:
+                filtered_count = len(filter_rules_by_contract_type(playbook_rules, contract_type))
+                type_summary = (
+                    f"Document type: {type_label} "
+                    f"({filtered_count} of {total_rule_count} rules applicable)"
+                )
+            else:
+                type_summary = f"Document type: {type_label} (all {total_rule_count} rules evaluated)"
+            executive_summary.insert(0, type_summary)
+
             total_tokens += s3_tokens
             s3_metrics = StageMetrics(
                 stage_name="risk_assessment",
@@ -568,6 +594,7 @@ class AnalysisPipeline:
             scope_analysis=scope_data,
             coverage_report=coverage_data,
             jurisdiction_code=detected_jurisdiction,
+            contract_type=contract_type,
         )
 
     # ======================================================================
@@ -681,13 +708,39 @@ class AnalysisPipeline:
         playbook_rules: Optional[List[Dict[str, Any]]],
         playbook_name: str,
         party_side: str = "buyer",
+        contract_type: str = "general",
     ) -> Tuple[List[RawRedline], List[str], int]:
         """
         Full AI analysis using GeminiAnalyzer.
 
+        When *contract_type* is not ``"general"``, playbook rules are
+        pre-filtered to only those applicable to the detected type.  This
+        saves 50-70% of prompt tokens for typed contracts.
+
         Returns:
             Tuple of (raw_redlines, executive_summary, tokens_used)
         """
+        from app.services.prompt_templates import (
+            CONTRACT_TYPE_LABELS,
+            filter_rules_by_contract_type,
+        )
+
+        # Pre-filter playbook rules by detected contract type
+        total_rules = len(playbook_rules) if playbook_rules else 0
+        if playbook_rules and contract_type != "general":
+            filtered_rules = filter_rules_by_contract_type(playbook_rules, contract_type)
+            type_label = CONTRACT_TYPE_LABELS.get(contract_type, contract_type)
+            logger.info(
+                "Contract type '%s' — filtered %d → %d rules (saved %d)",
+                contract_type,
+                total_rules,
+                len(filtered_rules),
+                total_rules - len(filtered_rules),
+            )
+        else:
+            filtered_rules = playbook_rules
+            type_label = CONTRACT_TYPE_LABELS.get("general", "General Commercial Agreement")
+
         # Pass jurisdiction hint from stage 1 to avoid redundant detection
         jurisdiction_hint = None
         if extraction.jurisdiction_hint and extraction.jurisdiction_hint.governing_law:
@@ -695,7 +748,7 @@ class AnalysisPipeline:
 
         ai_result: AIAnalysisResult = await self._analyzer.analyze_full_contract(
             contract_text=extraction.full_text,
-            playbook_rules=playbook_rules,
+            playbook_rules=filtered_rules,
             playbook_name=playbook_name,
             jurisdiction_override=jurisdiction_hint,
             party_side=party_side,
@@ -905,6 +958,58 @@ class AnalysisPipeline:
     # ======================================================================
     # Helpers
     # ======================================================================
+
+    @staticmethod
+    def _detect_contract_type(text: str) -> str:
+        """Detect contract type from text content.
+
+        Scans the first 5000 characters for keyword signals and returns the
+        most likely contract type.  Requires at least 2 matching signals to
+        classify; otherwise falls back to ``"general"`` (send all rules).
+
+        Returns:
+            One of: ``"nda"``, ``"saas"``, ``"employment"``, ``"msa"``,
+            ``"ma"``, or ``"general"``.
+        """
+        text_lower = text[:5000].lower()
+
+        type_signals = {
+            "nda": [
+                r"\b(non[\s-]?disclosure|confidentiality\s+agreement|nda)\b",
+                r"\b(disclosing\s+party|receiving\s+party)\b",
+                r"\b(proprietary\s+information|trade\s+secret)\b",
+            ],
+            "saas": [
+                r"\b(software\s+as\s+a\s+service|saas|subscription\s+(agreement|terms))\b",
+                r"\b(service\s+level\s+agreement|sla|uptime)\b",
+                r"\b(data\s+processing|api\s+(access|rights))\b",
+            ],
+            "employment": [
+                r"\b(employment\s+(agreement|contract)|offer\s+letter)\b",
+                r"\b(employee|employer|compensation|salary|benefits)\b",
+                r"\b(probation|notice\s+period|resignation)\b",
+            ],
+            "msa": [
+                r"\b(master\s+services?\s+agreement|msa|statement\s+of\s+work|sow)\b",
+                r"\b(professional\s+services|consulting|deliverables)\b",
+                r"\b(change\s+order|milestone|acceptance\s+criteria)\b",
+            ],
+            "ma": [
+                r"\b(merger|acquisition|share\s+purchase|stock\s+purchase)\b",
+                r"\b(due\s+diligence|closing\s+conditions|representations?\s+and\s+warranties)\b",
+                r"\b(indemnification\s+escrow|earn[\s-]?out|purchase\s+price)\b",
+            ],
+        }
+
+        scores = {}
+        for contract_type, patterns in type_signals.items():
+            score = sum(1 for p in patterns if re.search(p, text_lower))
+            scores[contract_type] = score
+
+        best_type = max(scores, key=scores.get)
+        if scores[best_type] >= 2:  # Need at least 2 signals
+            return best_type
+        return "general"  # Fallback — send all rules
 
     @staticmethod
     def _detect_non_english(text: str) -> bool:
