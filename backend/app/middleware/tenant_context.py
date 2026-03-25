@@ -60,6 +60,20 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
                 # If JWT is invalid, let the auth dependency handle the 401.
                 pass
 
+        # Fallback: try HttpOnly cookie if no Bearer token
+        if not user_id:
+            cookie_token = request.cookies.get("access_token")
+            if cookie_token:
+                try:
+                    from app.core.security import decode_token
+                    token_data = decode_token(cookie_token)
+                    if token_data:
+                        user_id = token_data.user_id
+                        org_id = token_data.organization_id
+                        is_super_admin = token_data.role == "super_admin"
+                except Exception:
+                    pass
+
         # Store in request state so downstream code can access without re-parsing
         request.state.tenant_user_id = user_id
         request.state.tenant_org_id = org_id
@@ -102,7 +116,8 @@ async def set_tenant_context(
                 text("SELECT set_config('app.is_super_admin', 'true', true)"),
             )
     except Exception as e:
-        logger.warning("Failed to set tenant context: %s", e)
+        logger.error("Failed to set tenant context, aborting request: %s", e)
+        raise
 
 
 async def clear_tenant_context(db):

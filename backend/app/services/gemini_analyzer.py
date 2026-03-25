@@ -99,7 +99,8 @@ def _classify_gemini_error(e: Exception) -> AIServiceError:
         return AIServiceTimeout()
     if "api key" in error_msg or ("invalid" in error_msg and "key" in error_msg):
         return AIServiceUnavailable("AI API key is invalid. Please check your configuration.")
-    return AIServiceError(f"AI operation failed: {type(e).__name__}: {e}", "ai_error")
+    logger.error("AI operation failed: %s: %s", type(e).__name__, e)
+    return AIServiceError("AI analysis encountered an unexpected error. Please try again.", "ai_error")
 
 
 _VALID_RISK_LEVELS = {"RED", "YELLOW", "GREEN"}
@@ -388,6 +389,19 @@ class GeminiAnalyzer:
                     redline_type=rtype,
                     confidence=ai_confidence,
                 ))
+
+            # Validate response size to prevent unbounded payloads
+            MAX_REDLINES = 200
+            MAX_FIELD_LENGTH = 5000
+
+            if len(redlines) > MAX_REDLINES:
+                logger.warning("AI returned %d redlines, truncating to %d", len(redlines), MAX_REDLINES)
+                redlines = redlines[:MAX_REDLINES]
+            for redline in redlines:
+                for field in ("original_text", "explanation", "recommendation"):
+                    val = getattr(redline, field, None)
+                    if isinstance(val, str) and len(val) > MAX_FIELD_LENGTH:
+                        setattr(redline, field, val[:MAX_FIELD_LENGTH] + "... [truncated]")
 
             # Estimate tokens used
             tokens_estimate = len(response_text.split())

@@ -5,9 +5,11 @@ Handles password reset emails, dunning notifications, and other transactional em
 """
 
 import asyncio
+import html
 import logging
 from datetime import datetime
 from typing import Optional
+from urllib.parse import quote
 
 from app.core.config import settings
 
@@ -41,7 +43,7 @@ async def send_password_reset_email(to: str, token: str) -> bool:
     if not _ensure_configured():
         return False
 
-    reset_url = f"{settings.FRONTEND_URL}/reset-password?token={token}"
+    reset_url = f"{settings.FRONTEND_URL}/reset-password?token={quote(token, safe='')}"
 
     html_body = f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
@@ -94,6 +96,9 @@ async def send_dunning_email(
     if not _ensure_configured():
         return False
 
+    safe_name = html.escape(user_name)
+    safe_plan = html.escape(plan)
+
     retry_info = ""
     if next_retry_at:
         retry_info = f"We'll retry your payment on {next_retry_at.strftime('%B %d, %Y')}."
@@ -104,10 +109,10 @@ async def send_dunning_email(
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
         <h2 style="color: #dc2626; margin-bottom: 24px;">Payment Failed</h2>
         <p style="color: #4a4a4a; line-height: 1.6;">
-            Hi {user_name},
+            Hi {safe_name},
         </p>
         <p style="color: #4a4a4a; line-height: 1.6;">
-            We were unable to process your payment for the ContraRed <strong>{plan.title()}</strong> plan.
+            We were unable to process your payment for the ContraRed <strong>{safe_plan.title()}</strong> plan.
             This is attempt {attempts} of 4.
         </p>
         <p style="color: #4a4a4a; line-height: 1.6;">
@@ -134,7 +139,7 @@ async def send_dunning_email(
         await loop.run_in_executor(None, lambda: resend.Emails.send({
             "from": settings.EMAIL_FROM,
             "to": [user_email],
-            "subject": f"Action Required: Payment Failed for ContraRed {plan.title()} Plan",
+            "subject": f"Action Required: Payment Failed for ContraRed {safe_plan.title()} Plan",
             "html": html_body,
         }))
         logger.info("Dunning email sent to %s (attempt %d)", user_email[:3] + "***", attempts)

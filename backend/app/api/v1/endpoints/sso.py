@@ -12,6 +12,7 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import secrets
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -29,7 +30,7 @@ from app.core.config import settings
 from app.core.permissions import require_permission
 from app.services import sso_service
 from app.services.token_service import get_token_blacklist
-from app.api.v1.endpoints.auth import limiter
+from app.api.v1.endpoints.auth import limiter, get_current_user
 from app.api.v1.endpoints.billing import require_tier
 
 logger = logging.getLogger(__name__)
@@ -67,7 +68,7 @@ class SSOAuthorizeRequest(BaseModel):
 
 class SSOCallbackRequest(BaseModel):
     code: str = Field(..., description="Authorization code from WorkOS")
-    state: Optional[str] = Field(None, description="CSRF state parameter")
+    state: str = Field(..., description="CSRF state parameter")
 
 
 class SSOStatusResponse(BaseModel):
@@ -148,12 +149,15 @@ async def sso_authorize(
     # Default redirect URI (the callback endpoint on this server)
     callback_uri = redirect_uri or str(request.url_for("sso_callback"))
 
+    # Generate CSRF state token
+    state = secrets.token_urlsafe(32)
+
     try:
-        authorization_url, state = await sso_service.get_authorization_url(
+        authorization_url, returned_state = await sso_service.get_authorization_url(
             org_id=org_uuid,
             db=db,
             redirect_uri=callback_uri,
-            state=None,  # WorkOS generates state internally
+            state=state,
         )
     except ValueError as e:
         logger.error("SSO authorization failed for org %s: %s", org_id, e)
@@ -162,7 +166,7 @@ async def sso_authorize(
             detail="SSO authorization failed",
         )
 
-    return {"authorization_url": authorization_url}
+    return {"authorization_url": authorization_url, "state": returned_state}
 
 
 @router.post("/callback", response_model=SSOLoginResponse)
@@ -182,6 +186,13 @@ async def sso_callback(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="SSO is not configured",
+        )
+
+    # Validate CSRF state parameter
+    if not data.state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing CSRF state parameter",
         )
 
     try:
@@ -263,9 +274,14 @@ async def sso_callback(
 @router.get("/status", response_model=SSOStatusResponse)
 async def sso_status(
     org_id: str = Query(..., description="Organization UUID"),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Get SSO configuration status for an organization."""
+    # Verify user belongs to the queried org (or is super_admin)
+    if str(current_user.organization_id) != org_id and current_user.role.value != "super_admin":
+        raise HTTPException(status_code=403, detail="Access denied")
+
     try:
         org_uuid = uuid.UUID(org_id)
     except ValueError:

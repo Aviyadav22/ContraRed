@@ -83,6 +83,7 @@ export default function Register() {
                                 style={{ ...inputStyle, '--tw-ring-color': '#C0392B40' } as React.CSSProperties}
                                 placeholder="John Doe"
                                 required
+                                maxLength={100}
                             />
                         </div>
 
@@ -99,6 +100,7 @@ export default function Register() {
                                 style={{ ...inputStyle, '--tw-ring-color': '#C0392B40' } as React.CSSProperties}
                                 placeholder="you@company.com"
                                 required
+                                maxLength={255}
                             />
                         </div>
 

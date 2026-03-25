@@ -74,6 +74,22 @@ async def submit_feedback(
     db: AsyncSession = Depends(get_db),
 ):
     """Submit feedback on a rule match (false positive, false negative, etc.)."""
+    # Validate that the playbook rule belongs to user's org or is public
+    if feedback.playbook_rule_id:
+        from app.models.playbook import PlaybookRule
+        rule_result = await db.execute(
+            select(PlaybookRule)
+            .join(Playbook, PlaybookRule.playbook_id == Playbook.id)
+            .where(PlaybookRule.id == feedback.playbook_rule_id)
+            .where(
+                (Playbook.is_public == True) |
+                (Playbook.organization_id == current_user.organization_id) |
+                (Playbook.created_by == current_user.id)
+            )
+        )
+        if not rule_result.scalar_one_or_none():
+            raise HTTPException(status_code=403, detail="Access denied to the specified playbook rule")
+
     entry = RuleFeedback(
         organization_id=current_user.organization_id,
         user_id=current_user.id,

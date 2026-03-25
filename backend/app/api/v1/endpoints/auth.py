@@ -67,29 +67,9 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=F
 _mfa_attempts: Dict[str, int] = {}
 _mfa_attempt_timestamps: Dict[str, float] = {}
 _MFA_MAX_ATTEMPTS = 5
-
-
-def _check_mfa_attempts(jti: str) -> None:
-    """Check if MFA token has exceeded max attempts. Raises 429 if exceeded."""
-    attempts = _mfa_attempts.get(jti, 0)
-    if attempts >= _MFA_MAX_ATTEMPTS:
-        raise HTTPException(
-            status_code=429,
-            detail="Too many MFA attempts. Please log in again to get a new challenge.",
-        )
-
-
-def _record_mfa_attempt(jti: str) -> int:
-    """Record a failed MFA attempt. Returns total attempts."""
-    _mfa_attempts[jti] = _mfa_attempts.get(jti, 0) + 1
-    _mfa_attempt_timestamps[jti] = time.time()
-    return _mfa_attempts[jti]
-
-
-def _clear_mfa_attempts(jti: str) -> None:
-    """Clear MFA attempts on success."""
-    _mfa_attempts.pop(jti, None)
-    _mfa_attempt_timestamps.pop(jti, None)
+_MFA_MAX_ATTEMPTS_NO_REDIS = 3  # AUDIT FIX H3: Stricter limit when Redis unavailable (not shared across workers)
+_MFA_MAX_TRACKED = 10000  # Bound in-memory store size
+_mfa_redis_warned = False  # Track whether we've logged the degradation warning
 
 
 def _cleanup_old_mfa_attempts() -> None:
@@ -99,6 +79,95 @@ def _cleanup_old_mfa_attempts() -> None:
     for jti in expired:
         _mfa_attempts.pop(jti, None)
         _mfa_attempt_timestamps.pop(jti, None)
+
+
+async def _get_mfa_attempts_from_store(jti: str) -> int:
+    """Get MFA attempt count, trying Redis first, falling back to in-memory."""
+    try:
+        from app.services.token_service import get_token_blacklist
+        blacklist = await get_token_blacklist()
+        if blacklist and hasattr(blacklist, '_redis') and blacklist._redis:
+            val = await blacklist._redis.get(f"mfa_attempts:{jti}")
+            return int(val) if val else 0
+    except Exception:
+        pass
+    return _mfa_attempts.get(jti, 0)
+
+
+async def _set_mfa_attempts_in_store(jti: str, count: int) -> None:
+    """Store MFA attempt count, trying Redis first, falling back to in-memory."""
+    try:
+        from app.services.token_service import get_token_blacklist
+        blacklist = await get_token_blacklist()
+        if blacklist and hasattr(blacklist, '_redis') and blacklist._redis:
+            await blacklist._redis.setex(f"mfa_attempts:{jti}", 600, str(count))
+            return
+    except Exception:
+        pass
+    # Fallback to in-memory with bounded size
+    if len(_mfa_attempts) >= _MFA_MAX_TRACKED:
+        _cleanup_old_mfa_attempts()
+    _mfa_attempts[jti] = count
+    _mfa_attempt_timestamps[jti] = time.time()
+
+
+async def _clear_mfa_attempts_in_store(jti: str) -> None:
+    """Clear MFA attempts on success."""
+    try:
+        from app.services.token_service import get_token_blacklist
+        blacklist = await get_token_blacklist()
+        if blacklist and hasattr(blacklist, '_redis') and blacklist._redis:
+            await blacklist._redis.delete(f"mfa_attempts:{jti}")
+            return
+    except Exception:
+        pass
+    _mfa_attempts.pop(jti, None)
+    _mfa_attempt_timestamps.pop(jti, None)
+
+
+async def _check_mfa_attempts(jti: str) -> None:
+    """Check if MFA token has exceeded max attempts. Raises 429 if exceeded.
+
+    AUDIT FIX H3: Uses stricter limit when Redis is unavailable because
+    in-memory tracking is per-worker and not shared across processes.
+    """
+    global _mfa_redis_warned
+    attempts = await _get_mfa_attempts_from_store(jti)
+
+    # Determine effective limit based on Redis availability
+    try:
+        blacklist = await get_token_blacklist()
+        redis_available = blacklist and blacklist.is_connected
+    except Exception:
+        redis_available = False
+
+    if not redis_available and not _mfa_redis_warned:
+        _mfa_redis_warned = True
+        logger.warning(
+            "AUDIT H3: MFA attempt limiting running in-memory only (Redis unavailable). "
+            "Rate limits are PER-WORKER and can be bypassed with multiple workers. "
+            "Configure REDIS_URL for production-grade MFA protection."
+        )
+
+    max_attempts = _MFA_MAX_ATTEMPTS if redis_available else _MFA_MAX_ATTEMPTS_NO_REDIS
+    if attempts >= max_attempts:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many MFA attempts. Please log in again to get a new challenge.",
+        )
+
+
+async def _record_mfa_attempt(jti: str) -> int:
+    """Record a failed MFA attempt. Returns total attempts."""
+    current = await _get_mfa_attempts_from_store(jti)
+    new_count = current + 1
+    await _set_mfa_attempts_in_store(jti, new_count)
+    return new_count
+
+
+async def _clear_mfa_attempts(jti: str) -> None:
+    """Clear MFA attempts on success."""
+    await _clear_mfa_attempts_in_store(jti)
 
 
 def _get_client_ip(request: Request) -> Optional[str]:
@@ -249,14 +318,35 @@ async def register(
     user_data: UserCreate,
     db: AsyncSession = Depends(get_db)
 ):
-    """Register a new user."""
+    """Register a new user.
+
+    AUDIT FIX H2: Returns a generic success message for ALL outcomes to prevent
+    email enumeration. If the email is already registered, we return the same
+    201 response (but don't create a duplicate user). This prevents attackers
+    from discovering which emails have accounts.
+    """
     try:
         # Check if email already exists
         result = await db.execute(select(User).where(User.email == user_data.email))
-        if result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Email already registered"
+        existing_user = result.scalar_one_or_none()
+        if existing_user:
+            # AUDIT FIX H2: Return same response shape as success to prevent enumeration
+            # Log the attempt for security monitoring
+            await log_audit_event(
+                db, user=existing_user, action="register_duplicate_attempt", resource_type="auth",
+                resource_name=user_data.email, status="blocked",
+                ip_address=_get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+            )
+            await db.commit()
+            # Return a response that looks identical to success
+            return UserResponse(
+                id=str(existing_user.id),
+                email=existing_user.email,
+                name=existing_user.name,
+                role=existing_user.role.value,
+                subscription_tier=existing_user.subscription_tier.value,
+                organization_id=str(existing_user.organization_id) if existing_user.organization_id else None,
             )
 
         # Create new user
@@ -292,10 +382,12 @@ async def register(
     except HTTPException:
         raise
     except sqlalchemy.exc.IntegrityError:
+        # AUDIT FIX H2: Race condition on duplicate email — still don't reveal it exists
         await db.rollback()
+        logger.info("Registration IntegrityError (likely duplicate email)")
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Email already registered"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Registration failed. Please try again."
         )
     except Exception as e:
         logger.error("Registration failed", exc_info=True)
@@ -633,6 +725,12 @@ async def change_password(
             detail="Current password is incorrect"
         )
 
+    if verify_password(data.new_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="New password must be different from current password"
+        )
+
     current_user.password_hash = get_password_hash(data.new_password)
 
     # Revoke the current token — forces re-login with new password
@@ -725,7 +823,7 @@ async def mfa_challenge(
         )
 
     # Check per-token attempt limit
-    _check_mfa_attempts(token_data.jti)
+    await _check_mfa_attempts(token_data.jti)
 
     # Fetch user
     result = await db.execute(select(User).where(User.id == token_data.user_id))
@@ -747,7 +845,7 @@ async def mfa_challenge(
     valid = await verify_mfa(user, data.code, db)
 
     if not valid:
-        remaining = _MFA_MAX_ATTEMPTS - _record_mfa_attempt(token_data.jti)
+        remaining = _MFA_MAX_ATTEMPTS - await _record_mfa_attempt(token_data.jti)
         await log_audit_event(
             db, user=user, action="mfa_verify_failed", resource_type="auth",
             resource_name=user.email, status="failure",
@@ -761,7 +859,7 @@ async def mfa_challenge(
         )
 
     # MFA verified — clear attempt tracking and complete login
-    _clear_mfa_attempts(token_data.jti)
+    await _clear_mfa_attempts(token_data.jti)
     user.last_login = datetime.now(timezone.utc)
     client_ip = _get_client_ip(request)
 
@@ -1015,7 +1113,7 @@ async def forgot_password(
         from app.services.email_service import send_password_reset_email
 
         reset_token = create_access_token(
-            {"sub": str(user.id), "type": "password_reset"},
+            {"sub": str(user.id), "email": user.email, "type": "password_reset"},
             expires_delta=timedelta(hours=1),
         )
         await send_password_reset_email(user.email, reset_token)

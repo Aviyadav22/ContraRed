@@ -20,6 +20,9 @@
     Referrer-Policy = "strict-origin-when-cross-origin"
     Permissions-Policy = "camera=(), microphone=(), geolocation=(), payment=()"
     # Note: X-Frame-Options intentionally omitted — add-in runs in Office iframe
+    # Note: 'unsafe-eval' in script-src is required by Office.js — the Office Add-in
+    # runtime uses eval() internally for message deserialization. Removing it will
+    # break the add-in in the Office WebView container.
     Content-Security-Policy = "default-src 'self' https://contrared-api.onrender.com; script-src 'self' 'unsafe-eval' https://appsforoffice.microsoft.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' https://contrared-api.onrender.com https://contrared-addin.netlify.app; img-src 'self' data:; frame-ancestors 'self' https://*.office.com https://*.microsoft.com https://*.office365.com;"
 
 # Redirect root to taskpane

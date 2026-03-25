@@ -12,7 +12,6 @@ import {
     getClauseAnalytics,
     generateAnalyticsReport,
     listAnalyticsReports,
-    getStoredTokens,
     type RiskBreakdownItem,
 } from '@/api/client';
 import AppHeader from '@/components/AppHeader';
@@ -537,10 +536,13 @@ export default function Analytics() {
 
     const handleExport = async () => {
         const url = getAnalyticsExportUrl(days);
-        const tokens = getStoredTokens();
         try {
             const res = await fetch(url, {
-                headers: { Authorization: `Bearer ${tokens?.access_token}` },
+                credentials: 'include',
+                headers: {
+                    'Accept': 'text/csv',
+                    'X-CSRF-Token': document.cookie.match(/csrf_token=([^;]+)/)?.[1] || '',
+                },
             });
             if (!res.ok) throw new Error(`Export failed: ${res.status}`);
             const blob = await res.blob();

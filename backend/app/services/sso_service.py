@@ -45,7 +45,7 @@ try:
 except ImportError:
     logger.info("workos-python package not installed — SSO features disabled")
 except Exception as e:
-    logger.warning(f"WorkOS initialization failed: {e}")
+    logger.warning("WorkOS initialization failed: %s", e)
 
 
 def is_sso_available() -> bool:
@@ -111,10 +111,10 @@ async def get_authorization_url(
             redirect_uri=redirect_uri,
             state=generated_state,
         )
-        logger.info(f"SSO authorization URL generated for org {org.name}")
+        logger.info("SSO authorization URL generated for org %s", org.name)
         return authorization_url, generated_state
     except Exception as e:
-        logger.error(f"WorkOS authorization URL generation failed: {e}", exc_info=True)
+        logger.error("WorkOS authorization URL generation failed: %s", e, exc_info=True)
         raise ValueError(f"Failed to generate SSO login URL: {e}")
 
 
@@ -146,7 +146,7 @@ async def handle_sso_callback(
         profile_and_token = _workos_client.sso.get_profile_and_token(code)
         profile = profile_and_token.profile
     except Exception as e:
-        logger.error(f"WorkOS SSO callback verification failed: {e}", exc_info=True)
+        logger.error("WorkOS SSO callback verification failed: %s", e, exc_info=True)
         raise ValueError(f"SSO verification failed: {e}")
 
     # Extract profile data
@@ -194,13 +194,10 @@ async def handle_sso_callback(
         if not user.sso_provider_id:
             user.sso_provider_id = idp_id
 
-        # Ensure user is in the correct org
-        if user.organization_id != org.id:
-            logger.warning(
-                f"SSO user {email} belongs to org {user.organization_id} but "
-                f"authenticated via org {org.id}. Updating org assignment."
-            )
-            user.organization_id = org.id
+        # Guard against silent org reassignment
+        if user.organization_id and user.organization_id != org.id:
+            logger.warning("SSO login attempted for user %s who belongs to different org", user.id)
+            raise ValueError("User already belongs to a different organization. Contact support to transfer accounts.")
 
         # Activate user if inactive
         if not user.is_active:
@@ -225,8 +222,8 @@ async def handle_sso_callback(
     await db.flush()
 
     logger.info(
-        f"SSO {'created' if is_new_user else 'authenticated'} user {email} "
-        f"for org {org.name}"
+        "SSO %s user %s for org %s",
+        "created" if is_new_user else "authenticated", email, org.name,
     )
 
     return user, org, is_new_user
@@ -283,7 +280,7 @@ async def enable_sso_for_org(
     org.sso_provider = sso_provider
     await db.flush()
 
-    logger.info(f"SSO enabled for org {org.name} (provider: {sso_provider})")
+    logger.info("SSO enabled for org %s (provider: %s)", org.name, sso_provider)
     return org
 
 
@@ -301,5 +298,5 @@ async def disable_sso_for_org(org_id: uuid.UUID, db: AsyncSession) -> Organizati
     # Keep workos_org_id for potential re-enable
     await db.flush()
 
-    logger.info(f"SSO disabled for org {org.name}")
+    logger.info("SSO disabled for org %s", org.name)
     return org

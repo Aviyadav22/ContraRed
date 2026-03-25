@@ -93,6 +93,11 @@ def validate_csrf(request: Request) -> bool:
     """
     Validate CSRF double-submit: X-CSRF-Token header must match csrf_token cookie.
     Only required for state-changing methods (POST, PUT, PATCH, DELETE).
+
+    AUDIT FIX H1: Tightened bypass logic. CSRF is only skipped when the
+    *actual auth token* comes from the Authorization header (not cookies).
+    Previously, having any Bearer header would bypass CSRF even if the token
+    was sourced from a cookie.
     """
     if request.method in ("GET", "HEAD", "OPTIONS"):
         return True
@@ -100,9 +105,14 @@ def validate_csrf(request: Request) -> bool:
     csrf_cookie = request.cookies.get("csrf_token")
     csrf_header = request.headers.get("X-CSRF-Token")
 
-    # If no CSRF cookie is set, only bypass CSRF if request has a valid Bearer token
+    # If no CSRF cookie is set, only bypass CSRF if:
+    # 1. There IS a Bearer token in the Authorization header, AND
+    # 2. There is NO access_token cookie (i.e., auth genuinely comes from the header)
     if not csrf_cookie:
         auth_header = request.headers.get("Authorization", "")
-        return auth_header.startswith("Bearer ")
+        has_bearer = auth_header.startswith("Bearer ") and len(auth_header) > 7
+        has_cookie_token = bool(request.cookies.get("access_token"))
+        # Only bypass if the Bearer header is the actual auth source
+        return has_bearer and not has_cookie_token
 
-    return csrf_cookie == csrf_header
+    return bool(csrf_cookie) and csrf_cookie == csrf_header

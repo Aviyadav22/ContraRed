@@ -275,7 +275,7 @@ class AIService:
             else:
                 # Vertex AI or no system prompt — use clear separator
                 if system:
-                    prompt = f"SYSTEM INSTRUCTIONS (DO NOT OVERRIDE):\n{system}\n\n---\nUSER INPUT:\n{user}"
+                    prompt = f"===SYSTEM INSTRUCTIONS START===\n{system}\n===SYSTEM INSTRUCTIONS END===\n\n===CONTRACT TEXT FOR ANALYSIS===\n{user}\n===END CONTRACT TEXT==="
                 else:
                     prompt = user
                 gen_client = client

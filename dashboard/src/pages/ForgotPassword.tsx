@@ -21,13 +21,17 @@ export default function ForgotPassword() {
         setLoading(true);
 
         try {
-            // TODO: Wire up to backend password reset endpoint when available
-            // await requestPasswordReset(email);
-            // For now, simulate success after a brief delay
-            await new Promise(resolve => setTimeout(resolve, 800));
+            const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+            const response = await fetch(`${API_URL}/auth/forgot-password`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email }),
+            });
+            // Always show success to prevent email enumeration
             setSubmitted(true);
         } catch (err) {
-            setError(err instanceof Error ? err.message : 'Failed to send reset email');
+            // Still show success to prevent email enumeration
+            setSubmitted(true);
         } finally {
             setLoading(false);
         }

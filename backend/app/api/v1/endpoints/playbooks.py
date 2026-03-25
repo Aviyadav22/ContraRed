@@ -3,16 +3,19 @@ Playbook management endpoints.
 Full CRUD for playbooks, rules, tiers, conditions, dependencies, versions, marketplace.
 """
 
+import logging
 from typing import List, Optional, Any
 import uuid
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select, or_, delete
 from sqlalchemy.orm import selectinload
 
 import re
+
+logger = logging.getLogger(__name__)
 
 from app.db.session import get_db
 from app.models.user import User
@@ -24,7 +27,7 @@ from app.models.playbook import (
     PlaybookRuleDependency, PlaybookVersion,
     PlaybookMarketplace, PlaybookRating,
 )
-from app.api.v1.endpoints.auth import get_current_user
+from app.api.v1.endpoints.auth import get_current_user, limiter
 from app.api.dependencies import require_permission
 from app.api.v1.endpoints.billing import require_tier
 from app.models.audit_log import log_audit_event
@@ -255,7 +258,9 @@ async def list_playbooks(
 
 
 @router.post("/", response_model=PlaybookResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("30/minute")  # AUDIT FIX M3: Rate limit playbook write endpoints
 async def create_playbook(
+    request: Request,
     playbook_data: PlaybookCreate,
     current_user: User = Depends(require_permission("playbook.admin")),
     db: AsyncSession = Depends(get_db),
@@ -749,7 +754,9 @@ async def get_playbook(
 
 
 @router.put("/{playbook_id}", response_model=PlaybookResponse)
+@limiter.limit("30/minute")  # AUDIT FIX M3
 async def update_playbook(
+    request: Request,
     playbook_id: UUID,
     update_data: PlaybookUpdate,
     current_user: User = Depends(require_permission("playbook.admin")),
@@ -809,7 +816,9 @@ async def update_playbook(
 
 
 @router.delete("/{playbook_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")  # AUDIT FIX M3
 async def delete_playbook(
+    request: Request,
     playbook_id: UUID,
     current_user: User = Depends(require_permission("playbook.admin")),
     db: AsyncSession = Depends(get_db)
@@ -876,7 +885,9 @@ async def toggle_publish(
 # ============================================================================
 
 @router.post("/{playbook_id}/rules", response_model=RuleResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("30/minute")  # AUDIT FIX M3
 async def add_rule(
+    request: Request,
     playbook_id: UUID,
     rule_data: RuleCreate,
     current_user: User = Depends(require_permission("playbook.admin")),
@@ -902,7 +913,8 @@ async def add_rule(
             try:
                 _safe_compile_regex(pattern)
             except (re.error, ValueError) as e:
-                raise HTTPException(status_code=400, detail=f"Invalid regex pattern: {e}")
+                logger.warning("Invalid regex pattern submitted: %s", e)
+                raise HTTPException(status_code=400, detail="Invalid regex pattern. Please check your pattern syntax.")
 
     # Validate risk level
     try:
@@ -1050,7 +1062,9 @@ async def update_rule(
 
 
 @router.delete("/{playbook_id}/rules/{rule_id}", status_code=status.HTTP_204_NO_CONTENT)
+@limiter.limit("20/minute")  # AUDIT FIX M3
 async def delete_rule(
+    request: Request,
     playbook_id: UUID,
     rule_id: UUID,
     current_user: User = Depends(require_permission("playbook.admin")),

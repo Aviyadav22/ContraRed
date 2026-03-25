@@ -19,6 +19,18 @@ function escapeHtml(str: string): string {
   return div.innerHTML;
 }
 
+/** Compute a simple numeric hash of text for document fingerprinting. */
+function simpleHash(text: string): string {
+    let hash = 0;
+    const sample = text.substring(0, 500) + text.substring(Math.max(0, text.length - 500));
+    for (let i = 0; i < sample.length; i++) {
+        const chr = sample.charCodeAt(i);
+        hash = ((hash << 5) - hash) + chr;
+        hash |= 0; // Convert to 32-bit integer
+    }
+    return hash.toString(36) + '_' + text.length;
+}
+
 /** Show a temporary toast message on a risk card. */
 function showToastOnCard(card: HTMLElement, message: string): void {
   const existing = card.querySelector('.card-toast');
@@ -44,6 +56,7 @@ const log = {
 // ============================================================================
 
 /** Save current scan state to localStorage for session persistence. */
+// Note: Scan state may contain contract excerpts. Cleared on logout and after 24h TTL.
 function saveScanState(docFingerprint?: string): void {
     if (!currentAIAnalysis) return;
     try {
@@ -76,7 +89,7 @@ async function restoreScanState(): Promise<boolean> {
         if (state.docHash) {
             try {
                 const currentText = await getDocumentText();
-                const currentHash = currentText.substring(0, 200);
+                const currentHash = simpleHash(currentText);
                 if (state.docHash !== currentHash) {
                     log.info('Document fingerprint mismatch — not restoring stale scan state');
                     localStorage.removeItem('contrared_scan_state');
@@ -845,8 +858,10 @@ function handleLogout(): void {
   }
 
   // Clear all persisted state (but keep onboarding — it's per-device, not per-session)
+  // Note: Scan state may contain contract excerpts. Cleared on logout and after 24h TTL.
   localStorage.removeItem('contrared_scan_state');
   localStorage.removeItem('contrared_negotiation_session');
+  localStorage.removeItem('contrared_doc_hash');
 
   // Reset UI
   if (resultsSection()) resultsSection()!.style.display = 'none';
@@ -1077,7 +1092,7 @@ async function scanDocument(): Promise<void> {
     fixedRisks.clear();
 
     // Store document fingerprint for identity check on restore
-    const docFingerprint = documentText.substring(0, 200);
+    const docFingerprint = simpleHash(documentText);
     localStorage.setItem('contrared_doc_hash', docFingerprint);
 
     // Step 3: Display AI results (executive summary + redlines)
@@ -2013,8 +2028,8 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
   if (confScore != null && confLevel) {
     const confColor = confLevel === 'HIGH' ? '#166534' : confLevel === 'MEDIUM' ? '#92400E' : '#991B1B';
     const confBg = confLevel === 'HIGH' ? '#DCFCE7' : confLevel === 'MEDIUM' ? '#FEF3C7' : '#FEE2E2';
-    const verStatus = redline.verification_status ? ` (${redline.verification_status})` : '';
-    confidenceBadge = `<span class="confidence-badge" style="font-size:10px;padding:1px 6px;border-radius:8px;background:${confBg};color:${confColor};margin-left:auto;" title="Confidence: ${confScore}%${verStatus}">${confLevel} ${confScore}%</span>`;
+    const verStatus = redline.verification_status ? ` (${escapeHtml(redline.verification_status)})` : '';
+    confidenceBadge = `<span class="confidence-badge" style="font-size:10px;padding:1px 6px;border-radius:8px;background:${confBg};color:${confColor};margin-left:auto;" title="Confidence: ${confScore}%${verStatus}">${escapeHtml(confLevel)} ${confScore}%</span>`;
   }
 
   // Warn when a RED risk has LOW confidence — lawyer should verify manually

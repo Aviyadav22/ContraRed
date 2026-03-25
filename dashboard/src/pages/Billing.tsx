@@ -12,6 +12,19 @@ const PLAN_PRICES: Record<string, { inr: string; usd: string }> = {
     Enterprise: { inr: 'Custom', usd: 'Custom' },
 };
 
+const ALLOWED_PAYMENT_DOMAINS = ['razorpay.com', 'stripe.com', 'checkout.stripe.com', 'api.razorpay.com'];
+
+function isAllowedPaymentUrl(url: string): boolean {
+    try {
+        const parsed = new URL(url);
+        return ALLOWED_PAYMENT_DOMAINS.some(domain =>
+            parsed.hostname === domain || parsed.hostname.endsWith('.' + domain)
+        );
+    } catch {
+        return false;
+    }
+}
+
 export default function Billing() {
     const user = getStoredUser();
     const [currency, setCurrency] = useState<Currency>('INR');
@@ -55,10 +68,11 @@ export default function Billing() {
         try {
             const gateway = currency === 'INR' ? 'razorpay' : 'stripe';
             const result = await createSubscription(planName.toLowerCase(), gateway, currency);
-            if (result.short_url) {
-                window.location.href = result.short_url;
-            } else if (result.checkout_url) {
-                window.location.href = result.checkout_url;
+            const paymentUrl = result.short_url || result.checkout_url;
+            if (paymentUrl && isAllowedPaymentUrl(paymentUrl)) {
+                window.location.href = paymentUrl;
+            } else if (paymentUrl) {
+                showToast('Invalid payment URL received. Please try again.');
             } else {
                 showToast('Payment integration coming soon. Contact support@contrared.ai to upgrade.');
             }

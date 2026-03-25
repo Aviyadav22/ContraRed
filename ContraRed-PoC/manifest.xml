@@ -18,6 +18,7 @@
   <AppDomains>
     <AppDomain>https://contrared-addin.netlify.app</AppDomain>
     <AppDomain>https://contrared.com</AppDomain>
+    <AppDomain>https://contrared-api.onrender.com</AppDomain>
   </AppDomains>
 
   <Hosts>

@@ -31,6 +31,7 @@ _IP_HISTORY_PREFIX = "user:ip_history:"
 # Limits
 MAX_CONCURRENT_SESSIONS = 5
 MAX_IP_HISTORY = 20
+MAX_MEMORY_BLACKLIST_SIZE = 10000
 
 
 class TokenBlacklistService:
@@ -38,6 +39,8 @@ class TokenBlacklistService:
 
     Falls back to an in-memory dict when Redis is unavailable so that
     logout / token revocation still works (within a single process).
+    The in-memory blacklist is bounded to MAX_MEMORY_BLACKLIST_SIZE entries
+    and periodically cleaned of expired entries.
     """
 
     def __init__(self) -> None:
@@ -45,6 +48,8 @@ class TokenBlacklistService:
         self._enabled: bool = bool(settings.REDIS_URL)
         # In-memory fallback: jti -> expiry timestamp
         self._memory_blacklist: Dict[str, float] = {}
+        self._last_cleanup: float = 0.0
+        self._cleanup_interval: float = 60.0  # Clean up every 60 seconds at most
 
     async def connect(self) -> bool:
         """Connect to Redis. Returns True on success."""
@@ -75,11 +80,23 @@ class TokenBlacklistService:
         return self._client is not None
 
     def _cleanup_memory_blacklist(self) -> None:
-        """Remove expired entries from the in-memory blacklist."""
+        """Remove expired entries from the in-memory blacklist.
+
+        Also enforces MAX_MEMORY_BLACKLIST_SIZE by evicting the soonest-to-expire
+        entries when the limit is exceeded. Runs at most once per cleanup interval.
+        """
         now = time.time()
+        if now - self._last_cleanup < self._cleanup_interval and len(self._memory_blacklist) < MAX_MEMORY_BLACKLIST_SIZE:
+            return
+        self._last_cleanup = now
+        # Remove expired entries
         self._memory_blacklist = {
             k: v for k, v in self._memory_blacklist.items() if v > now
         }
+        # Enforce size limit by removing soonest-to-expire entries
+        if len(self._memory_blacklist) > MAX_MEMORY_BLACKLIST_SIZE:
+            sorted_entries = sorted(self._memory_blacklist.items(), key=lambda x: x[1])
+            self._memory_blacklist = dict(sorted_entries[-MAX_MEMORY_BLACKLIST_SIZE:])
 
     async def revoke(self, jti: str, ttl: Optional[int] = None) -> bool:
         """Add a token JTI to the blacklist.

@@ -135,7 +135,7 @@ async def setup_mfa(user: User, db: AsyncSession) -> Tuple[str, str, List[str]]:
 
     await db.flush()
 
-    logger.info(f"MFA setup initiated for user {user.email}")
+    logger.info("MFA setup initiated for user %s", user.email)
     return secret, uri, backup_codes
 
 
@@ -155,7 +155,7 @@ async def confirm_mfa_setup(user: User, code: str, db: AsyncSession) -> bool:
     user.mfa_enabled = True
     await db.flush()
 
-    logger.info(f"MFA confirmed and enabled for user {user.email}")
+    logger.info("MFA confirmed and enabled for user %s", user.email)
     return True
 
 
@@ -191,8 +191,8 @@ async def _try_backup_code(user: User, code: str, db: AsyncSession) -> bool:
             user.mfa_backup_codes = {"codes": remaining}
             await db.flush()
             logger.info(
-                f"Backup code used for user {user.email}. "
-                f"{len(remaining)} codes remaining."
+                "Backup code used for user %s. %d codes remaining.",
+                user.email, len(remaining),
             )
             return True
 
@@ -205,7 +205,7 @@ async def disable_mfa(user: User, db: AsyncSession) -> None:
     user.mfa_secret = None
     user.mfa_backup_codes = None
     await db.flush()
-    logger.info(f"MFA disabled for user {user.email}")
+    logger.info("MFA disabled for user %s", user.email)
 
 
 async def regenerate_backup_codes(user: User, db: AsyncSession) -> List[str]:
@@ -221,7 +221,7 @@ async def regenerate_backup_codes(user: User, db: AsyncSession) -> List[str]:
     user.mfa_backup_codes = {"codes": hash_backup_codes(backup_codes)}
     await db.flush()
 
-    logger.info(f"Backup codes regenerated for user {user.email}")
+    logger.info("Backup codes regenerated for user %s", user.email)
     return backup_codes
 
 

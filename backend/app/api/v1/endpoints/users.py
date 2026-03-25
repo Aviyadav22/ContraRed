@@ -5,7 +5,7 @@ User management endpoints.
 import logging
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +24,7 @@ router = APIRouter()
 
 
 class UserUpdate(BaseModel):
-    name: str | None = None
+    name: str | None = Field(None, max_length=100)
 
 
 class UsageStats(BaseModel):

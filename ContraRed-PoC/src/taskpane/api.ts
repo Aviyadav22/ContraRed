@@ -164,7 +164,7 @@ interface DocumentListItem {
 
 class ContraRedAPI {
     private currentUser: User | null = null;
-    private isRefreshing = false;
+    private refreshPromise: Promise<boolean> | null = null;
 
     constructor() {
         this.loadUser();
@@ -175,11 +175,21 @@ class ContraRedAPI {
         return match ? decodeURIComponent(match[1]) : '';
     }
 
+    // AUDIT FIX L2: Use sessionStorage instead of localStorage for user profile.
+    // sessionStorage is cleared when the tab closes, reducing PII exposure window.
+    // Auth tokens remain in HttpOnly cookies (unaffected by this change).
     private loadUser(): void {
         try {
-            const userStored = localStorage.getItem('contrared_user');
+            // Try sessionStorage first, fall back to localStorage for migration
+            const userStored = sessionStorage.getItem('contrared_user')
+                || localStorage.getItem('contrared_user');
             if (userStored) {
                 this.currentUser = JSON.parse(userStored);
+                // Migrate from localStorage to sessionStorage
+                if (localStorage.getItem('contrared_user')) {
+                    sessionStorage.setItem('contrared_user', userStored);
+                    localStorage.removeItem('contrared_user');
+                }
             }
         } catch {
             // No stored user — fresh session
@@ -188,7 +198,7 @@ class ContraRedAPI {
 
     private saveUser(user: User): void {
         this.currentUser = user;
-        localStorage.setItem('contrared_user', JSON.stringify(user));
+        sessionStorage.setItem('contrared_user', JSON.stringify(user));
     }
 
     private async request<T>(
@@ -245,18 +255,12 @@ class ContraRedAPI {
             return this.request<T>(endpoint, options, retryCount + 1);
         }
 
-        if (response.status === 401 && !this.isRefreshing) {
-            // Try cookie-based refresh (server reads refresh_token from cookie)
-            this.isRefreshing = true;
-            try {
-                const refreshResp = await fetch(`${API_BASE_URL}/auth/refresh`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'include',
-                });
-                if (refreshResp.ok) {
-                    this.isRefreshing = false;
-                    // Cookies updated by server, retry original request
+        if (response.status === 401) {
+            // If another request is already refreshing, wait for it
+            if (this.refreshPromise) {
+                const success = await this.refreshPromise;
+                if (success) {
+                    // Retry original request with refreshed cookies
                     const retryHeaders: Record<string, string> = { ...headers };
                     const newCsrf = this.getCsrfToken();
                     if (newCsrf) retryHeaders['X-CSRF-Token'] = newCsrf;
@@ -271,14 +275,45 @@ class ContraRedAPI {
                         return retryResp.json();
                     }
                 }
-            } catch {
-                this.isRefreshing = false;
-                this.logout();
                 throw new Error('Session expired. Please log in again.');
             }
-            this.isRefreshing = false;
-            throw new Error('Session expired. Please log in again.');
-        } else if (response.status === 401 && this.isRefreshing) {
+
+            // Start a new refresh — other concurrent 401s will await this promise
+            this.refreshPromise = (async () => {
+                try {
+                    const refreshResp = await fetch(`${API_BASE_URL}/auth/refresh`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        credentials: 'include',
+                    });
+                    return refreshResp.ok;
+                } catch {
+                    this.logout();
+                    return false;
+                } finally {
+                    this.refreshPromise = null;
+                }
+            })();
+
+            const success = await this.refreshPromise;
+            if (!success) {
+                throw new Error('Session expired. Please log in again.');
+            }
+
+            // Retry original request with refreshed cookies
+            const retryHeaders: Record<string, string> = { ...headers };
+            const newCsrf = this.getCsrfToken();
+            if (newCsrf) retryHeaders['X-CSRF-Token'] = newCsrf;
+            const retryResp = await fetch(url, {
+                method,
+                headers: retryHeaders,
+                credentials: 'include',
+                body: body as BodyInit | undefined,
+            });
+            if (retryResp.ok) {
+                if (retryResp.status === 204) return undefined as T;
+                return retryResp.json();
+            }
             throw new Error('Session expired. Please log in again.');
         }
 
@@ -352,6 +387,8 @@ class ContraRedAPI {
             });
         } catch { /* best-effort server logout */ }
         this.currentUser = null;
+        // AUDIT FIX L2: Clear from both storages (migration period)
+        sessionStorage.removeItem('contrared_user');
         localStorage.removeItem('contrared_user');
     }
 

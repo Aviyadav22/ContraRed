@@ -139,6 +139,9 @@ export function isAuthenticated(): boolean {
     return !!getStoredUser();
 }
 
+// AUDIT M4 VERIFIED: This is a UI-only gate for showing/hiding admin controls.
+// All admin data and actions are enforced server-side via require_admin/require_permission.
+// Tampering with localStorage role gives no access to protected data or operations.
 export function isAdmin(): boolean {
     const user = getStoredUser();
     return user?.role === 'admin' || user?.role === 'super_admin';
@@ -223,11 +226,13 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retryCoun
             throw new Error('Session expired');
         }
         const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
-        const detail = error.detail;
-        const message = typeof detail === 'object' && detail?.message
-            ? detail.message
-            : typeof detail === 'string' ? detail : `HTTP ${response.status}`;
-        throw new Error(message);
+        // Sanitize error messages to prevent backend detail leakage
+        const MAX_ERROR_LENGTH = 200;
+        const rawDetail = typeof error === 'object' && error !== null ? (error as any).detail : String(error);
+        const detail = typeof rawDetail === 'string'
+            ? rawDetail.substring(0, MAX_ERROR_LENGTH)
+            : 'An unexpected error occurred';
+        throw new Error(detail);
     }
 
     // Handle 204 No Content

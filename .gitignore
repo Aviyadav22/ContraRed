@@ -47,7 +47,6 @@ lerna-debug.log*
 .pnpm-debug.log*
 .npm
 .yarn/
-package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
@@ -74,19 +73,18 @@ build/
 # Logs
 *.log
 logs/
-*.txt
-!README.md
-!ARCHITECTURE.md
-!backend/requirements.txt
 
-# Test outputs (but keep backend/tests/)
+# AUDIT FIX L1: Replaced blanket *.txt with specific patterns
+# (blanket *.txt was silently excluding LICENSE.txt, CHANGELOG.txt, etc.)
+# Test and debug output files
 test_*.txt
-!backend/tests/
 *_results.txt
 *_output.txt
 *_debug*.txt
 *_comparison.txt
 *_tokens*.txt
+server_log.txt
+progress.txt
 
 # Database
 *.db

@@ -1,5 +1,22 @@
 -- ContraRed — Development Seed Data
 -- Inserts demo admin user and organization for local development.
+--
+-- AUDIT FIX C2: Production safety guard — this script will ABORT if DEBUG != 'true'
+
+DO $$
+BEGIN
+    -- Block execution in production environments
+    -- Set DEBUG=true in your local .env to allow seed data insertion
+    IF NOT (current_setting('app.debug', true) = 'true'
+            OR current_setting('server.debug', true) = 'true') THEN
+        -- Check if this looks like a production database (has real users)
+        IF (SELECT count(*) FROM users WHERE email NOT LIKE '%@contrared.com') > 0 THEN
+            RAISE EXCEPTION '[AUDIT FIX C2] Seed data blocked: production database detected. '
+                'This script is for LOCAL DEVELOPMENT ONLY. '
+                'Set app.debug=true via SET app.debug = ''true'' to override.';
+        END IF;
+    END IF;
+END $$;
 
 -- Create demo organization
 INSERT INTO organizations (id, name, plan_type, sso_enabled, mfa_required, created_at, updated_at)
@@ -13,8 +30,7 @@ VALUES (
     NOW()
 ) ON CONFLICT (id) DO NOTHING;
 
--- Create demo admin user: admin@contrared.com / ContraRed1@
--- password_hash generated with: bcrypt.hashpw(b'ContraRed1@', bcrypt.gensalt())
+-- Development seed user (DO NOT use in production — change password immediately)
 INSERT INTO users (id, email, name, password_hash, role, subscription_tier, organization_id, is_active, is_verified, failed_login_attempts, mfa_enabled, created_at, updated_at)
 VALUES (
     'b0000000-0000-0000-0000-000000000001',

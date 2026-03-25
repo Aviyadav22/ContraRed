@@ -584,7 +584,7 @@ async def analyze_async(
     playbook_name = "Default"
     if body.playbook_id:
         try:
-            playbook = await load_playbook(db, playbook_uuid, check_access=False)
+            playbook = await load_playbook(db, playbook_uuid, current_user_id=current_user.id, current_user_org_id=current_user.organization_id)
             if playbook:
                 playbook_name = playbook.name
                 playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
@@ -696,7 +696,7 @@ async def analyze_full_ai(
 
     if body.playbook_id:
         try:
-            playbook = await load_playbook(db, body.playbook_id, check_access=False)
+            playbook = await load_playbook(db, body.playbook_id, current_user_id=current_user.id, current_user_org_id=current_user.organization_id)
             if playbook:
                 playbook_name = playbook.name
                 playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
@@ -1176,7 +1176,7 @@ async def batch_analyze(
 
     # Launch background processing
     asyncio.create_task(
-        _process_batch(batch_id, file_contents, playbook_id, str(current_user.id))
+        _process_batch(batch_id, file_contents, playbook_id, str(current_user.id), organization_id=str(current_user.organization_id) if current_user.organization_id else None)
     )
 
     logger.info(f"Batch {batch_id} created with {len(files)} files for user {current_user.id}")
@@ -1193,6 +1193,7 @@ async def _process_batch(
     file_contents: List[dict],
     playbook_id: Optional[str],
     user_id: str,
+    organization_id: Optional[str] = None,
 ):
     """Background task to process all files in a batch concurrently."""
     semaphore = asyncio.Semaphore(3)  # Max 3 concurrent analyses
@@ -1203,7 +1204,10 @@ async def _process_batch(
     if playbook_id:
         try:
             async with AsyncSessionLocal() as db:
-                playbook = await load_playbook(db, playbook_id, check_access=False)
+                from uuid import UUID as _UUID
+                _uid = _UUID(user_id) if user_id else None
+                _oid = _UUID(organization_id) if organization_id else None
+                playbook = await load_playbook(db, playbook_id, current_user_id=_uid, current_user_org_id=_oid)
                 if playbook:
                     playbook_name = playbook.name
                     playbook_rules = [
@@ -1211,7 +1215,7 @@ async def _process_batch(
                         for r in (playbook.rules_list or [])
                     ]
         except Exception as e:
-            logger.warning(f"Batch {batch_id}: failed to load playbook {playbook_id}: {e}")
+            logger.warning("Batch %s: failed to load playbook %s: %s", batch_id, playbook_id, e)
 
     async def _analyze_single(idx: int, file_info: dict):
         """Analyze a single file within the batch."""
@@ -1825,9 +1829,10 @@ async def analyze_file(
     try:
         contract_map = extractor.extract_from_docx(file_bytes)
     except Exception as e:
+        logger.error("Failed to parse DOCX file: %s", e)
         raise HTTPException(
             status_code=400,
-            detail=f"Failed to parse DOCX file: {str(e)}"
+            detail="Failed to parse DOCX file. Please ensure the file is a valid .docx document."
         )
     
     # Initialize services
@@ -2011,7 +2016,7 @@ async def summarize_contract(
     playbook_name = "Default Rules"
     if body.playbook_id:
         try:
-            playbook = await load_playbook(db, body.playbook_id, check_access=False)
+            playbook = await load_playbook(db, body.playbook_id, current_user_id=current_user.id, current_user_org_id=current_user.organization_id)
             if playbook:
                 playbook_name = playbook.name
         except ValueError:

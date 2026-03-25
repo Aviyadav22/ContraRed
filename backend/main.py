@@ -273,13 +273,20 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 # =============================================================================
 
 class MaxBodySizeMiddleware(BaseHTTPMiddleware):
-    """Reject requests with Content-Length exceeding the configured limit."""
+    """Reject requests with body exceeding the configured limit.
+
+    Note: True streaming/chunked-transfer enforcement requires wrapping the
+    ASGI receive callable, which can conflict with Starlette internals.
+    The Content-Length header check (fast path) combined with per-endpoint
+    size validation is the pragmatic approach for production use.
+    """
 
     def __init__(self, app, max_body_size: int = 25 * 1024 * 1024):  # 25MB
         super().__init__(app)
         self.max_body_size = max_body_size
 
     async def dispatch(self, request: Request, call_next):
+        # Check Content-Length header first (fast path)
         if request.headers.get("content-length"):
             try:
                 content_length = int(request.headers["content-length"])

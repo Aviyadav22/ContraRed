@@ -97,3 +97,6 @@ async def get_db(request: Request = None) -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
+        finally:
+            from app.middleware.tenant_context import clear_tenant_context
+            await clear_tenant_context(session)

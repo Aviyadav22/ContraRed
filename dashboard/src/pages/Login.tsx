@@ -60,6 +60,7 @@ export default function Login() {
                                 style={{ ...inputStyle, '--tw-ring-color': '#C0392B40' } as React.CSSProperties}
                                 placeholder="you@company.com"
                                 required
+                                maxLength={255}
                             />
                         </div>
 
@@ -76,6 +77,7 @@ export default function Login() {
                                 style={{ ...inputStyle, '--tw-ring-color': '#C0392B40' } as React.CSSProperties}
                                 placeholder="••••••••"
                                 required
+                                maxLength={128}
                             />
                         </div>
 
