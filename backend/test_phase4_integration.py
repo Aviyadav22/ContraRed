@@ -72,10 +72,10 @@ test("documents.py uses analysis_pipeline singleton", t8)
 
 # 9-10. Schema fields
 def t9():
-    from app.api.v1.endpoints.documents import AIRedlineItem, AIAnalysisResponse
-    ri_fields = set(AIRedlineItem.model_fields.keys())
+    from app.api.v1.endpoints.documents import RedlineItem, AnalysisResult
+    ri_fields = set(RedlineItem.model_fields.keys())
     assert {"confidence", "confidence_level", "verification_status", "is_deal_breaker", "cross_references"} <= ri_fields
-    ar_fields = set(AIAnalysisResponse.model_fields.keys())
+    ar_fields = set(AnalysisResult.model_fields.keys())
     assert {"jurisdiction", "jurisdiction_name", "hallucination_stats", "pipeline_partial"} <= ar_fields
 test("API schemas have all Phase 4 fields", t9)
 

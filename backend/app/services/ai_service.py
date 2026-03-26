@@ -168,6 +168,9 @@ class AIService:
         risk_level: str = "RED"
     ) -> Tuple[str, int]:
         """
+        DEPRECATED: Legacy method. The unified analysis pipeline (Stage 3)
+        now handles risk explanation. Retained for /analyze-file endpoint.
+
         Generate a concise explanation of why a clause is risky.
         
         Args:
@@ -206,6 +209,9 @@ class AIService:
         fallback_position: Optional[str] = None
     ) -> Tuple[str, int]:
         """
+        DEPRECATED: Legacy method. The unified analysis pipeline (Stage 6)
+        now handles fix generation. Retained for /analyze-file endpoint.
+
         Generate suggested replacement text for a risky clause.
         
         Args:
@@ -368,8 +374,11 @@ class AIService:
     
     async def enrich_match(self, match) -> Tuple[str, str, int]:
         """
+        DEPRECATED: Legacy method. The unified analysis pipeline (Stages 3+6)
+        now handles enrichment. Retained for /analyze-file endpoint.
+
         Enrich a RuleMatch with AI explanation and suggested fix.
-        
+
         This is the method to use with asyncio.gather for parallel processing.
         
         Args:

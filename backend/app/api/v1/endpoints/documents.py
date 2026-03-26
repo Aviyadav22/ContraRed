@@ -1,7 +1,8 @@
 """
 Document analysis endpoints.
 
-Real implementation using RuleEngine + AIService with parallel processing.
+Real implementation using the 5-stage analysis pipeline, with legacy
+RuleEngine + AIService paths retained for /analyze-file and /summarize.
 
 ZERO DATA RETENTION (ZDR) MODE:
 - When enabled, document text is processed in RAM only
@@ -149,12 +150,6 @@ class SummaryResponse(BaseModel):
     key_concerns: List[str]
     recommendation: str
     tokens_used: int = 0
-
-
-# Aliases for backward compatibility
-AIAnalyzeRequest = AnalyzeRequest
-AIRedlineItem = RedlineItem
-AIAnalysisResponse = AnalysisResult
 
 
 class ClauseAnalyzeRequest(BaseModel):
