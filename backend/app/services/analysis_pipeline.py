@@ -636,13 +636,14 @@ class AnalysisPipeline:
             )
         except Exception as e:
             logger.error("Pipeline Stage 6 (fix_generation) failed: %s", e)
-            stage_metrics.append(StageMetrics(stage_name="fix_generation", error=str(e)))
-        s6_duration = time.monotonic() - s6_start
-        stage_metrics.append(StageMetrics(
-            stage_name="fix_generation",
-            duration_seconds=s6_duration,
-            items_processed=sum(1 for r in final_redlines if r.suggested_fix),
-        ))
+            stage_metrics.append(StageMetrics(stage_name="fix_generation", duration_seconds=time.monotonic() - s6_start, error=str(e)))
+        else:
+            s6_duration = time.monotonic() - s6_start
+            stage_metrics.append(StageMetrics(
+                stage_name="fix_generation",
+                duration_seconds=s6_duration,
+                items_processed=sum(1 for r in final_redlines if r.suggested_fix),
+            ))
 
         total_duration = time.monotonic() - pipeline_start
 

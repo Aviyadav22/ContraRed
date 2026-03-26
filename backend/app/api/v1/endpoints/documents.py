@@ -344,6 +344,7 @@ async def analyze_document(
         risk_summary = {
             "red": sum(1 for r in pipeline_result.redlines if r.risk_level == "RED"),
             "yellow": sum(1 for r in pipeline_result.redlines if r.risk_level == "YELLOW"),
+            "green": sum(1 for r in pipeline_result.redlines if r.risk_level == "GREEN"),
         }
 
         # Persist document metadata (ZDR-safe: no contract text stored)
@@ -1008,6 +1009,7 @@ async def _process_batch(
                 risk_summary = {
                     "red": sum(1 for r in pipeline_result.redlines if r.risk_level == "RED"),
                     "yellow": sum(1 for r in pipeline_result.redlines if r.risk_level == "YELLOW"),
+                    "green": sum(1 for r in pipeline_result.redlines if r.risk_level == "GREEN"),
                     "total": len(pipeline_result.redlines),
                 }
 
