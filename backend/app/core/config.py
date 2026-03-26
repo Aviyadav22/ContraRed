@@ -182,8 +182,8 @@ class Settings(BaseSettings):
                     "Set ENCRYPTION_KEY for production use."
                 )
             else:
-                raise ValueError(
-                    "ENCRYPTION_KEY is required in production. "
+                _config_logger.warning(
+                    "ENCRYPTION_KEY is not set in production. Field-level encryption is disabled. "
                     "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
                 )
         return v
