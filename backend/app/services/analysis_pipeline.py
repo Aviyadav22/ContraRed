@@ -615,6 +615,17 @@ class AnalysisPipeline:
                 for v in verified_redlines
             ]
 
+        # ---- Stage 5b: OFFSET-BASED DEDUP ----
+        pre_dedup_count = len(final_redlines)
+        final_redlines = self._dedupe_by_overlap(final_redlines, extraction.full_text)
+        if pre_dedup_count > len(final_redlines):
+            logger.info(
+                "Offset-based dedup removed %d overlapping finding(s) (%d → %d)",
+                pre_dedup_count - len(final_redlines),
+                pre_dedup_count,
+                len(final_redlines),
+            )
+
         # ---- Stage 6: FIX GENERATION ----
         s6_start = time.monotonic()
         try:
@@ -1022,6 +1033,69 @@ class AnalysisPipeline:
         ))
 
         return final
+
+    # ======================================================================
+    # Stage 5b: OFFSET-BASED DEDUPLICATION
+    # ======================================================================
+
+    def _dedupe_by_overlap(
+        self,
+        redlines: List[FinalRedline],
+        full_text: str,
+    ) -> List[FinalRedline]:
+        """Remove duplicate findings that reference overlapping text regions.
+
+        When two findings overlap in the source text, keep the higher-risk one.
+        Tie-break by confidence score (higher wins).
+        """
+        if len(redlines) <= 1:
+            return redlines
+
+        risk_order = {"RED": 0, "YELLOW": 1, "GREEN": 2}
+
+        # Find character offset for each redline's text in the contract
+        located: List[tuple] = []  # (start, end, index, redline)
+        for i, r in enumerate(redlines):
+            search_text = r.verified_text or r.original_text
+            idx = full_text.find(search_text)
+            if idx >= 0:
+                located.append((idx, idx + len(search_text), i, r))
+            else:
+                # Couldn't locate — keep it (missing clause or fuzzy match)
+                located.append((-1, -1, i, r))
+
+        # Sort by start position
+        located.sort(key=lambda x: (x[0], x[1]))
+
+        keep = set(range(len(redlines)))
+
+        for i in range(len(located)):
+            if i not in keep:
+                continue
+            s1, e1, idx1, r1 = located[i]
+            if s1 < 0:
+                continue  # unlocated, always keep
+
+            for j in range(i + 1, len(located)):
+                if j not in keep:
+                    continue
+                s2, e2, idx2, r2 = located[j]
+                if s2 < 0:
+                    continue
+                if s2 >= e1:
+                    break  # no more overlaps (sorted by start)
+
+                # Overlap detected — remove the lower-priority one
+                rank1 = (risk_order.get(r1.risk_level, 3), -(r1.confidence.score if r1.confidence else 0))
+                rank2 = (risk_order.get(r2.risk_level, 3), -(r2.confidence.score if r2.confidence else 0))
+
+                if rank1 <= rank2:
+                    keep.discard(idx2)
+                else:
+                    keep.discard(idx1)
+                    break  # r1 was removed, stop comparing it
+
+        return [redlines[i] for i in sorted(keep)]
 
     # ======================================================================
     # Stage 6: FIX GENERATION (parallel AI calls)
