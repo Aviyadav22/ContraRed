@@ -115,6 +115,8 @@ class RawRedline:
     model_confidence: Optional[float] = None
     regex_matched: bool = False
     playbook_rule: Optional[Dict[str, Any]] = None
+    clause_type: str = ""
+    suggested_fix: Optional[str] = None
 
 
 @dataclass
@@ -133,6 +135,8 @@ class VerifiedRedline:
     regex_matched: bool
     playbook_rule: Optional[Dict[str, Any]] = None
     model_confidence: Optional[float] = None
+    clause_type: str = ""
+    suggested_fix: Optional[str] = None
 
 
 @dataclass
@@ -149,6 +153,8 @@ class FinalRedline:
     confidence: ConfidenceScore
     verification_status: str
     cross_references: List[str] = field(default_factory=list)
+    clause_type: str = ""
+    suggested_fix: Optional[str] = None
 
 
 @dataclass
@@ -206,6 +212,8 @@ class PipelineResult:
                     "confidence": r.confidence.to_dict(),
                     "verification_status": r.verification_status,
                     "cross_references": r.cross_references,
+                    "clause_type": r.clause_type,
+                    "suggested_fix": r.suggested_fix,
                 }
                 for r in self.redlines
             ],
@@ -264,6 +272,30 @@ _INDIAN_JURISDICTION_MARKERS = [
     "indian contract act", "arbitration and conciliation act",
     "information technology act", "dpdp act",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _infer_clause_type(rule_name: str) -> str:
+    """Map rule name to clause_type for display."""
+    name = rule_name.lower()
+    mapping = {
+        "liability": "liability", "indemnif": "indemnification",
+        "confiden": "confidentiality", "terminat": "termination",
+        "ip ": "intellectual_property", "intellectual": "intellectual_property",
+        "non-compete": "restrictive_covenant", "non-solicit": "restrictive_covenant",
+        "govern": "governing_law", "jurisdict": "jurisdiction",
+        "arbitrat": "dispute_resolution", "force majeure": "force_majeure",
+        "warrant": "reps_warranties", "data": "data_protection",
+        "payment": "payment", "sla": "service_level", "assign": "assignment",
+    }
+    for key, ctype in mapping.items():
+        if key in name:
+            return ctype
+    return "general"
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +571,7 @@ class AnalysisPipeline:
                     regex_matched=r.regex_matched,
                     playbook_rule=r.playbook_rule,
                     model_confidence=r.model_confidence,
+                    clause_type=r.clause_type,
                 )
                 for r in raw_redlines
             ]
@@ -577,9 +610,28 @@ class AnalysisPipeline:
                         breakdown=ConfidenceBreakdown(),
                     ),
                     verification_status=v.verification_status,
+                    clause_type=v.clause_type,
                 )
                 for v in verified_redlines
             ]
+
+        # ---- Stage 6: FIX GENERATION ----
+        s6_start = time.monotonic()
+        try:
+            final_redlines = await self._stage6_fix_generation(
+                final_redlines,
+                extraction=extraction,
+                playbook_rules=playbook_rules,
+            )
+        except Exception as e:
+            logger.error("Pipeline Stage 6 (fix_generation) failed: %s", e)
+            stage_metrics.append(StageMetrics(stage_name="fix_generation", error=str(e)))
+        s6_duration = time.monotonic() - s6_start
+        stage_metrics.append(StageMetrics(
+            stage_name="fix_generation",
+            duration_seconds=s6_duration,
+            items_processed=sum(1 for r in final_redlines if r.suggested_fix),
+        ))
 
         total_duration = time.monotonic() - pipeline_start
 
@@ -788,6 +840,13 @@ class AnalysisPipeline:
             if pb_rule:
                 is_db = pb_rule.get("is_deal_breaker", False)
 
+            # Determine clause_type from playbook rule or infer from rule name
+            clause_type = ""
+            if pb_rule:
+                clause_type = pb_rule.get("clause_type", "")
+            if not clause_type:
+                clause_type = _infer_clause_type(ai_redline.rule_name)
+
             raw_redlines.append(RawRedline(
                 rule_name=ai_redline.rule_name,
                 risk_level=ai_redline.risk_level,
@@ -799,6 +858,7 @@ class AnalysisPipeline:
                 model_confidence=getattr(ai_redline, 'confidence', None),
                 regex_matched=regex_matched,
                 playbook_rule=pb_rule,
+                clause_type=clause_type,
             ))
 
         return raw_redlines, ai_result.executive_summary, ai_result.tokens_used
@@ -849,6 +909,7 @@ class AnalysisPipeline:
                     regex_matched=redline.regex_matched,
                     playbook_rule=redline.playbook_rule,
                     model_confidence=redline.model_confidence,
+                    clause_type=redline.clause_type,
                 ))
             else:
                 # Violation — strict verification
@@ -879,6 +940,7 @@ class AnalysisPipeline:
                             regex_matched=redline.regex_matched,
                             playbook_rule=redline.playbook_rule,
                             model_confidence=redline.model_confidence,
+                            clause_type=redline.clause_type,
                         ))
                         continue
                     logger.info(
@@ -902,6 +964,7 @@ class AnalysisPipeline:
                     regex_matched=redline.regex_matched,
                     playbook_rule=redline.playbook_rule,
                     model_confidence=redline.model_confidence,
+                    clause_type=redline.clause_type,
                 ))
 
         return verified, guard.get_stats()
@@ -948,6 +1011,7 @@ class AnalysisPipeline:
                 confidence=confidence,
                 verification_status=vr.verification_status,
                 cross_references=cross_refs,
+                clause_type=vr.clause_type,
             ))
 
         # Sort by confidence (highest first), then by risk level
@@ -958,6 +1022,73 @@ class AnalysisPipeline:
         ))
 
         return final
+
+    # ======================================================================
+    # Stage 6: FIX GENERATION (parallel AI calls)
+    # ======================================================================
+
+    async def _stage6_fix_generation(
+        self,
+        redlines: List[FinalRedline],
+        extraction: "ExtractionResult",
+        playbook_rules: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[FinalRedline]:
+        """Generate suggested_fix for RED and YELLOW redlines in parallel."""
+        fixable = [r for r in redlines if r.risk_level in ("RED", "YELLOW")]
+        if not fixable:
+            return redlines
+
+        defined_terms = ""
+        if extraction.defined_terms:
+            terms = extraction.defined_terms
+            if isinstance(terms, dict):
+                defined_terms = "\n".join(f"- {k}: {v}" for k, v in list(terms.items())[:20])
+            elif isinstance(terms, list):
+                defined_terms = "\n".join(f"- {t}" for t in terms[:20])
+
+        full_text = extraction.full_text
+        semaphore = asyncio.Semaphore(10)
+
+        async def generate_one_fix(redline: FinalRedline) -> Optional[str]:
+            async with semaphore:
+                try:
+                    search_text = redline.verified_text or redline.original_text
+                    idx = full_text.find(search_text)
+                    if idx >= 0:
+                        ctx_start = max(0, idx - 500)
+                        ctx_end = min(len(full_text), idx + len(search_text) + 500)
+                        surrounding = full_text[ctx_start:ctx_end]
+                    else:
+                        surrounding = ""
+
+                    result = await self._analyzer.generate_fix(
+                        original_text=redline.verified_text or redline.original_text,
+                        recommendation=redline.recommendation,
+                        rule_name=redline.rule_name,
+                        redline_type=redline.redline_type,
+                        surrounding_context=surrounding,
+                        playbook_rules=playbook_rules,
+                        jurisdiction_override=None,
+                        defined_terms=defined_terms,
+                    )
+                    return result.get("fix_text")
+                except Exception as e:
+                    logger.warning("Fix generation failed for %s: %s", redline.rule_name, e)
+                    return None
+
+        tasks = [generate_one_fix(r) for r in fixable]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        fix_map = {}
+        for redline, result in zip(fixable, results):
+            if isinstance(result, str) and result:
+                fix_map[id(redline)] = result
+
+        for redline in redlines:
+            if id(redline) in fix_map:
+                redline.suggested_fix = fix_map[id(redline)]
+
+        return redlines
 
     # ======================================================================
     # Helpers
@@ -1097,6 +1228,11 @@ class AnalysisPipeline:
         redlines: List[RawRedline] = []
         for rm in rule_matches:
             pb_rule = playbook_lookup.get(rm.rule_name.lower())
+            clause_type = ""
+            if pb_rule:
+                clause_type = pb_rule.get("clause_type", "")
+            if not clause_type:
+                clause_type = _infer_clause_type(rm.rule_name)
             redlines.append(RawRedline(
                 rule_name=rm.rule_name,
                 risk_level=rm.risk_level.value,
@@ -1107,6 +1243,7 @@ class AnalysisPipeline:
                 is_deal_breaker=rm.is_deal_breaker,
                 regex_matched=True,
                 playbook_rule=pb_rule,
+                clause_type=clause_type,
             ))
         return redlines
 
