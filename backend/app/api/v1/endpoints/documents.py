@@ -76,31 +76,42 @@ class AnalyzeRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=500000)
     playbook_id: Optional[str] = None
     filename: Optional[str] = Field(default="untitled.docx", max_length=255)
+    party_side: Optional[str] = Field(default="seller", pattern=r"^(buyer|seller|neutral)$")
 
 
-class RiskItem(BaseModel):
-    """Individual risk item with strict risk_level enum."""
+class RedlineItem(BaseModel):
+    """Single finding from contract analysis."""
     id: str
-    clause_text: str  # match_text for Word highlighting
-    risk_level: Literal["RED", "YELLOW", "GREEN"]  # Strict enum
+    risk_level: Literal["RED", "YELLOW", "GREEN"]
     rule_name: str
-    clause_type: str
-    paragraph_hash: Optional[str] = None  # SHA-256 for drift detection
-    ai_explanation: Optional[str] = None
-    suggested_fix: Optional[str] = None
+    clause_text: str              # Exact verbatim text from contract (verified)
+    clause_type: str = ""
+    explanation: str               # Why this is risky
+    recommendation: str = ""       # Lawyer-readable guidance
+    suggested_fix: Optional[str] = None  # Exact replacement text (generated)
+    redline_type: Literal["violation", "missing"] = "violation"
+    confidence: Optional[float] = None
+    confidence_level: Optional[str] = None
+    verification_status: Optional[str] = None
     is_deal_breaker: bool = False
+    cross_references: Optional[List[str]] = None
+    paragraph_hash: Optional[str] = None
 
 
 class AnalysisResult(BaseModel):
-    """Analysis result with risks."""
+    """Unified analysis response."""
     document_id: str
     filename: str
+    executive_summary: List[str] = []
+    risks: List[RedlineItem]
     total_risks: int
     risk_summary: dict  # {red: int, yellow: int, green: int}
-    risks: List[RiskItem]
-    tokens_used: int = 0  # For usage tracking
-    paragraph_hashes: Optional[Dict[str, str]] = None  # hash -> text for drift detection
-    source_type: str = "text"  # "text" or "docx"
+    tokens_used: int = 0
+    jurisdiction: Optional[str] = None
+    jurisdiction_name: Optional[str] = None
+    pipeline_partial: bool = False
+    source_type: str = "text"
+    paragraph_hashes: Optional[Dict[str, str]] = None
 
 
 class RedlineRequest(BaseModel):
@@ -140,49 +151,10 @@ class SummaryResponse(BaseModel):
     tokens_used: int = 0
 
 
-# ============================================================================
-# AI-First Analysis Schemas
-# ============================================================================
-
-class AIAnalyzeRequest(BaseModel):
-    """Request for AI-first full contract analysis."""
-    text: str = Field(..., min_length=1, max_length=500000)
-    playbook_id: Optional[str] = None
-    filename: Optional[str] = Field(default="untitled.docx", max_length=255)
-    party_side: Optional[str] = Field(default="seller", pattern=r"^(buyer|seller|neutral)$")
-
-
-class AIRedlineItem(BaseModel):
-    """Single redline item from AI analysis."""
-    id: str
-    risk_level: Literal["RED", "YELLOW"]
-    rule_name: str
-    original_text: str  # Exact text from contract for search
-    explanation: str
-    recommendation: str  # Lawyer-readable guidance (not exact replacement text)
-    redline_type: Literal["violation", "missing"] = "violation"
-    # Phase 4: confidence and verification fields
-    confidence: Optional[float] = None  # Weighted score 0-1
-    confidence_level: Optional[str] = None  # HIGH/MEDIUM/LOW
-    verification_status: Optional[str] = None  # exact/normalized/fuzzy_corrected
-    is_deal_breaker: bool = False
-    cross_references: Optional[List[str]] = None
-
-
-class AIAnalysisResponse(BaseModel):
-    """Response from AI-first analysis."""
-    document_id: str
-    filename: str
-    executive_summary: List[str]
-    redlines: List[AIRedlineItem]
-    total_risks: int
-    risk_summary: dict  # {red: int, yellow: int}
-    tokens_used: int = 0
-    # Phase 4: pipeline metadata
-    jurisdiction: Optional[str] = None  # Detected jurisdiction code
-    jurisdiction_name: Optional[str] = None  # Human-readable jurisdiction name
-    hallucination_stats: Optional[dict] = None
-    pipeline_partial: bool = False  # True if pipeline degraded gracefully
+# Aliases for backward compatibility
+AIAnalyzeRequest = AnalyzeRequest
+AIRedlineItem = RedlineItem
+AIAnalysisResponse = AnalysisResult
 
 
 class ClauseAnalyzeRequest(BaseModel):
@@ -195,7 +167,7 @@ class ClauseAnalyzeRequest(BaseModel):
 
 class ClauseAnalyzeResponse(BaseModel):
     """Response from single-clause analysis."""
-    risks: List[AIRedlineItem]
+    risks: List[RedlineItem]
     tokens_used: int = 0
     analysis_time_ms: int = 0
 
@@ -546,7 +518,7 @@ class JobStatusResponse(BaseModel):
 @limiter.limit("20/minute")
 async def analyze_async(
     request: Request,
-    body: AIAnalyzeRequest,
+    body: AnalyzeRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _quota=Depends(check_and_increment_quota),
@@ -649,11 +621,11 @@ async def get_job_status(
 # AI-First Analysis Endpoint - Full Gemini Analysis
 # ============================================================================
 
-@router.post("/analyze-full", response_model=AIAnalysisResponse)
+@router.post("/analyze-full", response_model=AnalysisResult)
 @limiter.limit("20/minute")
 async def analyze_full_ai(
     request: Request,
-    body: AIAnalyzeRequest,
+    body: AnalyzeRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _quota=Depends(check_and_increment_quota),
@@ -798,15 +770,17 @@ async def analyze_full_ai(
         await db.refresh(doc)
         doc_id = str(doc.id)
 
-        # Build response — map FinalRedline to AIRedlineItem
+        # Build response — map FinalRedline to RedlineItem
         redline_items = [
-            AIRedlineItem(
+            RedlineItem(
                 id=str(uuid4()),
                 risk_level=r.risk_level,
                 rule_name=r.rule_name,
-                original_text=r.verified_text or r.original_text,
+                clause_text=r.verified_text or r.original_text,
+                clause_type=getattr(r, 'clause_type', ''),
                 explanation=r.explanation,
                 recommendation=r.recommendation,
+                suggested_fix=getattr(r, 'suggested_fix', None),
                 redline_type=r.redline_type,
                 confidence=round(r.confidence.score, 3),
                 confidence_level=r.confidence.level.value,
@@ -820,15 +794,14 @@ async def analyze_full_ai(
         # Get jurisdiction info from the pipeline result (set during scope analysis)
         jurisdiction_code = pipeline_result.jurisdiction_code
 
-        return AIAnalysisResponse(
+        return AnalysisResult(
             document_id=doc_id,
             filename=body.filename or "untitled.docx",
             executive_summary=pipeline_result.executive_summary,
-            redlines=redline_items,
+            risks=redline_items,
             total_risks=len(redline_items),
             risk_summary=risk_summary,
             tokens_used=pipeline_result.total_tokens_used,
-            hallucination_stats=pipeline_result.hallucination_stats or None,
             pipeline_partial=pipeline_result.partial,
             jurisdiction=jurisdiction_code,
             jurisdiction_name=getattr(pipeline_result, 'jurisdiction_name', None),
@@ -918,13 +891,15 @@ async def analyze_clause(
         )
 
         redline_items = [
-            AIRedlineItem(
+            RedlineItem(
                 id=item.get("id", str(uuid4())),
                 risk_level=item.get("risk_level", "YELLOW"),
                 rule_name=item.get("rule_name", "Unknown Rule"),
-                original_text=item.get("original_text", ""),
+                clause_text=item.get("original_text", ""),
+                clause_type=item.get("clause_type", ""),
                 explanation=item.get("explanation", ""),
                 recommendation=item.get("recommendation", ""),
+                suggested_fix=item.get("suggested_fix"),
                 redline_type=item.get("redline_type", "violation"),
             )
             for item in ai_result.get("redlines", [])
