@@ -5,7 +5,7 @@
  * Now with AI-First analysis using Gemini for holistic contract review.
  */
 
-import { api, AIRedlineItem, AIAnalysisResult, ClauseAnalysisResult, NegotiationDecision, NegotiationSession, DocumentListItem } from './api';
+import { api, RedlineItem, AnalysisResult, ClauseAnalysisResult, NegotiationDecision, NegotiationSession, DocumentListItem } from './api';
 import Fuse from 'fuse.js';
 
 // ============================================================================
@@ -327,7 +327,7 @@ function showNotification(message: string, type: 'error' | 'warning' | 'info' = 
 // State
 // ============================================================================
 
-let currentAIAnalysis: AIAnalysisResult | null = null;
+let currentAIAnalysis: AnalysisResult | null = null;
 let lastScannedText: string = '';  // Cache contract text for fix verification
 const fixedRisks: Set<string> = new Set();
 let isScanning = false;  // Guard against double-click race condition
@@ -1100,8 +1100,8 @@ async function scanDocument(): Promise<void> {
     saveScanState(docFingerprint);
 
     // Step 4: Highlight risks in document using three-tier search
-    await highlightAIRedlines(aiResult.redlines);
-    log.info('Analysis complete:', { risks: aiResult.redlines?.length, tokens: aiResult.tokens_used });
+    await highlightAIRedlines(aiResult.risks);
+    log.info('Analysis complete:', { risks: aiResult.risks?.length, tokens: aiResult.tokens_used });
 
   } catch (error) {
     log.error('Scan failed:', error);
@@ -1183,36 +1183,38 @@ async function scanSelection(): Promise<void> {
 
     // Step 4: Merge or create analysis results
     if (currentAIAnalysis) {
-      // Dedup: skip risks with same rule_name AND original_text prefix (first 50 chars)
+      // Dedup: skip risks with same rule_name AND clause_text prefix (first 50 chars)
       const existingKeys = new Set(
-        currentAIAnalysis.redlines.map(r => `${r.rule_name}::${r.original_text.substring(0, 50)}`)
+        currentAIAnalysis.risks.map(r => `${r.rule_name}::${r.clause_text.substring(0, 50)}`)
       );
       const newRisks = result.risks.filter(
-        r => !existingKeys.has(`${r.rule_name}::${r.original_text.substring(0, 50)}`)
+        r => !existingKeys.has(`${r.rule_name}::${r.clause_text.substring(0, 50)}`)
       );
 
       if (newRisks.length > 0) {
-        currentAIAnalysis.redlines = [...currentAIAnalysis.redlines, ...newRisks];
-        currentAIAnalysis.total_risks = currentAIAnalysis.redlines.length;
+        currentAIAnalysis.risks = [...currentAIAnalysis.risks, ...newRisks];
+        currentAIAnalysis.total_risks = currentAIAnalysis.risks.length;
         currentAIAnalysis.risk_summary = {
-          red: currentAIAnalysis.redlines.filter(r => r.risk_level === 'RED').length,
-          yellow: currentAIAnalysis.redlines.filter(r => r.risk_level === 'YELLOW').length,
+          red: currentAIAnalysis.risks.filter(r => r.risk_level === 'RED').length,
+          yellow: currentAIAnalysis.risks.filter(r => r.risk_level === 'YELLOW').length,
+          green: currentAIAnalysis.risks.filter(r => r.risk_level === 'GREEN').length,
         };
         currentAIAnalysis.tokens_used += result.tokens_used;
         displayAIResults(currentAIAnalysis);
         saveScanState();
       }
     } else {
-      // Create new AIAnalysisResult from clause results
+      // Create new AnalysisResult from clause results
       currentAIAnalysis = {
         document_id: 'selection-scan',
         filename: 'Selection Scan',
         executive_summary: ['Risks found in selected text.'],
-        redlines: result.risks,
+        risks: result.risks,
         total_risks: result.risks.length,
         risk_summary: {
           red: result.risks.filter(r => r.risk_level === 'RED').length,
           yellow: result.risks.filter(r => r.risk_level === 'YELLOW').length,
+          green: result.risks.filter(r => r.risk_level === 'GREEN').length,
         },
         tokens_used: result.tokens_used,
       };
@@ -1266,8 +1268,9 @@ async function reScanClause(riskId: string, originalText: string): Promise<void>
       // Update counts
       if (currentAIAnalysis) {
         currentAIAnalysis.risk_summary = {
-          red: currentAIAnalysis.redlines.filter(r => r.risk_level === 'RED' && !fixedRisks.has(r.id)).length,
-          yellow: currentAIAnalysis.redlines.filter(r => r.risk_level === 'YELLOW' && !fixedRisks.has(r.id)).length,
+          red: currentAIAnalysis.risks.filter(r => r.risk_level === 'RED' && !fixedRisks.has(r.id)).length,
+          yellow: currentAIAnalysis.risks.filter(r => r.risk_level === 'YELLOW' && !fixedRisks.has(r.id)).length,
+          green: currentAIAnalysis.risks.filter(r => r.risk_level === 'GREEN' && !fixedRisks.has(r.id)).length,
         };
         const rc = document.getElementById('redCount');
         const yc = document.getElementById('yellowCount');
@@ -1419,7 +1422,7 @@ async function exportNegotiationDecisions(): Promise<void> {
   }
 
   const decisions = negotiationSession.decisions;
-  const redlines = currentAIAnalysis.redlines || [];
+  const redlines = currentAIAnalysis.risks || [];
 
   // Build report content
   const now = new Date();
@@ -1561,7 +1564,7 @@ function focusRiskCard(index: number): void {
 }
 
 /** Returns the redline data for the currently focused card. */
-function getFocusedRedline(): AIRedlineItem | null {
+function getFocusedRedline(): RedlineItem | null {
   const filtered = getFilteredRedlines();
   if (currentRiskIndex < 0 || currentRiskIndex >= filtered.length) return null;
   return filtered[currentRiskIndex];
@@ -1716,7 +1719,7 @@ function displayScanError(error: Error): void {
 /**
  * Display AI analysis results in the UI.
  */
-function displayAIResults(result: AIAnalysisResult): void {
+function displayAIResults(result: AnalysisResult): void {
   // Show results section (uses inline style, not class)
   const results = document.getElementById('resultsSection') as HTMLElement | null;
 
@@ -1731,7 +1734,7 @@ function displayAIResults(result: AIAnalysisResult): void {
   if (redCount()) redCount()!.textContent = String(result.risk_summary.red || 0);
   if (yellowCount()) yellowCount()!.textContent = String(result.risk_summary.yellow || 0);
   // Green count: show actual value from risk_summary if available, otherwise hide
-  const green = (result.risk_summary as Record<string, number>)?.green || (result.risk_summary as Record<string, number>)?.clear || 0;
+  const green = result.risk_summary.green || 0;
   if (greenCount()) {
     if (green > 0) {
       greenCount()!.textContent = String(green);
@@ -1786,7 +1789,7 @@ function displayAIResults(result: AIAnalysisResult): void {
 
   // Show bulk actions bar if there are fixable redlines
   const bulkBar = document.getElementById('bulkActionsBar');
-  if (bulkBar) bulkBar.style.display = result.redlines.length > 0 ? 'block' : 'none';
+  if (bulkBar) bulkBar.style.display = result.risks.length > 0 ? 'block' : 'none';
 
   // Reset filters on new scan
   activeFilter = 'ALL';
@@ -1804,10 +1807,10 @@ function displayAIResults(result: AIAnalysisResult): void {
 /**
  * Get filtered and sorted redlines based on current filter/sort state.
  */
-function getFilteredRedlines(): AIRedlineItem[] {
+function getFilteredRedlines(): RedlineItem[] {
   if (!currentAIAnalysis) return [];
 
-  let filtered = [...currentAIAnalysis.redlines];
+  let filtered = [...currentAIAnalysis.risks];
 
   // Apply risk level filter
   if (activeFilter === 'RED') {
@@ -1823,7 +1826,7 @@ function getFilteredRedlines(): AIRedlineItem[] {
     const q = searchQuery.toLowerCase();
     filtered = filtered.filter(r =>
       r.rule_name.toLowerCase().includes(q) ||
-      r.original_text.toLowerCase().includes(q) ||
+      r.clause_text.toLowerCase().includes(q) ||
       r.explanation.toLowerCase().includes(q)
     );
   }
@@ -2000,7 +2003,7 @@ class FocusTrap {
 /**
  * Create a risk card for an AI redline item.
  */
-function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLElement {
+function createAIRedlineCard(redline: RedlineItem, _documentId: string): HTMLElement {
   const card = document.createElement('article');
   card.className = 'risk-card';
   card.id = `risk-${redline.id}`;
@@ -2010,9 +2013,9 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
   card.setAttribute('aria-label', `${redline.risk_level} risk: ${redline.rule_name}`);
 
   const isMissing = redline.redline_type === 'missing';
-  const truncatedClause = redline.original_text.length > 100
-    ? redline.original_text.slice(0, 100) + '...'
-    : redline.original_text;
+  const truncatedClause = redline.clause_text.length > 100
+    ? redline.clause_text.slice(0, 100) + '...'
+    : redline.clause_text;
   const truncatedRec = redline.recommendation
     ? (redline.recommendation.length > 150 ? redline.recommendation.slice(0, 150) + '...' : redline.recommendation)
     : '';
@@ -2108,7 +2111,7 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
   // Bind button handlers
   const highlightBtn = card.querySelector('.highlight-btn');
   highlightBtn?.addEventListener('click', async () => {
-    const matchResult = await highlightAIText(redline.original_text, redline.risk_level, redline.redline_type);
+    const matchResult = await highlightAIText(redline.clause_text, redline.risk_level, redline.redline_type);
     // Fix #17/#25: Show fuzzy match confidence indicator with percentage
     if (matchResult.method === 'fuzzy') {
       const existingIndicator = card.querySelector('.match-confidence-indicator');
@@ -2162,11 +2165,11 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
 
     try {
       // Get surrounding context from Word document for better fix quality
-      const surroundingContext = await getSurroundingContext(redline.original_text);
+      const surroundingContext = await getSurroundingContext(redline.clause_text);
       const currentPlaybookId = playbookSelect()?.value || undefined;
 
       const result = await api.generateFix({
-        originalText: redline.original_text,
+        originalText: redline.clause_text,
         recommendation: redline.recommendation,
         ruleName: redline.rule_name,
         redlineType: redline.redline_type || 'violation',
@@ -2192,7 +2195,7 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
       const diffView = document.createElement('div');
       diffView.className = 'diff-view';
       diffView.style.cssText = 'font-family:Georgia,serif;font-size:13px;line-height:1.6;padding:8px;border:1px solid var(--border,#E8E5E0);border-radius:6px;margin-bottom:8px;';
-      diffView.innerHTML = wordDiff(redline.original_text, result.fix_text);
+      diffView.innerHTML = wordDiff(redline.clause_text, result.fix_text);
       wrapper.appendChild(diffView);
 
       const reasoning = document.createElement('div');
@@ -2295,7 +2298,7 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
     researchPanel.innerHTML = '<div class="research-loading">Researching case law...</div>';
 
     try {
-      const result = await api.researchClause(redline.original_text, redline.rule_name);
+      const result = await api.researchClause(redline.clause_text, redline.rule_name);
 
       researchPanel.innerHTML = '';
 
@@ -2371,7 +2374,7 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
 
   // Re-scan button handler
   const reScanBtn = card.querySelector('.rescan-btn');
-  reScanBtn?.addEventListener('click', () => reScanClause(redline.id, redline.original_text));
+  reScanBtn?.addEventListener('click', () => reScanClause(redline.id, redline.clause_text));
 
   // Negotiation mode: add accept/counter/escalate buttons and compact card behavior
   if (negotiationMode) {
@@ -2411,7 +2414,7 @@ function createAIRedlineCard(redline: AIRedlineItem, _documentId: string): HTMLE
  * Highlight text found by AI using three-tier search.
  * Uses blue for missing clause anchors, red/yellow for violations.
  */
-async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW', redlineType?: string): Promise<{ method: string; confidence: number }> {
+async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW' | 'GREEN', redlineType?: string): Promise<{ method: string; confidence: number }> {
   try {
     return await Word.run(async (context) => {
       const result = await findTextInDocument(searchText, context);
@@ -2421,7 +2424,7 @@ async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW', 
         if (redlineType === 'missing') {
           color = '#93C5FD'; // Blue for missing clause insert points
         } else {
-          color = riskLevel === 'RED' ? '#F87171' : '#FEF08A';
+          color = riskLevel === 'RED' ? '#F87171' : riskLevel === 'GREEN' ? '#86EFAC' : '#FEF08A';
         }
         result.range.font.highlightColor = color;
         result.range.select();
@@ -2445,7 +2448,7 @@ async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW', 
  * For violations: finds the applied fix text and replaces it back with original_text.
  * For missing clauses: finds the inserted text and removes it.
  */
-async function undoRedlineFix(redline: AIRedlineItem, appliedFix?: string): Promise<void> {
+async function undoRedlineFix(redline: RedlineItem, appliedFix?: string): Promise<void> {
   await Word.run(async (context) => {
     const searchText = appliedFix || redline.recommendation;
     if (!searchText) return;
@@ -2494,7 +2497,7 @@ async function undoRedlineFix(redline: AIRedlineItem, appliedFix?: string): Prom
     if (redline.redline_type === 'missing') {
       targetRange.delete();
     } else {
-      targetRange.insertText(redline.original_text, Word.InsertLocation.replace);
+      targetRange.insertText(redline.clause_text, Word.InsertLocation.replace);
     }
     await context.sync();
 
@@ -2509,14 +2512,14 @@ async function undoRedlineFix(redline: AIRedlineItem, appliedFix?: string): Prom
  * Batched approach: queues all searches in one sync, then applies all highlights in a second sync.
  * Reduces N+1 round-trips to just 2.
  */
-async function highlightAIRedlines(redlines: AIRedlineItem[]): Promise<void> {
+async function highlightAIRedlines(redlines: RedlineItem[]): Promise<void> {
   if (!redlines.length) return;
   try {
     await Word.run(async (context) => {
       const body = context.document.body;
       // Batch all searches in one sync
       const searchSets = redlines.map(r => {
-        const searchText = r.original_text.slice(0, 255);
+        const searchText = r.clause_text.slice(0, 255);
         const results = body.search(searchText, { matchCase: false, matchWholeWord: false });
         results.load('items');
         return { redline: r, results };
@@ -2590,7 +2593,7 @@ function computeWordDiffs(original: string, replacement: string): Array<{type: '
  * Primary approach: surgical word-level search+replace (avoids OOXML paragraph destruction).
  * Fallback: OOXML insertOoxml if surgical approach fails.
  */
-async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, fixText?: string): Promise<void> {
+async function applyAIRedline(redline: RedlineItem, cardElement: HTMLElement, fixText?: string): Promise<void> {
   // Fix #10: Don't fall back to recommendation as literal replacement text
   const textToApply = fixText;
   if (!textToApply) {
@@ -2637,7 +2640,7 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, 
             log.warn('Could not enable ChangeTrackingMode:', trackErr);
           }
 
-          const result = await findTextInDocument(redline.original_text, context);
+          const result = await findTextInDocument(redline.clause_text, context);
 
           if (!result.range) {
             // Will fall through to OOXML fallback
@@ -2645,7 +2648,7 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, 
           }
 
           // Compute word-level diffs between original and replacement
-          const diffs = computeWordDiffs(redline.original_text, textToApply);
+          const diffs = computeWordDiffs(redline.clause_text, textToApply);
 
           // Check if there are actual changes to apply
           const hasChanges = diffs.some(d => d.type !== 'keep');
@@ -2735,7 +2738,7 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, 
       const redlineResponse = await api.generateRedlineZDR(
         currentAIAnalysis?.document_id || 'ai-doc',
         redline.id,
-        redline.original_text,
+        redline.clause_text,
         textToApply,
         undefined,
         redline.redline_type || 'violation'
@@ -2750,7 +2753,7 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, 
           log.warn('Could not enable ChangeTrackingMode:', trackErr);
         }
 
-        const result = await findTextInDocument(redline.original_text, context);
+        const result = await findTextInDocument(redline.clause_text, context);
 
         if (!result.range) {
           showToastOnCard(cardElement, 'Could not locate this clause — text may have been modified');
@@ -2793,7 +2796,7 @@ async function applyAIRedline(redline: AIRedlineItem, cardElement: HTMLElement, 
         }
         const contextHash = paragraphIndex >= 0 ? allParas.items[paragraphIndex].text.substring(0, 100) : '';
         appliedFixesMap.set(redline.id, {
-          originalText: redline.original_text,
+          originalText: redline.clause_text,
           fixText: textToApply,
           paragraphIndex,
           contextHash,
@@ -2906,11 +2909,11 @@ async function applyAllRedlines(): Promise<void> {
       if (!card) { failed++; continue; }
 
       try {
-        const surroundingContext = await getSurroundingContext(redline.original_text);
+        const surroundingContext = await getSurroundingContext(redline.clause_text);
         const currentPlaybookId = playbookSelect()?.value || undefined;
 
         const result = await api.generateFix({
-          originalText: redline.original_text,
+          originalText: redline.clause_text,
           recommendation: redline.recommendation,
           ruleName: redline.rule_name,
           redlineType: redline.redline_type || 'violation',
@@ -2933,7 +2936,7 @@ async function applyAllRedlines(): Promise<void> {
           const diffView = document.createElement('div');
           diffView.className = 'diff-view';
           diffView.style.cssText = 'font-family:Georgia,serif;font-size:13px;line-height:1.6;padding:8px;border:1px solid var(--border,#E8E5E0);border-radius:6px;margin-bottom:8px;';
-          diffView.innerHTML = wordDiff(redline.original_text, result.fix_text);
+          diffView.innerHTML = wordDiff(redline.clause_text, result.fix_text);
           wrapper.appendChild(diffView);
           const reasoning = document.createElement('div');
           reasoning.className = 'generate-reasoning';

@@ -37,36 +37,42 @@ interface RedlineResponse {
     redline_type?: string;  // "violation" or "missing"
 }
 
-// AI-First Analysis Types (for /analyze-full endpoint)
-interface AIRedlineItem {
+// Unified Analysis Types (matches backend RedlineItem + AnalysisResult)
+interface RedlineItem {
     id: string;
-    risk_level: 'RED' | 'YELLOW';
+    risk_level: 'RED' | 'YELLOW' | 'GREEN';
     rule_name: string;
-    original_text: string;  // Exact text from contract for search
+    clause_text: string;            // Exact verbatim text from contract (verified)
+    clause_type: string;
     explanation: string;
-    recommendation: string;  // Lawyer-readable guidance (not exact replacement text)
+    recommendation: string;
+    suggested_fix?: string;         // Exact replacement text
     redline_type: 'violation' | 'missing';
-    // Confidence & verification fields (from backend pipeline stages 4-5)
-    confidence?: number;           // 0.0-1.0 weighted score
-    confidence_level?: string;     // "HIGH" | "MEDIUM" | "LOW"
-    verification_status?: string;  // "exact" | "normalized" | "fuzzy_corrected"
+    confidence?: number;
+    confidence_level?: string;
+    verification_status?: string;
     is_deal_breaker?: boolean;
     cross_references?: string[];
+    paragraph_hash?: string;
 }
 
-interface AIAnalysisResult {
+interface AnalysisResult {
     document_id: string;
     filename: string;
     executive_summary: string[];
-    redlines: AIRedlineItem[];
+    risks: RedlineItem[];
     total_risks: number;
-    risk_summary: { red: number; yellow: number };
+    risk_summary: { red: number; yellow: number; green: number };
     tokens_used: number;
+    jurisdiction?: string;
+    jurisdiction_name?: string;
+    pipeline_partial?: boolean;
+    source_type?: string;
 }
 
 // Clause-level analysis (for selection scanning / re-scan)
 interface ClauseAnalysisResult {
-    risks: AIRedlineItem[];
+    risks: RedlineItem[];
     tokens_used: number;
     analysis_time_ms: number;
 }
@@ -434,8 +440,8 @@ class ContraRedAPI {
      * Sends full contract text + playbook to Gemini for holistic analysis.
      * Returns executive summary and redlines with exact-match text anchors.
      */
-    async analyzeWithAI(text: string, filename?: string, playbookId?: string, partySide?: string): Promise<AIAnalysisResult> {
-        return this.request('/documents/analyze-full', {
+    async analyzeWithAI(text: string, filename?: string, playbookId?: string, partySide?: string): Promise<AnalysisResult> {
+        return this.request('/documents/analyze', {
             method: 'POST',
             body: JSON.stringify({ text, filename, playbook_id: playbookId, party_side: partySide || 'buyer' }),
         });
@@ -572,7 +578,7 @@ class ContraRedAPI {
      * Export risk analysis as a DOCX report.
      * Returns a Blob for download.
      */
-    async exportReport(analysisResult: AIAnalysisResult): Promise<Blob> {
+    async exportReport(analysisResult: AnalysisResult): Promise<Blob> {
         // WIRED_BY_REFACTOR: Replaced dead this.accessToken with cookie-based CSRF auth
         const csrf = this.getCsrfToken();
         const headers: Record<string, string> = {
@@ -587,10 +593,10 @@ class ContraRedAPI {
             body: JSON.stringify({
                 filename: analysisResult.filename,
                 executive_summary: analysisResult.executive_summary,
-                redlines: analysisResult.redlines.map(r => ({
+                redlines: analysisResult.risks.map(r => ({
                     risk_level: r.risk_level,
                     rule_name: r.rule_name,
-                    original_text: r.original_text,
+                    original_text: r.clause_text,
                     explanation: r.explanation,
                     recommendation: r.recommendation,
                 })),
@@ -649,4 +655,4 @@ class ContraRedAPI {
 
 // Export singleton instance
 export const api = new ContraRedAPI();
-export type { User, RedlineResponse, Playbook, PlaybookRule, PlaybookDetail, AIRedlineItem, AIAnalysisResult, ClauseAnalysisResult, NegotiationDecision, NegotiationSession, ClauseLibraryItem, DocumentListItem, TemplateListItem };
+export type { User, RedlineResponse, Playbook, PlaybookRule, PlaybookDetail, RedlineItem, AnalysisResult, ClauseAnalysisResult, NegotiationDecision, NegotiationSession, ClauseLibraryItem, DocumentListItem, TemplateListItem };
