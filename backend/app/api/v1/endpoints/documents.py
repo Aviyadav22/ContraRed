@@ -1,8 +1,8 @@
 """
 Document analysis endpoints.
 
-Real implementation using the 5-stage analysis pipeline, with legacy
-RuleEngine + AIService paths retained for /analyze-file and /summarize.
+Real implementation using the 5-stage analysis pipeline.  All endpoints
+now return the unified RedlineItem schema (RiskItem has been retired).
 
 ZERO DATA RETENTION (ZDR) MODE:
 - When enabled, document text is processed in RAM only
@@ -1709,16 +1709,18 @@ async def analyze_file(
             source_type="docx",
             paragraph_hashes=contract_map.to_hash_map() if not ZDR_MODE else None,
             risks=[
-                RiskItem(
+                RedlineItem(
                     id=str(uuid4()),
                     clause_text=match.match_text,
                     risk_level=match.risk_level.value,
                     rule_name=match.rule_name,
-                    clause_type=match.clause_type,
+                    clause_type=getattr(match, 'clause_type', '') or '',
                     paragraph_hash=getattr(match, 'paragraph_hash', None),
-                    ai_explanation=match.ai_explanation,
-                    suggested_fix=match.suggested_fix,
-                    is_deal_breaker=match.is_deal_breaker,
+                    explanation=getattr(match, 'ai_explanation', '') or '',
+                    recommendation='',
+                    suggested_fix=getattr(match, 'suggested_fix', None),
+                    redline_type='violation',
+                    is_deal_breaker=getattr(match, 'is_deal_breaker', False),
                 )
                 for match in enriched_matches
             ]
@@ -2226,14 +2228,16 @@ async def get_document(
         total_risks=document.total_risks,
         risk_summary=document.risk_summary or {},
         risks=[
-            RiskItem(
+            RedlineItem(
                 id=str(risk.id),
                 clause_text=risk.clause_text,
                 risk_level=risk.risk_level.value.upper(),
                 rule_name="",
-                clause_type="",
-                ai_explanation=risk.ai_explanation,
-                suggested_fix=risk.suggested_fix,
+                clause_type=getattr(risk, "clause_type", "") or "",
+                explanation=risk.ai_explanation or "",
+                recommendation="",
+                suggested_fix=getattr(risk, "suggested_fix", None),
+                redline_type="violation",
             )
             for risk in risks
         ]
