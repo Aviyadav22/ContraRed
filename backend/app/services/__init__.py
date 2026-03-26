@@ -23,9 +23,10 @@ _LAZY_IMPORTS = {
     "StructureExtractor": ("app.services.structure_extractor", "StructureExtractor"),
     "ContractMap": ("app.services.structure_extractor", "ContractMap"),
     "ContractNode": ("app.services.structure_extractor", "ContractNode"),
-    "IntelligenceBridge": ("app.services.intelligence_bridge", "IntelligenceBridge"),
-    "OmniContextStrategy": ("app.services.intelligence_bridge", "OmniContextStrategy"),
-    "HybridSentinelStrategy": ("app.services.intelligence_bridge", "HybridSentinelStrategy"),
+    # Analysis pipeline (unified AI-first)
+    "analysis_pipeline": ("app.services.analysis_pipeline", "analysis_pipeline"),
+    "AnalysisPipeline": ("app.services.analysis_pipeline", "AnalysisPipeline"),
+    "PipelineResult": ("app.services.analysis_pipeline", "PipelineResult"),
     "RedlineImplementer": ("app.services.redline_implementer", "RedlineImplementer"),
     "RedlineResult": ("app.services.redline_implementer", "RedlineResult"),
     "TextAnchor": ("app.services.redline_implementer", "TextAnchor"),

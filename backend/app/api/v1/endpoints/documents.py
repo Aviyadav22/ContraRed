@@ -77,7 +77,7 @@ class AnalyzeRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=500000)
     playbook_id: Optional[str] = None
     filename: Optional[str] = Field(default="untitled.docx", max_length=255)
-    party_side: Optional[str] = Field(default="seller", pattern=r"^(buyer|seller|neutral)$")
+    party_side: Optional[str] = Field(default="buyer", pattern=r"^(buyer|seller|neutral)$")
 
 
 class RedlineItem(BaseModel):
@@ -314,7 +314,7 @@ async def analyze_document(
             logger.error("Error loading playbook: %s", e)
 
     # Use playbook's party_side if set and user didn't explicitly choose
-    effective_party_side = body.party_side or "seller"
+    effective_party_side = body.party_side or "buyer"
     if not body.party_side and playbook and hasattr(playbook, 'party_side') and playbook.party_side:
         effective_party_side = playbook.party_side
 
@@ -640,7 +640,7 @@ async def analyze_clause(
     """
     Analyze a single clause/text selection for risks.
 
-    Lightweight alternative to /analyze-full — designed for inline
+    Lightweight alternative to /analyze — designed for inline
     selection scanning from the Word Add-in.
     """
     start_time = time.perf_counter()
@@ -1550,15 +1550,15 @@ async def analyze_file(
     _quota=Depends(check_and_increment_quota),
 ):
     """
-    Analyze uploaded DOCX file using Structure Extractor (Box 1).
-    
+    Analyze uploaded DOCX file using the unified AI pipeline.
+
     This endpoint preserves document structure (headings, sections) and
     generates SHA-256 paragraph hashes for drift detection during redlining.
-    
+
     Process:
-    1. Box 1: StructureExtractor parses DOCX → ContractMap
-    2. Box 2: RuleEngine + AI analyzes the ContractMap
-    3. Response includes paragraph_hashes for frontend drift detection
+    1. StructureExtractor parses DOCX → ContractMap (preserves structure + hashes)
+    2. Full text fed into 6-stage AI pipeline (same as /analyze)
+    3. Response enriched with paragraph_hashes for frontend drift detection
     """
     # Validate file type
     filename = file.filename or "document.docx"
@@ -1597,11 +1597,11 @@ async def analyze_file(
             detail="Failed to parse DOCX file. Please ensure the file is a valid .docx document."
         )
     
-    # Initialize services
-    ai_service = AIService()
-    cache = await get_cache()
-    
     # Load playbook rules if specified
+    playbook_rules = []
+    playbook_name = "Default"
+    playbook = None
+
     if playbook_id:
         try:
             playbook = await load_playbook(
@@ -1609,13 +1609,18 @@ async def analyze_file(
                 current_user_id=current_user.id,
                 current_user_org_id=current_user.organization_id,
             )
+            if playbook:
+                playbook_name = playbook.name
+                playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid playbook_id format")
-        if not playbook:
-            raise HTTPException(status_code=404, detail="Playbook not found")
-        rule_engine = get_cached_rule_engine(playbook)
-    else:
-        rule_engine = get_default_rule_engine()
+        except Exception as e:
+            logger.error("Error loading playbook for file analysis: %s", e)
+
+    # Use playbook's party_side if set
+    effective_party_side = "buyer"
+    if playbook and hasattr(playbook, 'party_side') and playbook.party_side:
+        effective_party_side = playbook.party_side
 
     # Create document record
     document = Document(
@@ -1625,65 +1630,41 @@ async def analyze_file(
     )
     db.add(document)
     await db.flush()
-    
+
     try:
-        # Get full text from ContractMap for analysis
+        # Get full text from ContractMap for the unified pipeline
         full_text = contract_map.get_all_text()
-        
-        # Box 2: Rule-based detection on extracted text
-        matches = rule_engine.evaluate(full_text)
-        
-        # Enrich with paragraph hashes from ContractMap
-        for match in matches:
-            # Find the paragraph hash for this match
-            for node in contract_map.nodes:
-                if match.match_text in node.text or node.text in match.match_text:
-                    match.paragraph_hash = node.id
-                    break
-        
-        # AI enrichment in parallel
-        token_counts_file = []
 
-        if matches:
-            _org_id_file = str(current_user.organization_id) if current_user.organization_id else None
+        # Run the unified 6-stage AI pipeline (same as /analyze)
+        playbook_name = _sanitize_for_prompt(playbook_name, max_length=200)
 
-            async def enrich_with_cache(match: RuleMatch) -> RuleMatch:
-                cache_key = match.cache_key()
-                if cache.is_connected:
-                    cached = await cache.get(cache_key, org_id=_org_id_file)
-                    if cached:
-                        match.ai_explanation = cached.get("explanation")
-                        match.suggested_fix = cached.get("suggested_fix")
-                        return match
-
-                explanation, suggested_fix, tokens = await ai_service.enrich_match(match)
-                token_counts_file.append(tokens)
-
-                match.ai_explanation = explanation
-                match.suggested_fix = suggested_fix
-
-                # Skip cache in ZDR mode to prevent risk data persistence
-                if cache.is_connected and (explanation or suggested_fix) and not ZDR_MODE:
-                    await cache.set(cache_key, {
-                        "explanation": explanation,
-                        "suggested_fix": suggested_fix,
-                    }, ttl=3600, org_id=_org_id_file)
-
-                return match
-
-            enriched_matches = await asyncio.gather(
-                *[enrich_with_cache(match) for match in matches]
+        try:
+            pipeline_result: PipelineResult = await asyncio.wait_for(
+                analysis_pipeline.run(
+                    contract_text=full_text,
+                    playbook_rules=playbook_rules,
+                    playbook_name=playbook_name,
+                    party_side=effective_party_side,
+                ),
+                timeout=120.0,
             )
-        else:
-            enriched_matches = []
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail={"message": "AI analysis timed out. Please try with a shorter document.", "error_code": "ai_timeout"},
+            )
 
-        total_tokens = sum(token_counts_file)
-        
-        # Build response with ContractMap metadata
-        risk_summary = rule_engine.get_risk_summary(enriched_matches)
-        
+        # Enrich pipeline results with paragraph hashes from ContractMap
+        hash_map = contract_map.to_hash_map() if not ZDR_MODE else None
+
+        risk_summary = {
+            "red": sum(1 for r in pipeline_result.redlines if r.risk_level == "RED"),
+            "yellow": sum(1 for r in pipeline_result.redlines if r.risk_level == "YELLOW"),
+            "green": sum(1 for r in pipeline_result.redlines if r.risk_level == "GREEN"),
+        }
+
         # Update document
-        document.total_risks = len(enriched_matches)
+        document.total_risks = len(pipeline_result.redlines)
         document.risk_summary = risk_summary
         document.status = DocumentStatus.COMPLETED
 
@@ -1697,37 +1678,52 @@ async def analyze_file(
             ip_address=client_ip,
             user_agent=user_agent,
             status="success",
-            risk_count=len(enriched_matches),
+            risk_count=len(pipeline_result.redlines),
         )
         await db.commit()
         await db.refresh(document)
-        
+
+        # Map paragraph hashes to redlines by matching clause text to ContractMap nodes
+        def _find_paragraph_hash(clause_text: str) -> Optional[str]:
+            if not contract_map or not clause_text:
+                return None
+            for node in contract_map.nodes:
+                if clause_text in node.text or node.text in clause_text:
+                    return node.id
+            return None
+
         return AnalysisResult(
             document_id=str(document.id),
             filename=filename,
-            total_risks=len(enriched_matches),
+            executive_summary=pipeline_result.executive_summary,
+            total_risks=len(pipeline_result.redlines),
             risk_summary=risk_summary,
-            tokens_used=total_tokens,
+            tokens_used=pipeline_result.total_tokens,
             source_type="docx",
-            paragraph_hashes=contract_map.to_hash_map() if not ZDR_MODE else None,
+            pipeline_partial=pipeline_result.partial,
+            paragraph_hashes=hash_map,
             risks=[
                 RedlineItem(
                     id=str(uuid4()),
-                    clause_text=match.match_text,
-                    risk_level=match.risk_level.value,
-                    rule_name=match.rule_name,
-                    clause_type=getattr(match, 'clause_type', '') or '',
-                    paragraph_hash=getattr(match, 'paragraph_hash', None),
-                    explanation=getattr(match, 'ai_explanation', '') or '',
-                    recommendation='',
-                    suggested_fix=getattr(match, 'suggested_fix', None),
-                    redline_type='violation',
-                    is_deal_breaker=getattr(match, 'is_deal_breaker', False),
+                    clause_text=r.verified_text or r.original_text,
+                    risk_level=r.risk_level,
+                    rule_name=r.rule_name,
+                    clause_type=r.clause_type or '',
+                    paragraph_hash=_find_paragraph_hash(r.verified_text or r.original_text),
+                    explanation=r.explanation,
+                    recommendation=r.recommendation,
+                    suggested_fix=r.suggested_fix,
+                    redline_type=r.redline_type,
+                    confidence=r.confidence.overall if r.confidence else None,
+                    confidence_level=r.confidence.level if r.confidence else None,
+                    verification_status=r.verification_status,
+                    is_deal_breaker=r.is_deal_breaker,
+                    cross_references=r.cross_references or [],
                 )
-                for match in enriched_matches
+                for r in pipeline_result.redlines
             ]
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
