@@ -268,21 +268,15 @@ async def analyze_document(
     _quota=Depends(check_and_increment_quota),
 ):
     """
-    Analyze document text for risks using Rule Engine + AI.
+    Analyze document text for risks using the unified AI pipeline.
 
-    DEPRECATED: Use /analyze-full for 5-stage pipeline analysis with
-    hallucination verification and confidence scoring.
-
-    This endpoint is kept for backward compatibility with the Word Add-in.
+    Uses the 5-stage analysis pipeline (extraction, classification,
+    risk assessment, hallucination verification, confidence scoring)
+    with Stage 6 fix generation.
 
     ZERO DATA RETENTION (ZDR) MODE:
     - Document text is processed in RAM only, NEVER stored
     - Only metadata (filename, risk count) is stored for audit
-
-    Process:
-    1. RuleEngine scans text with regex patterns (from playbook or defaults)
-    2. AIService enriches matches (parallel with asyncio.gather)
-    3. Audit log created (ZDR: no text stored)
     """
     # Contract size limit (~100 pages)
     MAX_CONTRACT_SIZE = 500_000  # 500KB
@@ -292,18 +286,25 @@ async def analyze_document(
             detail=f"Document too large ({len(body.text):,} chars). Maximum is {MAX_CONTRACT_SIZE:,} characters (~100 pages). Try scanning sections individually.",
         )
 
+    # Set RLS context for tenant isolation
+    from app.middleware.tenant_context import set_tenant_context
+    await set_tenant_context(
+        db=db,
+        user_id=str(current_user.id),
+        organization_id=str(current_user.organization_id) if current_user.organization_id else None,
+    )
+
     # Get client info for audit
     client_ip = request.client.host if request.client else None
-    user_agent = request.headers.get("user-agent")
 
     # Track analysis start time for processing_duration_ms
     analysis_start = time.monotonic()
 
-    # Initialize services
-    ai_service = AIService()
-    cache = await get_cache()
+    # Load playbook rules if specified
+    playbook_rules = []
+    playbook_name = "Default"
+    playbook = None
 
-    # Load playbook rules if specified, otherwise use defaults
     if body.playbook_id:
         try:
             playbook = await load_playbook(
@@ -311,184 +312,172 @@ async def analyze_document(
                 current_user_id=current_user.id,
                 current_user_org_id=current_user.organization_id,
             )
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid playbook_id format")
-        if not playbook:
-            raise HTTPException(status_code=404, detail="Playbook not found")
-        rule_engine = get_cached_rule_engine(playbook)
-    else:
-        rule_engine = get_default_rule_engine()
-    
-    # Create document record (with org + version tracking)
-    content_hash = Document.compute_content_hash(body.text)
-    word_count = len(body.text.split())
-    document = Document(
-        user_id=current_user.id,
-        organization_id=current_user.organization_id,
-        filename=body.filename,
-        status=DocumentStatus.PROCESSING,
-        content_hash=content_hash,
-        word_count=word_count,
-    )
-    db.add(document)
-    await db.flush()
-    
+            if playbook:
+                playbook_name = playbook.name
+                playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
+        except Exception as e:
+            logger.error("Error loading playbook: %s", e)
+
+    # Use playbook's party_side if set and user didn't explicitly choose
+    effective_party_side = body.party_side or "seller"
+    if not body.party_side and playbook and hasattr(playbook, 'party_side') and playbook.party_side:
+        effective_party_side = playbook.party_side
+
     try:
-        # Step 1: Rule-based detection
-        matches = rule_engine.evaluate(body.text)
-        
-        # Step 2: AI enrichment in PARALLEL (critical for performance)
-        token_counts = []
+        # Sanitize playbook name before passing to AI
+        playbook_name = _sanitize_for_prompt(playbook_name, max_length=200)
 
-        if matches:
-            # Create async tasks for all matches
-            # Tenant-scoped cache key prefix
-            _org_id = str(current_user.organization_id) if current_user.organization_id else None
-
-            async def enrich_with_cache(match: RuleMatch) -> RuleMatch:
-                """Enrich a match, checking cache first (tenant-scoped)."""
-                # Check cache
-                cache_key = match.cache_key()
-                if cache.is_connected:
-                    cached = await cache.get(cache_key, org_id=_org_id)
-                    if cached:
-                        match.ai_explanation = cached.get("explanation")
-                        match.suggested_fix = cached.get("suggested_fix")
-                        return match
-
-                # Call AI service
-                explanation, suggested_fix, tokens = await ai_service.enrich_match(match)
-                token_counts.append(tokens)
-
-                match.ai_explanation = explanation
-                match.suggested_fix = suggested_fix
-
-                # Store in cache (tenant-scoped) — skip in ZDR mode to prevent risk data persistence
-                if cache.is_connected and (explanation or suggested_fix) and not ZDR_MODE:
-                    await cache.set(cache_key, {
-                        "explanation": explanation,
-                        "suggested_fix": suggested_fix,
-                    }, ttl=3600, org_id=_org_id)
-
-                return match
-
-            # Run all AI calls in parallel using asyncio.gather
-            enriched_matches = await asyncio.gather(
-                *[enrich_with_cache(match) for match in matches]
+        # Run the 5-stage analysis pipeline
+        # Pipeline: extraction -> classification -> risk assessment ->
+        # hallucination verification -> confidence scoring + fix generation
+        try:
+            pipeline_result: PipelineResult = await asyncio.wait_for(
+                analysis_pipeline.run(
+                    contract_text=body.text,
+                    playbook_rules=playbook_rules,
+                    playbook_name=playbook_name,
+                    party_side=effective_party_side,
+                ),
+                timeout=120.0,
             )
-        else:
-            enriched_matches = []
-
-        total_tokens = sum(token_counts)
-        
-        # Step 3: Storage (respects ZDR_MODE)
-        risk_summary = rule_engine.get_risk_summary(enriched_matches)
-        
-        if ZDR_MODE:
-            # ZERO DATA RETENTION: Don't store document text or clause text
-            # Only store: filename (for audit), risk count (for billing)
-            # Generate ephemeral IDs for frontend (not persisted)
-            
-            document.total_risks = len(enriched_matches)
-            document.risk_summary = risk_summary
-            document.status = DocumentStatus.COMPLETED
-            document.processing_duration_ms = int((time.monotonic() - analysis_start) * 1000)
-            # NOTE: In ZDR mode, no clause_text is stored in DocumentRisk
-
-            # Create audit log entry (no text, just metadata)
-            await log_audit_event(
-                db=db,
-                user=current_user,
-                action="analyze",
-                resource_type="document",
-                resource_name=body.filename,
-                ip_address=client_ip,
-                user_agent=user_agent,
-                status="success",
-                risk_count=len(enriched_matches),
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=504,
+                detail={"message": "AI analysis timed out. Please try with a shorter document.", "error_code": "ai_timeout"},
             )
-            await db.commit()
-            await db.refresh(document)
-            
-            # Build response from RAM (text never persisted)
-            return AnalysisResult(
-                document_id=str(document.id),
-                filename=document.filename,
-                total_risks=len(enriched_matches),
-                risk_summary=risk_summary,
-                tokens_used=total_tokens,
-                risks=[
-                    RiskItem(
-                        id=str(uuid4()),  # Ephemeral ID (not persisted)
-                        clause_text=match.match_text,  # From RAM, not DB
-                        risk_level=match.risk_level.value,
-                        rule_name=match.rule_name,
-                        clause_type=match.clause_type,
-                        ai_explanation=match.ai_explanation,
-                        suggested_fix=match.suggested_fix,
-                        is_deal_breaker=match.is_deal_breaker,
-                    )
-                    for match in enriched_matches
-                ]
-            )
-        else:
-            # NON-ZDR MODE: Store everything (for internal/demo use)
-            db_risks = []
-            for match in enriched_matches:
-                risk = DocumentRisk(
-                    document_id=document.id,
-                    clause_text=match.match_text,
-                    start_offset=match.start_offset,
-                    end_offset=match.end_offset,
-                    risk_level=DBRiskLevel(match.risk_level.value.lower()),
-                    ai_explanation=match.ai_explanation,
-                    suggested_fix=match.suggested_fix,
-                )
-                db.add(risk)
-                db_risks.append((risk, match))
-            
-            document.total_risks = len(enriched_matches)
-            document.risk_summary = risk_summary
-            document.status = DocumentStatus.COMPLETED
-            document.processing_duration_ms = int((time.monotonic() - analysis_start) * 1000)
 
-            await db.commit()
-            
-            for risk, _ in db_risks:
-                await db.refresh(risk)
-            await db.refresh(document)
-            
-            return AnalysisResult(
-                document_id=str(document.id),
-                filename=document.filename,
-                total_risks=document.total_risks,
-                risk_summary=document.risk_summary,
-                tokens_used=total_tokens,
-                risks=[
-                    RiskItem(
-                        id=str(risk.id),
-                        clause_text=match.match_text,
-                        risk_level=match.risk_level.value,
-                        rule_name=match.rule_name,
-                        clause_type=match.clause_type,
-                        ai_explanation=match.ai_explanation,
-                        suggested_fix=match.suggested_fix,
-                        is_deal_breaker=match.is_deal_breaker,
-                    )
-                    for risk, match in db_risks
-                ]
+        risk_summary = {
+            "red": sum(1 for r in pipeline_result.redlines if r.risk_level == "RED"),
+            "yellow": sum(1 for r in pipeline_result.redlines if r.risk_level == "YELLOW"),
+        }
+
+        # Persist document metadata (ZDR-safe: no contract text stored)
+        playbook_uuid = None
+        if body.playbook_id:
+            try:
+                playbook_uuid = UUID(body.playbook_id)
+            except ValueError:
+                pass
+
+        content_hash = Document.compute_content_hash(body.text)
+        doc = Document(
+            user_id=current_user.id,
+            organization_id=current_user.organization_id,
+            playbook_id=playbook_uuid,
+            filename=body.filename or "untitled.docx",
+            status=DocumentStatus.COMPLETED,
+            total_risks=len(pipeline_result.redlines),
+            risk_summary=risk_summary,
+            content_hash=content_hash,
+            processed_at=datetime.now(timezone.utc),
+            word_count=len(body.text.split()),
+            processing_duration_ms=int((time.monotonic() - analysis_start) * 1000),
+        )
+        db.add(doc)
+        await db.flush()
+
+        # Auto-create version snapshot
+        version = DocumentVersion(
+            document_id=doc.id,
+            version_number=1,
+            content_hash=content_hash,
+            risk_summary=risk_summary,
+            total_risks=len(pipeline_result.redlines),
+            version_metadata={
+                "playbook": playbook_name,
+                "jurisdiction": pipeline_result.jurisdiction_code,
+                "pipeline_partial": pipeline_result.partial,
+            },
+            created_by=current_user.id,
+        )
+        db.add(version)
+
+        # Log audit event (same transaction — single commit for both)
+        await log_audit_event(
+            db=db,
+            user=current_user,
+            action="analyze",
+            resource_type="contract",
+            resource_name=body.filename or "untitled.docx",
+            ip_address=client_ip,
+            risk_count=len(pipeline_result.redlines),
+            details=json.dumps({
+                "playbook": playbook_name,
+                "redlines_count": len(pipeline_result.redlines),
+                "tokens_used": pipeline_result.total_tokens_used,
+                "pipeline_partial": pipeline_result.partial,
+                "stages": len(pipeline_result.stage_metrics),
+            }),
+        )
+        await db.commit()
+        await db.refresh(doc)
+        doc_id = str(doc.id)
+
+        # Build response — map FinalRedline to RedlineItem
+        redline_items = [
+            RedlineItem(
+                id=str(uuid4()),
+                risk_level=r.risk_level,
+                rule_name=r.rule_name,
+                clause_text=r.verified_text or r.original_text,
+                clause_type=getattr(r, 'clause_type', ''),
+                explanation=r.explanation,
+                recommendation=r.recommendation,
+                suggested_fix=getattr(r, 'suggested_fix', None),
+                redline_type=r.redline_type,
+                confidence=round(r.confidence.score, 3),
+                confidence_level=r.confidence.level.value,
+                verification_status=r.verification_status,
+                is_deal_breaker=r.is_deal_breaker,
+                cross_references=r.cross_references or None,
             )
-        
+            for r in pipeline_result.redlines
+        ]
+
+        # Get jurisdiction info from the pipeline result
+        jurisdiction_code = pipeline_result.jurisdiction_code
+
+        return AnalysisResult(
+            document_id=doc_id,
+            filename=body.filename or "untitled.docx",
+            executive_summary=pipeline_result.executive_summary,
+            risks=redline_items,
+            total_risks=len(redline_items),
+            risk_summary=risk_summary,
+            tokens_used=pipeline_result.total_tokens_used,
+            pipeline_partial=pipeline_result.partial,
+            jurisdiction=jurisdiction_code,
+            jurisdiction_name=getattr(pipeline_result, 'jurisdiction_name', None),
+        )
+
     except HTTPException:
         raise
+    except AIServiceUnavailable as e:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"message": e.message, "error_code": e.error_code}
+        )
+    except AIRateLimited as e:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={"message": e.message, "error_code": e.error_code}
+        )
+    except AIServiceTimeout as e:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail={"message": e.message, "error_code": e.error_code}
+        )
+    except AIServiceError as e:
+        logger.error("AI analysis failed: %s", e.message)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail={"message": e.message, "error_code": e.error_code}
+        )
     except Exception as e:
-        # Mark document as failed
         logger.error("Analysis failed", exc_info=True)
-        document.status = DocumentStatus.FAILED
-        await db.commit()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Analysis failed. Please try again or contact support."
+            detail={"message": "Analysis failed. Please try again or contact support.", "error_code": "unknown_error"}
         )
 
 
@@ -630,212 +619,13 @@ async def analyze_full_ai(
     db: AsyncSession = Depends(get_db),
     _quota=Depends(check_and_increment_quota),
 ):
-    """
-    AI-First contract analysis using Gemini.
-    
-    This endpoint sends the FULL contract text + playbook rules to Gemini
-    for comprehensive analysis, returning executive summary and redlines.
-    
-    Unlike /analyze, this does NOT use rule-based regex matching.
-    Gemini performs holistic structural analysis + surgical redlining.
-    """
-    # Contract size limit (~100 pages)
-    MAX_CONTRACT_SIZE = 500_000  # 500KB
-    if len(body.text) > MAX_CONTRACT_SIZE:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Document too large ({len(body.text):,} chars). Maximum is {MAX_CONTRACT_SIZE:,} characters (~100 pages). Try scanning sections individually.",
-        )
+    """AI-first analysis. Now redirects to unified /analyze endpoint.
 
-    # Set RLS context for tenant isolation
-    from app.middleware.tenant_context import set_tenant_context
-    await set_tenant_context(
-        db=db,
-        user_id=str(current_user.id),
-        organization_id=str(current_user.organization_id) if current_user.organization_id else None,
+    Kept for backward compatibility — same pipeline, same response.
+    """
+    return await analyze_document(
+        request=request, body=body, current_user=current_user, db=db, _quota=_quota
     )
-
-    # Get client info for audit
-    client_ip = request.client.host if request.client else None
-
-    # Track analysis start time for processing_duration_ms
-    analysis_start_full = time.monotonic()
-
-    # Load playbook rules if specified
-    playbook_rules = []
-    playbook_name = "Default"
-    playbook = None
-
-    if body.playbook_id:
-        try:
-            playbook = await load_playbook(db, body.playbook_id, current_user_id=current_user.id, current_user_org_id=current_user.organization_id)
-            if playbook:
-                playbook_name = playbook.name
-                playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
-        except Exception as e:
-            logger.error("Error loading playbook: %s", e)
-
-    # Use playbook's party_side if set and user didn't explicitly choose
-    effective_party_side = body.party_side or "seller"
-    if not body.party_side and playbook and hasattr(playbook, 'party_side') and playbook.party_side:
-        effective_party_side = playbook.party_side
-
-    try:
-        # Sanitize playbook name before passing to AI
-        playbook_name = _sanitize_for_prompt(playbook_name, max_length=200)
-
-        # Phase 4: Use the 5-stage analysis pipeline instead of direct Gemini call
-        # Pipeline includes: extraction -> classification -> risk assessment ->
-        # hallucination verification -> confidence scoring + enrichment
-        try:
-            pipeline_result: PipelineResult = await asyncio.wait_for(
-                analysis_pipeline.run(
-                    contract_text=body.text,
-                    playbook_rules=playbook_rules,
-                    playbook_name=playbook_name,
-                    party_side=effective_party_side,
-                ),
-                timeout=120.0,
-            )
-        except asyncio.TimeoutError:
-            raise HTTPException(
-                status_code=504,
-                detail={"message": "AI analysis timed out. Please try with a shorter document.", "error_code": "ai_timeout"},
-            )
-
-        risk_summary = {
-            "red": sum(1 for r in pipeline_result.redlines if r.risk_level == "RED"),
-            "yellow": sum(1 for r in pipeline_result.redlines if r.risk_level == "YELLOW"),
-        }
-
-        # Persist document metadata (ZDR-safe: no contract text stored)
-        playbook_uuid = None
-        if body.playbook_id:
-            try:
-                playbook_uuid = UUID(body.playbook_id)
-            except ValueError:
-                pass
-
-        content_hash = Document.compute_content_hash(body.text)
-        doc = Document(
-            user_id=current_user.id,
-            organization_id=current_user.organization_id,
-            playbook_id=playbook_uuid,
-            filename=body.filename or "untitled.docx",
-            status=DocumentStatus.COMPLETED,
-            total_risks=len(pipeline_result.redlines),
-            risk_summary=risk_summary,
-            content_hash=content_hash,
-            processed_at=datetime.now(timezone.utc),
-            word_count=len(body.text.split()),
-            processing_duration_ms=int((time.monotonic() - analysis_start_full) * 1000),
-        )
-        db.add(doc)
-        await db.flush()
-
-        # Auto-create version snapshot (Phase 2.1)
-        version = DocumentVersion(
-            document_id=doc.id,
-            version_number=1,
-            content_hash=content_hash,
-            risk_summary=risk_summary,
-            total_risks=len(pipeline_result.redlines),
-            version_metadata={
-                "playbook": playbook_name,
-                "jurisdiction": pipeline_result.jurisdiction_code,
-                "pipeline_partial": pipeline_result.partial,
-            },
-            created_by=current_user.id,
-        )
-        db.add(version)
-
-        # Log audit event (same transaction — single commit for both)
-        await log_audit_event(
-            db=db,
-            user=current_user,
-            action="ai_full_analysis",
-            resource_type="contract",
-            resource_name=body.filename or "untitled.docx",
-            ip_address=client_ip,
-            risk_count=len(pipeline_result.redlines),
-            details=json.dumps({
-                "playbook": playbook_name,
-                "redlines_count": len(pipeline_result.redlines),
-                "tokens_used": pipeline_result.total_tokens_used,
-                "pipeline_partial": pipeline_result.partial,
-                "stages": len(pipeline_result.stage_metrics),
-            }),
-        )
-        await db.commit()
-        await db.refresh(doc)
-        doc_id = str(doc.id)
-
-        # Build response — map FinalRedline to RedlineItem
-        redline_items = [
-            RedlineItem(
-                id=str(uuid4()),
-                risk_level=r.risk_level,
-                rule_name=r.rule_name,
-                clause_text=r.verified_text or r.original_text,
-                clause_type=getattr(r, 'clause_type', ''),
-                explanation=r.explanation,
-                recommendation=r.recommendation,
-                suggested_fix=getattr(r, 'suggested_fix', None),
-                redline_type=r.redline_type,
-                confidence=round(r.confidence.score, 3),
-                confidence_level=r.confidence.level.value,
-                verification_status=r.verification_status,
-                is_deal_breaker=r.is_deal_breaker,
-                cross_references=r.cross_references or None,
-            )
-            for r in pipeline_result.redlines
-        ]
-
-        # Get jurisdiction info from the pipeline result (set during scope analysis)
-        jurisdiction_code = pipeline_result.jurisdiction_code
-
-        return AnalysisResult(
-            document_id=doc_id,
-            filename=body.filename or "untitled.docx",
-            executive_summary=pipeline_result.executive_summary,
-            risks=redline_items,
-            total_risks=len(redline_items),
-            risk_summary=risk_summary,
-            tokens_used=pipeline_result.total_tokens_used,
-            pipeline_partial=pipeline_result.partial,
-            jurisdiction=jurisdiction_code,
-            jurisdiction_name=getattr(pipeline_result, 'jurisdiction_name', None),
-        )
-        
-    except HTTPException:
-        raise
-    except AIServiceUnavailable as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail={"message": e.message, "error_code": e.error_code}
-        )
-    except AIRateLimited as e:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail={"message": e.message, "error_code": e.error_code}
-        )
-    except AIServiceTimeout as e:
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail={"message": e.message, "error_code": e.error_code}
-        )
-    except AIServiceError as e:
-        logger.error("AI analysis failed: %s", e.message)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail={"message": e.message, "error_code": e.error_code}
-        )
-    except Exception as e:
-        logger.error("AI analysis failed", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail={"message": "AI analysis failed. Please try again.", "error_code": "unknown_error"}
-        )
 
 
 # ============================================================================
