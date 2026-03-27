@@ -52,7 +52,11 @@ class SensitiveDataFilter(logging.Filter):
 
 # Install the filter on the root logger so ALL loggers inherit it
 _sensitive_filter = SensitiveDataFilter()
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logging.basicConfig(
+    level=logging.INFO,
+    format='{"timestamp":"%(asctime)s","level":"%(levelname)s","module":"%(name)s","function":"%(funcName)s","message":"%(message)s"}',
+    datefmt="%Y-%m-%dT%H:%M:%S",
+)
 logging.getLogger().addFilter(_sensitive_filter)
 
 from fastapi import FastAPI, Request, Response

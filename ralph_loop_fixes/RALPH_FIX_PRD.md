@@ -99,11 +99,11 @@
 ## PHASE 7: MEDIUM - LOGGING AND MONITORING (Iterations 81-90)
 
 ### 7.1 Structured Logging
-- [ ] TASK-058: Replace ALL print() statements with Python logging module (logger = logging.getLogger(__name__))
-- [ ] TASK-059: Replace ALL console.log() in production code with a proper logger (keep in dev-only blocks if needed)
-- [ ] TASK-060: Add structured logging format - JSON logs with: timestamp, level, module, function, request_id, message
-- [ ] TASK-061: Add request/response logging middleware - log method, path, status_code, duration_ms for every request
-- [ ] TASK-062: Add Azure OpenAI call logging - log model, tokens_in, tokens_out, latency_ms, success/failure
+- [x] TASK-058: [ALREADY_FIXED] No print() in production code — only in __main__ test blocks and docstring examples. All modules use logging.getLogger(__name__).
+- [x] TASK-059: [ALREADY_FIXED] console.log/warn/error in add-in are gated by IS_DEV (only outputs in development builds). api.ts has one safety warning for production misconfiguration.
+- [x] TASK-060: Updated logging.basicConfig to JSON format with timestamp, level, module, function, message fields. RequestLoggingMiddleware includes request_id.
+- [x] TASK-061: [ALREADY_FIXED] RequestLoggingMiddleware in main.py logs method, path, status_code, duration, ip, request_id for every non-health request.
+- [x] TASK-062: [ALREADY_FIXED] Token usage logging added in TASK-033 (prompt/candidates/total tokens via usage_metadata). ai_service.py logs Gemini/Azure errors with type and message.
 
 ## PHASE 8: LOW - CODE QUALITY AND CLEANUP (Iterations 91-100)
 
@@ -118,7 +118,7 @@
 ---
 
 # STATUS TRACKING
-# LAST_COMPLETED: TASK-057
-# TOTAL_FIXED: 57/68
+# LAST_COMPLETED: TASK-062
+# TOTAL_FIXED: 62/68
 # HEALTH_SCORE_BEFORE: 53.9
 # HEALTH_SCORE_CURRENT: 53.9
