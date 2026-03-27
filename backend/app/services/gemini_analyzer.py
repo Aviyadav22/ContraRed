@@ -103,6 +103,45 @@ def _classify_gemini_error(e: Exception) -> AIServiceError:
 
 _VALID_RISK_LEVELS = {"RED", "YELLOW", "GREEN"}
 
+# ── Circuit breaker ─────────────────────────────────────────────────────
+# If consecutive failures exceed threshold, open the circuit and return
+# fallback responses for `recovery_seconds` before retrying.
+
+class _CircuitBreaker:
+    """Simple circuit breaker for AI service calls."""
+
+    def __init__(self, threshold: int = 5, recovery_seconds: float = 60.0):
+        self.threshold = threshold
+        self.recovery_seconds = recovery_seconds
+        self._failures = 0
+        self._last_failure: float = 0.0
+        self._is_open = False
+
+    def record_failure(self) -> None:
+        self._failures += 1
+        self._last_failure = time.monotonic()
+        if self._failures >= self.threshold:
+            self._is_open = True
+            logger.warning("Circuit breaker OPEN after %d consecutive failures", self._failures)
+
+    def record_success(self) -> None:
+        if self._failures > 0:
+            self._failures = 0
+            self._is_open = False
+
+    def is_open(self) -> bool:
+        if not self._is_open:
+            return False
+        # Check if recovery window has elapsed
+        if time.monotonic() - self._last_failure > self.recovery_seconds:
+            logger.info("Circuit breaker HALF-OPEN — allowing probe request")
+            self._is_open = False
+            return False
+        return True
+
+
+_circuit_breaker = _CircuitBreaker()
+
 # ── Rate-limit-aware retry with exponential backoff ──────────────────────
 _RETRY_MAX_ATTEMPTS = 3
 _RETRY_BASE_DELAY = 2.0    # seconds
@@ -121,13 +160,20 @@ def _is_rate_limit_error(e: Exception) -> bool:
 
 
 async def _rate_limited_call(coro_factory, retries: int = _RETRY_MAX_ATTEMPTS):
-    """Execute an AI call with rate limiting and exponential backoff on 429.
+    """Execute an AI call with circuit breaker, rate limiting, and exponential backoff.
 
     Args:
         coro_factory: A zero-arg callable that returns the coroutine to await.
         retries: Max retry attempts on rate-limit errors.
     """
     global _last_call_time
+
+    # Circuit breaker check
+    if _circuit_breaker.is_open():
+        raise AIServiceError(
+            "AI service temporarily unavailable (circuit breaker open). Please try again in a minute.",
+            "ai_circuit_open",
+        )
 
     for attempt in range(1, retries + 1):
         # Throttle: ensure minimum interval between calls
@@ -138,8 +184,11 @@ async def _rate_limited_call(coro_factory, retries: int = _RETRY_MAX_ATTEMPTS):
         _last_call_time = time.monotonic()
 
         try:
-            return await coro_factory()
+            result = await coro_factory()
+            _circuit_breaker.record_success()
+            return result
         except Exception as exc:
+            _circuit_breaker.record_failure()
             if _is_rate_limit_error(exc):
                 if attempt == retries:
                     raise _classify_gemini_error(exc)
@@ -360,6 +409,21 @@ class GeminiAnalyzer:
                 )
 
             response = await _rate_limited_call(_do_analysis)
+
+            # Log token usage if available
+            try:
+                usage = getattr(response, "usage_metadata", None)
+                if usage:
+                    logger.info(
+                        "ai_tokens model=%s prompt=%s candidates=%s total=%s latency=%.1fs",
+                        getattr(self.analysis_client, "model_name", "unknown"),
+                        getattr(usage, "prompt_token_count", "?"),
+                        getattr(usage, "candidates_token_count", "?"),
+                        getattr(usage, "total_token_count", "?"),
+                        time.monotonic() - (analysis_start if 'analysis_start' in dir() else time.monotonic()),
+                    )
+            except Exception:
+                pass  # Token logging is best-effort
 
             # Extract text from response
             response_text = ""
