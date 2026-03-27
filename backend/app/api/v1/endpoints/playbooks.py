@@ -4,7 +4,7 @@ Full CRUD for playbooks, rules, tiers, conditions, dependencies, versions, marke
 """
 
 import logging
-from typing import List, Optional, Any
+from typing import List, Optional
 import uuid
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
