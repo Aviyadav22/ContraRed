@@ -606,7 +606,7 @@ class ConditionsEngine:
         """
         if match.rule_id == rule_uuid_str:
             return True
-        if target_clause_type and match.clause_type == target_clause_type:
+        if target_clause_type and match.clause_type.strip().lower() == target_clause_type.strip().lower():
             return True
         return False
 
