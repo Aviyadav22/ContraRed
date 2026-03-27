@@ -73,6 +73,13 @@ ZDR_MODE = getattr(settings, 'ZERO_DATA_RETENTION', True)  # Default: ON for saf
 # Schemas - Strict RED/YELLOW/GREEN enum
 # ============================================================================
 
+class ErrorResponse(BaseModel):
+    """Standard error response shape for all non-2xx responses."""
+    error: str
+    message: str
+    detail: Optional[str] = None
+
+
 class AnalyzeRequest(BaseModel):
     """Request to analyze document text."""
     text: str = Field(..., min_length=1, max_length=500000)
