@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from app.core.config import settings
 from app.core.vertex_client import get_generative_model, is_available, get_backend
+from app.services.prompt_sanitizer import sanitize_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,10 @@ class AIService:
         if not self._enabled:
             return self._fallback_explanation(rule_name, risk_level), 0
         
-        user_prompt = f"Risk type: {rule_name} ({risk_level})\nClause: \"{clause_text}\"\n\nExplain the risk in ONE sentence (max 20 words):"
+        safe_clause = sanitize_for_prompt(clause_text, max_length=10000)
+        safe_rule = sanitize_for_prompt(rule_name, max_length=200)
+        safe_level = sanitize_for_prompt(risk_level, max_length=20)
+        user_prompt = f"Risk type: {safe_rule} ({safe_level})\nClause: \"{safe_clause}\"\n\nExplain the risk in ONE sentence (max 20 words):"
         
         if self._use_gemini:
             # Note: gemini-3-pro-preview is a 'thinking' model that uses tokens for reasoning
@@ -229,7 +233,9 @@ class AIService:
         if fallback_position:
             position_text += f" (Alternative: {fallback_position})"
         
-        user_prompt = f"Original clause:\n\"{clause_text}\"\n\nPreferred position: {position_text}\n\nGenerate replacement text:"
+        safe_clause = sanitize_for_prompt(clause_text, max_length=10000)
+        safe_position = sanitize_for_prompt(position_text, max_length=2000)
+        user_prompt = f"Original clause:\n\"{safe_clause}\"\n\nPreferred position: {safe_position}\n\nGenerate replacement text:"
         
         if self._use_gemini:
             # Note: gemini-3-pro-preview needs ~4000+ tokens for legal clause rewrites
@@ -459,10 +465,13 @@ class AIService:
             for r in risks_found[:10]  # Top 10 risks for context
         ])
         
-        # Truncate contract for context (first 2000 chars)
-        contract_preview = contract_text[:2000] + ("..." if len(contract_text) > 2000 else "")
-        
-        user_prompt = f"""Playbook Used: {playbook_name}
+        # Truncate and sanitize contract for context
+        contract_preview = sanitize_for_prompt(contract_text[:2000], max_length=2000)
+        if len(contract_text) > 2000:
+            contract_preview += "..."
+        safe_playbook_name = sanitize_for_prompt(playbook_name, max_length=200)
+
+        user_prompt = f"""Playbook Used: {safe_playbook_name}
 
 Risk Summary: {red_count} Critical, {yellow_count} Warning, {green_count} Safe
 

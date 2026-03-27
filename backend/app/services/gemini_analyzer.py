@@ -27,6 +27,7 @@ from app.services.prompt_templates import (
     render_research_prompt,
     LEGACY_PROMPT,
 )
+from app.services.prompt_sanitizer import sanitize_for_prompt, validate_contract_length
 
 
 class AIServiceError(Exception):
@@ -60,15 +61,10 @@ logger = logging.getLogger(__name__)
 def _sanitize_for_prompt(text: str, max_length: int = 50000) -> str:
     """Sanitize user-supplied text before interpolating into AI prompts.
 
-    Strips control characters and truncates to max_length to reduce prompt
-    injection surface. Does not guarantee injection prevention — defense in
-    depth via structured prompts and output validation is also needed.
+    Delegates to prompt_sanitizer module which provides injection pattern
+    detection in addition to control character stripping and truncation.
     """
-    if not text:
-        return ""
-    # Strip ASCII control chars except newline/tab
-    cleaned = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
-    return cleaned[:max_length]
+    return sanitize_for_prompt(text, max_length)
 
 
 def _strip_markdown_fences(text: str) -> str:

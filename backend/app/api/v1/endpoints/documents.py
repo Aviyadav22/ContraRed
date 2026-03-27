@@ -55,6 +55,7 @@ from app.services.analysis_pipeline import (
     AIServiceTimeout,
     _sanitize_for_prompt,
 )
+from app.services.prompt_sanitizer import validate_contract_length
 from app.services.structure_extractor import StructureExtractor, ContractMap
 from app.core.config import settings
 
@@ -273,12 +274,12 @@ async def analyze_document(
     - Document text is processed in RAM only, NEVER stored
     - Only metadata (filename, risk count) is stored for audit
     """
-    # Contract size limit (~100 pages)
-    MAX_CONTRACT_SIZE = 500_000  # 500KB
-    if len(body.text) > MAX_CONTRACT_SIZE:
+    # Contract size validation
+    is_valid, msg = validate_contract_length(body.text, max_chars=500_000, min_chars=50)
+    if not is_valid:
         raise HTTPException(
-            status_code=413,
-            detail=f"Document too large ({len(body.text):,} chars). Maximum is {MAX_CONTRACT_SIZE:,} characters (~100 pages). Try scanning sections individually.",
+            status_code=413 if len(body.text or "") > 500_000 else 422,
+            detail=msg,
         )
 
     # Set RLS context for tenant isolation
