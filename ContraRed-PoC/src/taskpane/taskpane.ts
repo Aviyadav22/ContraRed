@@ -473,6 +473,9 @@ Office.onReady((info) => {
     // Bulk apply all
     document.getElementById('applyAllBtn')?.addEventListener('click', applyAllRedlines);
 
+    // Revert all applied fixes
+    document.getElementById('revertAllBtn')?.addEventListener('click', revertAllFixes);
+
     // Export report
     document.getElementById('exportReportBtn')?.addEventListener('click', exportReport);
 
@@ -2505,6 +2508,40 @@ async function undoRedlineFix(redline: RedlineItem, appliedFix?: string): Promis
     appliedFixesMap.delete(redline.id);
     log.info(`Undid fix for: ${redline.rule_name}`);
   });
+}
+
+/**
+ * Revert ALL applied fixes at once. Walks the appliedFixesMap and restores
+ * each clause to its original text, then clears the map and resets UI.
+ */
+async function revertAllFixes(): Promise<void> {
+  if (appliedFixesMap.size === 0) return;
+  const entries = Array.from(appliedFixesMap.entries());
+  let reverted = 0;
+  for (const [id, fixInfo] of entries) {
+    try {
+      await Word.run(async (context) => {
+        const searchText = fixInfo.fixText.substring(0, 255);
+        const body = context.document.body;
+        const searchResults = body.search(searchText, { matchCase: false });
+        searchResults.load('items');
+        await context.sync();
+        if (searchResults.items.length > 0) {
+          searchResults.items[0].insertText(fixInfo.originalText, Word.InsertLocation.replace);
+          await context.sync();
+          reverted++;
+        }
+      });
+      appliedFixesMap.delete(id);
+    } catch (err) {
+      log.warn(`Failed to revert fix ${id}:`, err);
+    }
+  }
+  // Reset fixed-risk UI state
+  fixedRisks.clear();
+  const cards = document.querySelectorAll('.risk-card.fixed');
+  cards.forEach(c => c.classList.remove('fixed'));
+  log.info(`Reverted ${reverted}/${entries.length} applied fixes`);
 }
 
 /**
