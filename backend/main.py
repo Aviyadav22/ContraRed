@@ -8,6 +8,7 @@ import logging
 import re
 import time
 import traceback
+import uuid
 
 # ---------------------------------------------------------------------------
 # Sensitive Data Log Filter — must be installed BEFORE any logger is used
@@ -112,6 +113,17 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 # Request Logging Middleware
 # =============================================================================
 
+class RequestIDMiddleware(BaseHTTPMiddleware):
+    """Attach a unique request ID to every request for tracing."""
+
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        request.state.request_id = request_id
+        response: Response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
 class RequestLoggingMiddleware(BaseHTTPMiddleware):
     """Log all API requests for audit trail."""
 
@@ -120,15 +132,18 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         response: Response = await call_next(request)
         duration = time.time() - start
 
+        request_id = getattr(request.state, "request_id", "-")
+
         # Skip health check logs to reduce noise
         if not request.url.path.startswith("/health"):
             logger.info(
-                "method=%s path=%s status=%d duration=%.3fs ip=%s",
+                "method=%s path=%s status=%d duration=%.3fs ip=%s request_id=%s",
                 request.method,
                 request.url.path,
                 response.status_code,
                 duration,
                 request.client.host if request.client else "unknown",
+                request_id,
             )
         return response
 
@@ -311,7 +326,10 @@ app.add_middleware(TenantContextMiddleware)
 # 1. Security headers on all responses
 app.add_middleware(SecurityHeadersMiddleware)
 
-# 2. Request logging
+# 1.5. Request ID for tracing
+app.add_middleware(RequestIDMiddleware)
+
+# 2. Request logging (includes request_id)
 app.add_middleware(RequestLoggingMiddleware)
 
 # 3. CORS — in DEBUG allow any localhost origin (Word Add-in webview may send
@@ -335,10 +353,34 @@ app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=_trusted)
 from starlette.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
-# Rate limiting exception handler
+# Rate limiting exception handler with logging
 from app.api.v1.endpoints.auth import limiter
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+
+async def _rate_limit_handler(request: Request, exc: RateLimitExceeded) -> JSONResponse:
+    """Custom rate limit handler: returns 429 + Retry-After + logs the event."""
+    client_ip = request.client.host if request.client else "unknown"
+    logger.warning(
+        "rate_limit_exceeded ip=%s path=%s detail=%s",
+        client_ip, request.url.path, exc.detail,
+    )
+    response = JSONResponse(
+        status_code=429,
+        content={
+            "error": "rate_limit_exceeded",
+            "message": f"Rate limit exceeded: {exc.detail}",
+            "retry_after": 60,
+        },
+        headers={"Retry-After": "60"},
+    )
+    response = request.app.state.limiter._inject_headers(
+        response, request.state.view_rate_limit
+    )
+    return response
+
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_handler)
 
 # Include API routes
 app.include_router(api_router, prefix="/api/v1")
