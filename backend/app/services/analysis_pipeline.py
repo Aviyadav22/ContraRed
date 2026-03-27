@@ -1099,8 +1099,10 @@ class AnalysisPipeline:
         return [redlines[i] for i in sorted(keep)]
 
     # ======================================================================
-    # Stage 6: FIX GENERATION (parallel AI calls)
+    # Stage 6: FIX GENERATION (batched AI calls)
     # ======================================================================
+
+    _FIX_BATCH_SIZE = 10  # Max findings per batch API call
 
     async def _stage6_fix_generation(
         self,
@@ -1108,7 +1110,12 @@ class AnalysisPipeline:
         extraction: "ExtractionResult",
         playbook_rules: Optional[List[Dict[str, Any]]] = None,
     ) -> List[FinalRedline]:
-        """Generate suggested_fix for RED and YELLOW redlines in parallel."""
+        """Generate suggested_fix for RED and YELLOW redlines using batched AI calls.
+
+        Instead of one API call per finding (N calls), batches findings into groups
+        and generates fixes in bulk (N/10 calls). Dramatically reduces API usage.
+        Falls back to per-finding generation if batch fails.
+        """
         fixable = [r for r in redlines if r.risk_level in ("RED", "YELLOW")]
         if not fixable:
             return redlines
@@ -1121,47 +1128,45 @@ class AnalysisPipeline:
             elif isinstance(terms, list):
                 defined_terms = "\n".join(f"- {t}" for t in terms[:20])
 
-        full_text = extraction.full_text
-        semaphore = asyncio.Semaphore(10)
+        # Build finding descriptors with stable IDs
+        finding_map = {}  # id_str -> FinalRedline
+        for i, r in enumerate(fixable):
+            finding_map[f"finding-{i}"] = r
 
-        async def generate_one_fix(redline: FinalRedline) -> Optional[str]:
-            async with semaphore:
-                try:
-                    search_text = redline.verified_text or redline.original_text
-                    idx = full_text.find(search_text)
-                    if idx >= 0:
-                        ctx_start = max(0, idx - 500)
-                        ctx_end = min(len(full_text), idx + len(search_text) + 500)
-                        surrounding = full_text[ctx_start:ctx_end]
-                    else:
-                        surrounding = ""
+        # Batch findings into groups
+        batch_items = []
+        for id_str, r in finding_map.items():
+            batch_items.append({
+                "id": id_str,
+                "rule_name": r.rule_name,
+                "original_text": r.verified_text or r.original_text,
+                "recommendation": r.recommendation,
+            })
 
-                    result = await self._analyzer.generate_fix(
-                        original_text=redline.verified_text or redline.original_text,
-                        recommendation=redline.recommendation,
-                        rule_name=redline.rule_name,
-                        redline_type=redline.redline_type,
-                        surrounding_context=surrounding,
-                        playbook_rules=playbook_rules,
-                        jurisdiction_override=None,
-                        defined_terms=defined_terms,
-                    )
-                    return result.get("fix_text")
-                except Exception as e:
-                    logger.warning("Fix generation failed for %s: %s", redline.rule_name, e)
-                    return None
+        fix_results: Dict[str, str] = {}
+        for batch_start in range(0, len(batch_items), self._FIX_BATCH_SIZE):
+            batch = batch_items[batch_start:batch_start + self._FIX_BATCH_SIZE]
+            try:
+                batch_fixes = await self._analyzer.generate_fixes_batch(
+                    findings=batch,
+                    playbook_rules=playbook_rules,
+                    defined_terms=defined_terms,
+                )
+                fix_results.update(batch_fixes)
+            except Exception as e:
+                logger.warning("Batch fix generation failed for batch %d: %s",
+                             batch_start // self._FIX_BATCH_SIZE + 1, e)
 
-        tasks = [generate_one_fix(r) for r in fixable]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Apply fixes to redlines
+        for id_str, redline in finding_map.items():
+            fix = fix_results.get(id_str)
+            if fix and isinstance(fix, str) and fix.strip():
+                redline.suggested_fix = fix.strip()
 
-        fix_map = {}
-        for redline, result in zip(fixable, results):
-            if isinstance(result, str) and result:
-                fix_map[id(redline)] = result
-
-        for redline in redlines:
-            if id(redline) in fix_map:
-                redline.suggested_fix = fix_map[id(redline)]
+        fixed_count = sum(1 for r in fixable if r.suggested_fix)
+        logger.info("Fix generation: %d/%d findings got fixes (%d API calls)",
+                    fixed_count, len(fixable),
+                    (len(batch_items) + self._FIX_BATCH_SIZE - 1) // self._FIX_BATCH_SIZE)
 
         return redlines
 

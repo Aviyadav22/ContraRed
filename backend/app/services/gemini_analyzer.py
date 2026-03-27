@@ -9,7 +9,9 @@ summary and redline suggestions.
 import asyncio
 import json
 import logging
+import random
 import re
+import time
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
 
@@ -104,6 +106,52 @@ def _classify_gemini_error(e: Exception) -> AIServiceError:
 
 
 _VALID_RISK_LEVELS = {"RED", "YELLOW", "GREEN"}
+
+# ── Rate-limit-aware retry with exponential backoff ──────────────────────
+_RETRY_MAX_ATTEMPTS = 3
+_RETRY_BASE_DELAY = 2.0    # seconds
+_RETRY_MAX_DELAY = 60.0    # seconds
+# Global rate limiter: track last call time per model to stay within 25 req/min
+_last_call_time: float = 0.0
+_MIN_CALL_INTERVAL = 2.5   # seconds (~24 req/min, under 25 limit)
+
+
+def _is_rate_limit_error(e: Exception) -> bool:
+    """Check if an exception is a rate-limit / quota error."""
+    if isinstance(e, AIRateLimited):
+        return True
+    msg = str(e).lower()
+    return "429" in str(e) or "rate" in msg or "quota" in msg or "resource_exhausted" in msg
+
+
+async def _rate_limited_call(coro_factory, retries: int = _RETRY_MAX_ATTEMPTS):
+    """Execute an AI call with rate limiting and exponential backoff on 429.
+
+    Args:
+        coro_factory: A zero-arg callable that returns the coroutine to await.
+        retries: Max retry attempts on rate-limit errors.
+    """
+    global _last_call_time
+
+    for attempt in range(1, retries + 1):
+        # Throttle: ensure minimum interval between calls
+        now = time.monotonic()
+        wait = _MIN_CALL_INTERVAL - (now - _last_call_time)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_call_time = time.monotonic()
+
+        try:
+            return await coro_factory()
+        except Exception as exc:
+            if _is_rate_limit_error(exc):
+                if attempt == retries:
+                    raise _classify_gemini_error(exc)
+                delay = min(_RETRY_BASE_DELAY * (2 ** (attempt - 1)) + random.uniform(0, 1), _RETRY_MAX_DELAY)
+                logger.warning("Rate limited (attempt %d/%d), retrying in %.1fs", attempt, retries, delay)
+                await asyncio.sleep(delay)
+            else:
+                raise  # Non-rate-limit errors are not retried
 
 # Legacy prompt kept as fallback — new code uses prompt_templates.py
 CONTRARED_SYSTEM_PROMPT = LEGACY_PROMPT
@@ -297,21 +345,25 @@ class GeminiAnalyzer:
             # Use clear delimiters for stronger prompt hierarchy separation
             full_prompt = f"<SYSTEM_INSTRUCTIONS>\n{system_prompt}\n</SYSTEM_INSTRUCTIONS>\n\n<USER_REQUEST>\n{user_prompt}\n</USER_REQUEST>"
 
-            # Run in thread pool since Gemini SDK is sync, with timeout
+            # Run in thread pool since Gemini SDK is sync, with retry + rate limiting
             loop = asyncio.get_running_loop()
-            response = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None,
-                    lambda: self.analysis_client.generate_content(
-                        full_prompt,
-                        generation_config={
-                            "max_output_tokens": 32768,  # Large output for exhaustive rule-by-rule analysis
-                            "temperature": 0.1,  # Very low temperature for precise, consistent output
-                        }
-                    )
-                ),
-                timeout=90.0,
-            )
+
+            async def _do_analysis():
+                return await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: self.analysis_client.generate_content(
+                            full_prompt,
+                            generation_config={
+                                "max_output_tokens": 32768,
+                                "temperature": 0.1,
+                            }
+                        )
+                    ),
+                    timeout=90.0,
+                )
+
+            response = await _rate_limited_call(_do_analysis)
 
             # Extract text from response
             response_text = ""
@@ -583,23 +635,28 @@ class GeminiAnalyzer:
             defined_terms=defined_terms,
         )
 
+        response_text = ""
         try:
             loop = asyncio.get_running_loop()
-            response = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None,
-                    lambda: self.client.generate_content(
-                        prompt,
-                        generation_config={
-                            "max_output_tokens": 4096,
-                            "temperature": 0.2,
-                        }
-                    )
-                ),
-                timeout=90.0,
-            )
 
-            response_text = ""
+            async def _do_fix_generate():
+                resp = await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: self.client.generate_content(
+                            prompt,
+                            generation_config={
+                                "max_output_tokens": 4096,
+                                "temperature": 0.2,
+                            }
+                        )
+                    ),
+                    timeout=90.0,
+                )
+                return resp
+
+            response = await _rate_limited_call(_do_fix_generate)
+
             if response.candidates:
                 candidate = response.candidates[0]
                 if candidate.content and candidate.content.parts:
@@ -638,6 +695,84 @@ class GeminiAnalyzer:
         except Exception as e:
             logger.error("Fix generation error: %s: %s", type(e).__name__, e)
             raise _classify_gemini_error(e)
+
+    async def generate_fixes_batch(
+        self,
+        findings: List[Dict[str, str]],
+        playbook_rules: Optional[List[Dict[str, Any]]] = None,
+        defined_terms: str = "",
+    ) -> Dict[str, str]:
+        """Generate fixes for multiple findings in a single AI call.
+
+        Args:
+            findings: List of dicts with keys: id, rule_name, original_text, recommendation
+            playbook_rules: Optional playbook rules for context
+            defined_terms: Defined terms from the contract
+
+        Returns:
+            Dict mapping finding id to fix_text.
+        """
+        if not self.is_enabled or not findings:
+            return {}
+
+        # Build a combined prompt for all findings
+        items = []
+        for i, f in enumerate(findings):
+            items.append(
+                f"--- Finding {i+1} (id: {f['id']}) ---\n"
+                f"Rule: {_sanitize_for_prompt(f['rule_name'], 200)}\n"
+                f"Original clause: {_sanitize_for_prompt(f['original_text'], 2000)}\n"
+                f"Recommendation: {_sanitize_for_prompt(f['recommendation'], 1000)}\n"
+            )
+
+        prompt = (
+            "You are a contract redlining assistant. Generate replacement clause text for each finding below.\n"
+            "Return a JSON object where keys are the finding IDs and values are the replacement text.\n\n"
+            "Example output format:\n"
+            '{"finding-0": "replacement text...", "finding-1": "replacement text..."}\n\n'
+            f"Defined terms:\n{_sanitize_for_prompt(defined_terms, 3000)}\n\n"
+            + "\n".join(items) + "\n\n"
+            "IMPORTANT: Return ONLY the JSON object, no markdown fences."
+        )
+
+        try:
+            loop = asyncio.get_running_loop()
+
+            async def _do_batch_fix():
+                return await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: self.client.generate_content(
+                            prompt,
+                            generation_config={
+                                "max_output_tokens": 8192,
+                                "temperature": 0.2,
+                            }
+                        )
+                    ),
+                    timeout=120.0,
+                )
+
+            response = await _rate_limited_call(_do_batch_fix)
+
+            response_text = ""
+            if response.candidates:
+                candidate = response.candidates[0]
+                if candidate.content and candidate.content.parts:
+                    response_text = candidate.content.parts[0].text
+
+            if not response_text:
+                return {}
+
+            cleaned = _strip_markdown_fences(response_text)
+            data = json.loads(cleaned)
+            if isinstance(data, dict):
+                return {k: v for k, v in data.items() if isinstance(v, str) and v.strip()}
+            return {}
+
+        except Exception as e:
+            logger.warning("Batch fix generation failed: %s", e)
+            return {}
 
     async def analyze_clause(
         self,
@@ -705,19 +840,23 @@ IMPORTANT: Return ONLY the JSON array, no markdown fences, no commentary."""
 
         try:
             loop = asyncio.get_running_loop()
-            response = await asyncio.wait_for(
-                loop.run_in_executor(
-                    None,
-                    lambda: self.client.generate_content(
-                        prompt,
-                        generation_config={
-                            "max_output_tokens": 4096,
-                            "temperature": 0.1,
-                        }
-                    )
-                ),
-                timeout=30.0,
-            )
+
+            async def _do_clause_analysis():
+                return await asyncio.wait_for(
+                    loop.run_in_executor(
+                        None,
+                        lambda: self.client.generate_content(
+                            prompt,
+                            generation_config={
+                                "max_output_tokens": 4096,
+                                "temperature": 0.1,
+                            }
+                        )
+                    ),
+                    timeout=30.0,
+                )
+
+            response = await _rate_limited_call(_do_clause_analysis)
 
             response_text = ""
             if response.candidates:
