@@ -461,7 +461,9 @@ async def deep_health_check(response: Response):
     try:
         ai_status = "unknown"
         if settings.VERTEX_PROJECT_ID:
-            ai_status = f"vertex_ai_configured (location={settings.VERTEX_LOCATION})"
+            ai_status = "vertex_ai_configured"
+        elif settings.GEMINI_API_KEY:
+            ai_status = "gemini_consumer_configured"
         else:
             ai_status = "not_configured"
         checks["ai_provider"] = {"status": ai_status}
