@@ -243,7 +243,7 @@ class GeminiAnalyzer:
     """
 
     def __init__(self) -> None:
-        """Initialize AI client — Vertex AI only (enterprise, India data residency)."""
+        """Initialize AI client — Vertex AI only (consumer API prohibited)."""
         self._client = None
         self._analysis_client = None
         self._enabled: bool = bool(settings.VERTEX_PROJECT_ID)

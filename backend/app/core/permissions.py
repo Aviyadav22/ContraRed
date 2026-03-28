@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from typing import Set, Dict
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -243,6 +243,7 @@ def require_any_permission(*permissions: str):
 # Lazy import to avoid circular dependency with auth.py
 # ---------------------------------------------------------------------------
 async def _get_current_user_lazy(
+    request: Request,
     token: str = Depends(_oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
@@ -252,4 +253,4 @@ async def _get_current_user_lazy(
     Mirrors the same dependency signature and delegates at call-time.
     """
     from app.api.v1.endpoints.auth import get_current_user
-    return await get_current_user(token=token, db=db)
+    return await get_current_user(request=request, token=token, db=db)

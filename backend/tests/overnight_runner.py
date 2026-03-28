@@ -22,11 +22,12 @@ from typing import Dict, List, Any
 
 # Ensure UTF-8 output
 sys.stdout.reconfigure(encoding="utf-8")
-os.environ.setdefault("DEBUG", "true")
 
-# Use 2.5-flash models — separate quota pool from 3.x models (which are exhausted)
-os.environ["GEMINI_ANALYSIS_MODEL"] = "gemini-2.5-flash"
-os.environ["GEMINI_MODEL"] = "gemini-2.5-flash-lite"
+# Load .env before app imports
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
+os.environ.setdefault("DEBUG", "true")
 
 # Setup logging
 logging.basicConfig(

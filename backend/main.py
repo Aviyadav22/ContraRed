@@ -457,16 +457,17 @@ async def deep_health_check(response: Response):
         checks["redis"] = {"status": "disconnected", "detail": "Cache service unavailable"}
         logger.warning("Redis health check failed: %s", e)
 
-    # 3. AI Provider (non-critical)
+    # 3. AI Provider (non-critical) — Vertex AI only
     try:
-        ai_status = "unknown"
         if settings.VERTEX_PROJECT_ID:
             ai_status = "vertex_ai_configured"
-        elif settings.GEMINI_API_KEY:
-            ai_status = "gemini_consumer_configured"
+            ai_detail = f"project={settings.VERTEX_PROJECT_ID}, location={settings.VERTEX_LOCATION}"
+            checks["ai_provider"] = {"status": ai_status, "detail": ai_detail}
         else:
-            ai_status = "not_configured"
-        checks["ai_provider"] = {"status": ai_status}
+            checks["ai_provider"] = {
+                "status": "not_configured",
+                "detail": "VERTEX_PROJECT_ID not set — AI features disabled",
+            }
     except Exception as e:
         checks["ai_provider"] = {"status": "error", "detail": "AI provider check failed"}
         logger.warning("AI provider health check failed: %s", e)

@@ -1,9 +1,9 @@
 import pytest
+from tests.conftest import register_and_login
 
 @pytest.mark.asyncio
 async def test_list_plans(client, test_user_data):
-    reg = await client.post("/api/v1/auth/register", json=test_user_data)
-    token = reg.json()["access_token"]
+    token = await register_and_login(client, test_user_data)
     response = await client.get("/api/v1/billing/plans",
         headers={"Authorization": f"Bearer {token}"},
     )
@@ -13,8 +13,7 @@ async def test_list_plans(client, test_user_data):
 
 @pytest.mark.asyncio
 async def test_get_subscription(client, test_user_data):
-    reg = await client.post("/api/v1/auth/register", json=test_user_data)
-    token = reg.json()["access_token"]
+    token = await register_and_login(client, test_user_data)
     response = await client.get("/api/v1/billing/subscription",
         headers={"Authorization": f"Bearer {token}"},
     )

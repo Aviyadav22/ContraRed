@@ -1,18 +1,19 @@
 import pytest
+from tests.conftest import register_and_login
 
 @pytest.mark.asyncio
 async def test_register_success(client, test_user_data):
     response = await client.post("/api/v1/auth/register", json=test_user_data)
     assert response.status_code == 201
     data = response.json()
-    assert data["user"]["email"] == test_user_data["email"]
-    assert "access_token" in data
+    assert data["email"] == test_user_data["email"]
 
 @pytest.mark.asyncio
 async def test_register_duplicate_email(client, test_user_data):
     await client.post("/api/v1/auth/register", json=test_user_data)
     response = await client.post("/api/v1/auth/register", json=test_user_data)
-    assert response.status_code == 400
+    # Anti-enumeration: returns 201 for duplicates too (AUDIT FIX H2)
+    assert response.status_code == 201
 
 @pytest.mark.asyncio
 async def test_login_success(client, test_user_data):
@@ -35,8 +36,7 @@ async def test_login_wrong_password(client, test_user_data):
 
 @pytest.mark.asyncio
 async def test_get_me_authenticated(client, test_user_data):
-    reg = await client.post("/api/v1/auth/register", json=test_user_data)
-    token = reg.json()["access_token"]
+    token = await register_and_login(client, test_user_data)
     response = await client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     assert response.json()["email"] == test_user_data["email"]
@@ -57,8 +57,7 @@ async def test_password_validation_weak(client):
 
 @pytest.mark.asyncio
 async def test_change_password(client, test_user_data):
-    reg = await client.post("/api/v1/auth/register", json=test_user_data)
-    token = reg.json()["access_token"]
+    token = await register_and_login(client, test_user_data)
     response = await client.post("/api/v1/auth/change-password",
         headers={"Authorization": f"Bearer {token}"},
         json={"current_password": test_user_data["password"], "new_password": "NewPassword456!"},

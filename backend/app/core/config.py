@@ -144,18 +144,19 @@ class Settings(BaseSettings):
     AZURE_OPENAI_SCOUT_DEPLOYMENT: str = "gpt-4o-mini"
     AZURE_OPENAI_SURGEON_DEPLOYMENT: str = "gpt-4o"
     
-    # Google Gemini API (primary AI provider — consumer API fallback)
-    GEMINI_API_KEY: str = ""
-    GEMINI_MODEL: str = "gemini-3.1-flash-lite-preview"              # Fast+cheap for subtasks
-    GEMINI_ANALYSIS_MODEL: str = "gemini-3.1-pro-preview"            # Pro model for full contract analysis
-    GEMINI_SCOUT_MODEL: str = "gemini-3.1-flash-lite-preview"
-    GEMINI_SURGEON_MODEL: str = "gemini-3.1-flash-lite-preview"
-
-    # Vertex AI (enterprise — preferred when credentials are available)
+    # Vertex AI (REQUIRED for AI features — consumer Gemini API is PROHIBITED)
+    # Contract data must not transit public Google AI endpoints.
+    # Vertex AI provides: project-level IAM, audit logging, data residency.
     VERTEX_PROJECT_ID: str = ""
-    VERTEX_LOCATION: str = "us-central1"
+    VERTEX_LOCATION: str = "asia-south1"  # India data residency
 
-    # AI Provider selection: "gemini" or "azure"
+    # Gemini model names (used via Vertex AI, NOT consumer API)
+    GEMINI_MODEL: str = "gemini-2.5-flash-lite"              # Fast+cheap for subtasks
+    GEMINI_ANALYSIS_MODEL: str = "gemini-2.5-flash"           # Pro model for full contract analysis
+    GEMINI_SCOUT_MODEL: str = "gemini-2.5-flash-lite"
+    GEMINI_SURGEON_MODEL: str = "gemini-2.5-flash"
+
+    # AI Provider selection: "gemini" (via Vertex AI) or "azure"
     AI_PROVIDER: str = "gemini"
 
     # Field-level encryption for stored clause text (AES-256 via Fernet)

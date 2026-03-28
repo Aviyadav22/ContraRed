@@ -1,4 +1,5 @@
 import pytest
+from tests.conftest import register_and_login
 
 @pytest.mark.asyncio
 async def test_analyze_requires_auth(client):
@@ -7,8 +8,7 @@ async def test_analyze_requires_auth(client):
 
 @pytest.mark.asyncio
 async def test_analyze_text_too_long(client, test_user_data):
-    reg = await client.post("/api/v1/auth/register", json=test_user_data)
-    token = reg.json()["access_token"]
+    token = await register_and_login(client, test_user_data)
     long_text = "x" * 600000
     response = await client.post("/api/v1/documents/analyze",
         headers={"Authorization": f"Bearer {token}"},
@@ -18,9 +18,7 @@ async def test_analyze_text_too_long(client, test_user_data):
 
 @pytest.mark.asyncio
 async def test_analyze_file_too_large(client, test_user_data):
-    reg = await client.post("/api/v1/auth/register", json=test_user_data)
-    token = reg.json()["access_token"]
-    # Create a file that exceeds 10MB
+    token = await register_and_login(client, test_user_data)
     large_content = b"x" * (11 * 1024 * 1024)
     response = await client.post("/api/v1/documents/analyze-file",
         headers={"Authorization": f"Bearer {token}"},
@@ -30,8 +28,7 @@ async def test_analyze_file_too_large(client, test_user_data):
 
 @pytest.mark.asyncio
 async def test_analyze_file_invalid_format(client, test_user_data):
-    reg = await client.post("/api/v1/auth/register", json=test_user_data)
-    token = reg.json()["access_token"]
+    token = await register_and_login(client, test_user_data)
     response = await client.post("/api/v1/documents/analyze-file",
         headers={"Authorization": f"Bearer {token}"},
         files={"file": ("test.docx", b"not a zip file", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
