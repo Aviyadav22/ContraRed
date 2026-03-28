@@ -402,13 +402,38 @@ async def ai_health_check():
     import os
     from app.core.config import settings
 
+    creds_env = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+    if creds_env.strip().startswith("{"):
+        creds_type = "json_blob"
+    elif creds_env.endswith(".json"):
+        creds_type = "file"
+    else:
+        creds_type = "unknown" if creds_env else "not_set"
+
     result = {
         "vertex_project_id": settings.VERTEX_PROJECT_ID or "(not set)",
         "vertex_location": settings.VERTEX_LOCATION,
         "gemini_model": settings.GEMINI_ANALYSIS_MODEL,
-        "google_creds_set": bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")),
-        "google_creds_type": "file" if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").endswith(".json") else "json_blob" if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip().startswith("{") else "unknown",
+        "google_creds_set": bool(creds_env),
+        "google_creds_type": creds_type,
     }
+
+    # Check if creds were converted to file path by _setup_credentials
+    if creds_type == "file":
+        result["creds_file_exists"] = os.path.isfile(creds_env)
+        if os.path.isfile(creds_env):
+            import json as _json
+            try:
+                with open(creds_env) as _f:
+                    _d = _json.load(_f)
+                pk = _d.get("private_key", "")
+                result["creds_file_valid_json"] = True
+                result["private_key_has_newlines"] = "\n" in pk
+                result["private_key_starts"] = pk[:30] if pk else "(empty)"
+                result["private_key_ends"] = pk[-30:] if pk else "(empty)"
+            except Exception as _e:
+                result["creds_file_valid_json"] = False
+                result["creds_file_error"] = str(_e)
 
     # Test client init
     try:

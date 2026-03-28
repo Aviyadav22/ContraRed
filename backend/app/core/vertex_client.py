@@ -46,7 +46,9 @@ def _setup_credentials() -> None:
     if not creds.strip().startswith("{"):
         return
 
-    # It's raw JSON — validate and write to a temp file
+    # It's raw JSON — validate, parse, and write to a temp file.
+    # We parse and re-serialize to ensure proper encoding (newlines in
+    # private_key may be mangled by PaaS env var handling).
     try:
         creds_dict = json.loads(creds)
         if creds_dict.get("type") != "service_account":
@@ -58,7 +60,8 @@ def _setup_credentials() -> None:
     fd, path = tempfile.mkstemp(suffix=".json", prefix="gcp_sa_")
     try:
         with os.fdopen(fd, "w") as f:
-            f.write(creds)
+            # Re-serialize the parsed dict to ensure clean JSON with proper escaping
+            json.dump(creds_dict, f)
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
         logger.info("Wrote GCP service account credentials to temp file")
     except Exception as exc:
