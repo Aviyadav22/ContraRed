@@ -40,7 +40,7 @@ class AIServiceError(Exception):
 
 class AIServiceUnavailable(AIServiceError):
     """AI service is not configured or unreachable."""
-    def __init__(self, message: str = "AI service is not configured. Please set GEMINI_API_KEY."):
+    def __init__(self, message: str = "AI service is not configured. Set VERTEX_PROJECT_ID and GOOGLE_APPLICATION_CREDENTIALS."):
         super().__init__(message, "ai_not_configured")
 
 
@@ -243,11 +243,10 @@ class GeminiAnalyzer:
     """
 
     def __init__(self) -> None:
-        """Initialize AI client — prefers Vertex AI, falls back to consumer Gemini."""
+        """Initialize AI client — Vertex AI only (enterprise, India data residency)."""
         self._client = None
         self._analysis_client = None
-        # Enabled if *either* Vertex AI credentials or consumer API key is set
-        self._enabled: bool = bool(settings.VERTEX_PROJECT_ID) or bool(settings.GEMINI_API_KEY)
+        self._enabled: bool = bool(settings.VERTEX_PROJECT_ID)
 
     @property
     def client(self):

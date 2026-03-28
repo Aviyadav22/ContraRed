@@ -113,13 +113,13 @@ class AIService:
     """
     
     def __init__(self) -> None:
-        """Initialize AI client — prefers Vertex AI, falls back to consumer Gemini or Azure."""
+        """Initialize AI client — Vertex AI (primary) or Azure OpenAI (fallback)."""
         self._gemini_client = None
         self._azure_client = None
 
-        # Determine which provider to use (Vertex AI or consumer key both satisfy "gemini")
+        # Vertex AI is required for Gemini models
         self._use_gemini: bool = (
-            bool(settings.VERTEX_PROJECT_ID) or bool(settings.GEMINI_API_KEY)
+            bool(settings.VERTEX_PROJECT_ID)
         ) and settings.AI_PROVIDER == "gemini"
         self._use_azure: bool = bool(settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY)
         self._enabled: bool = self._use_gemini or self._use_azure
@@ -271,25 +271,18 @@ class AIService:
                 return "", 0
 
             # Use system_instruction for clear separation of system/user prompts.
-            # Build a model instance with the system instruction baked in.
-            from app.core.vertex_client import get_backend
-            backend = get_backend()
-
-            if system and backend == "consumer":
-                # Consumer SDK supports system_instruction on GenerativeModel
-                import google.generativeai as genai
-                model_with_system = genai.GenerativeModel(
-                    client.model_name if hasattr(client, 'model_name') else settings.GEMINI_MODEL,
+            # Vertex AI GenerativeModel supports system_instruction natively.
+            if system:
+                from vertexai.generative_models import GenerativeModel  # type: ignore[import-untyped]
+                model_name = client._model_name if hasattr(client, '_model_name') else settings.GEMINI_MODEL
+                model_with_system = GenerativeModel(
+                    model_name,
                     system_instruction=system,
                 )
                 prompt = user
                 gen_client = model_with_system
             else:
-                # Vertex AI or no system prompt — use clear separator
-                if system:
-                    prompt = f"===SYSTEM INSTRUCTIONS START===\n{system}\n===SYSTEM INSTRUCTIONS END===\n\n===CONTRACT TEXT FOR ANALYSIS===\n{user}\n===END CONTRACT TEXT==="
-                else:
-                    prompt = user
+                prompt = user
                 gen_client = client
 
             # Run in thread pool since Gemini SDK is sync, with 60s timeout

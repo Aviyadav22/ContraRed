@@ -18,6 +18,7 @@ class Settings(BaseSettings):
         env_file=(".env", ".env.local"),
         env_file_encoding="utf-8",
         case_sensitive=True,
+        extra="ignore",  # Ignore removed env vars (e.g. GEMINI_API_KEY) during migration
     )
 
     # Application
@@ -143,21 +144,19 @@ class Settings(BaseSettings):
     AZURE_OPENAI_SCOUT_DEPLOYMENT: str = "gpt-4o-mini"
     AZURE_OPENAI_SURGEON_DEPLOYMENT: str = "gpt-4o"
     
-    # Google Gemini API (primary AI provider — consumer API fallback)
-    GEMINI_API_KEY: str = ""
+    # Gemini model names (used via Vertex AI)
     GEMINI_MODEL: str = "gemini-3.1-flash-lite-preview"              # Fast+cheap for subtasks
     GEMINI_ANALYSIS_MODEL: str = "gemini-3.1-pro-preview"            # Pro model for full contract analysis
     GEMINI_SCOUT_MODEL: str = "gemini-3.1-flash-lite-preview"
     GEMINI_SURGEON_MODEL: str = "gemini-3.1-flash-lite-preview"
 
-    # Vertex AI (enterprise — preferred when credentials are available)
-    # NOTE: A Data Processing Agreement (DPA) must be executed with Google Cloud
-    # before sending customer data through Vertex AI in production.
+    # Vertex AI — REQUIRED for production
+    # Data residency: asia-south1 (Mumbai) ensures data stays in India.
+    # Authentication: Set GOOGLE_APPLICATION_CREDENTIALS to a service account JSON
+    # or use Workload Identity on GCP-hosted runtimes.
+    # DPA: A Data Processing Agreement must be executed with Google Cloud.
     VERTEX_PROJECT_ID: str = ""
-    VERTEX_LOCATION: str = "us-central1"
-    # When True, refuse to fall back to consumer Gemini API in production.
-    # Set to True on Render once Vertex AI credentials are configured.
-    REQUIRE_VERTEX_AI: bool = False
+    VERTEX_LOCATION: str = "asia-south1"
 
     # AI Provider selection: "gemini" or "azure"
     AI_PROVIDER: str = "gemini"

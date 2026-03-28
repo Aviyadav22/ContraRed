@@ -14,7 +14,11 @@ services:
         sync: false
       - key: SECRET_KEY
         sync: false
-      - key: GEMINI_API_KEY
+      - key: VERTEX_PROJECT_ID
+        sync: false
+      - key: VERTEX_LOCATION
+        value: "asia-south1"
+      - key: GOOGLE_APPLICATION_CREDENTIALS
         sync: false
       - key: CORS_ORIGINS
         sync: false

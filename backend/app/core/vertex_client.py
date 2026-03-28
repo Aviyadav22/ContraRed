@@ -1,137 +1,144 @@
 """
-Vertex AI Client Wrapper — Enterprise-grade AI backend with consumer API fallback.
+Vertex AI Client — Enterprise-grade AI backend for ContraRed.
 
-Uses Google Cloud Vertex AI when VERTEX_PROJECT_ID is set and google-cloud-aiplatform
-is installed. Falls back to the consumer google.generativeai SDK otherwise.
+Uses Google Cloud Vertex AI exclusively. The consumer google.generativeai SDK
+has been removed — all production traffic must go through Vertex AI which
+provides data residency (asia-south1, Mumbai), DPA coverage, VPC-SC, CMEK,
+and audit logging.
 
-NOTE: A Data Processing Agreement (DPA) must be executed with Google Cloud before
-sending customer data through Vertex AI in production.  Vertex AI provides
-enterprise compliance controls (VPC-SC, CMEK, audit logging) that the consumer
-API does not.
+Authentication (in priority order):
+  1. GOOGLE_APPLICATION_CREDENTIALS env var containing raw JSON (Render-friendly)
+  2. GOOGLE_APPLICATION_CREDENTIALS env var containing a file path
+  3. Application Default Credentials (GCE metadata, Workload Identity, etc.)
 """
 
+import json
 import logging
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# Sentinel indicating which backend is active
-_BACKEND: Optional[str] = None  # "vertex" | "consumer" | None
+_INITIALIZED: bool = False
 _init_lock = threading.Lock()
+_credentials = None  # Cached credentials object
 
 
-def _try_init_vertex() -> bool:
-    """Attempt to initialise the Vertex AI SDK. Returns True on success."""
+def _resolve_credentials():
+    """Resolve GCP credentials from env var (inline JSON or file path) or ADC."""
+    import os
+    creds_value = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+
+    if not creds_value:
+        # No explicit credentials — fall back to Application Default Credentials
+        logger.info("No GOOGLE_APPLICATION_CREDENTIALS set, using Application Default Credentials")
+        return None
+
+    # Check if the value is raw JSON (starts with '{') vs a file path
+    stripped = creds_value.strip()
+    if stripped.startswith("{"):
+        try:
+            from google.oauth2 import service_account  # type: ignore[import-untyped]
+            creds_info = json.loads(stripped)
+            credentials = service_account.Credentials.from_service_account_info(
+                creds_info,
+                scopes=["https://www.googleapis.com/auth/cloud-platform"],
+            )
+            logger.info(
+                "Loaded service account credentials from inline JSON (email=%s)",
+                creds_info.get("client_email", "unknown"),
+            )
+            return credentials
+        except (json.JSONDecodeError, KeyError, ValueError) as exc:
+            logger.error("Failed to parse inline JSON credentials: %s", exc)
+            raise RuntimeError(
+                "GOOGLE_APPLICATION_CREDENTIALS contains invalid JSON. "
+                "Paste the full service account key JSON."
+            ) from exc
+    else:
+        # It's a file path — let the SDK handle it via ADC
+        logger.info("GOOGLE_APPLICATION_CREDENTIALS points to file: %s", stripped)
+        return None
+
+
+def _init_vertex() -> bool:
+    """Initialise the Vertex AI SDK. Returns True on success."""
+    global _credentials
+
     if not settings.VERTEX_PROJECT_ID:
+        logger.error(
+            "VERTEX_PROJECT_ID is not set. Vertex AI is required for production. "
+            "Set VERTEX_PROJECT_ID and GOOGLE_APPLICATION_CREDENTIALS."
+        )
         return False
     try:
         import vertexai  # type: ignore[import-untyped]
-        vertexai.init(
-            project=settings.VERTEX_PROJECT_ID,
-            location=settings.VERTEX_LOCATION,
-        )
+
+        _credentials = _resolve_credentials()
+
+        init_kwargs = {
+            "project": settings.VERTEX_PROJECT_ID,
+            "location": settings.VERTEX_LOCATION,
+        }
+        if _credentials is not None:
+            init_kwargs["credentials"] = _credentials
+
+        vertexai.init(**init_kwargs)
+
         logger.info(
-            "Vertex AI initialised (project=%s, location=%s)",
+            "Vertex AI initialised (project=%s, location=%s, auth=%s)",
             settings.VERTEX_PROJECT_ID,
             settings.VERTEX_LOCATION,
+            "service_account_json" if _credentials else "ADC",
         )
         return True
     except ImportError:
-        logger.warning(
-            "google-cloud-aiplatform not installed — falling back to consumer Gemini API. "
+        logger.error(
+            "google-cloud-aiplatform is not installed. "
             "Install with: pip install google-cloud-aiplatform"
         )
         return False
     except Exception as exc:
-        logger.warning("Vertex AI init failed (%s) — falling back to consumer API", exc)
+        logger.error("Vertex AI init failed: %s", exc)
         return False
 
 
-def _try_init_consumer() -> bool:
-    """Attempt to initialise the consumer google.generativeai SDK."""
-    if not settings.GEMINI_API_KEY:
-        return False
-    try:
-        import google.generativeai as genai  # type: ignore[import-untyped]
-        genai.configure(api_key=settings.GEMINI_API_KEY)
+def _ensure_init() -> bool:
+    """Thread-safe lazy initialisation using double-checked locking."""
+    global _INITIALIZED
+    if _INITIALIZED:
         return True
-    except ImportError:
-        logger.warning("google-generativeai not installed")
-        return False
-    except Exception as exc:
-        logger.warning("Consumer Gemini init failed: %s", exc)
-        return False
+    with _init_lock:
+        if _INITIALIZED:
+            return True
+        _INITIALIZED = _init_vertex()
+    return _INITIALIZED
 
 
 def get_backend() -> Optional[str]:
-    """Return which backend is active: 'vertex', 'consumer', or None.
-
-    Thread-safe: uses double-checked locking to avoid race conditions
-    when multiple threads call this concurrently during startup.
-
-    When REQUIRE_VERTEX_AI is True, refuses to fall back to the consumer
-    Gemini API — contract text must only go through Vertex AI (which has
-    DPA and enterprise compliance controls).
-    """
-    global _BACKEND
-    if _BACKEND is not None:
-        return _BACKEND
-    with _init_lock:
-        # Double-check after acquiring lock
-        if _BACKEND is not None:
-            return _BACKEND
-        # Lazy first-call initialisation
-        if _try_init_vertex():
-            _BACKEND = "vertex"
-        elif settings.REQUIRE_VERTEX_AI:
-            logger.error(
-                "REQUIRE_VERTEX_AI is True but Vertex AI init failed. "
-                "Refusing to fall back to consumer Gemini API. "
-                "Set VERTEX_PROJECT_ID and install google-cloud-aiplatform, "
-                "or set REQUIRE_VERTEX_AI=false for development."
-            )
-            _BACKEND = None
-        elif _try_init_consumer():
-            logger.warning(
-                "Using consumer Gemini API — NOT suitable for production with "
-                "privileged data. Set VERTEX_PROJECT_ID for enterprise compliance."
-            )
-            _BACKEND = "consumer"
-        else:
-            _BACKEND = None
-    return _BACKEND
+    """Return 'vertex' if Vertex AI is available, else None."""
+    if _ensure_init():
+        return "vertex"
+    return None
 
 
 def get_generative_model(model_name: str) -> Any:
-    """
-    Return a GenerativeModel for the given model name.
-
-    Uses Vertex AI when available, otherwise falls back to consumer SDK.
-    Both SDKs expose a compatible ``GenerativeModel`` interface for
-    ``generate_content()``.
+    """Return a Vertex AI GenerativeModel for the given model name.
 
     Raises:
-        RuntimeError: If neither backend is available.
+        RuntimeError: If Vertex AI is not available.
     """
-    backend = get_backend()
-
-    if backend == "vertex":
-        from vertexai.generative_models import GenerativeModel  # type: ignore[import-untyped]
-        return GenerativeModel(model_name)
-
-    if backend == "consumer":
-        import google.generativeai as genai  # type: ignore[import-untyped]
-        return genai.GenerativeModel(model_name)
-
-    raise RuntimeError(
-        "No AI backend available. Set VERTEX_PROJECT_ID for Vertex AI "
-        "or GEMINI_API_KEY for the consumer Gemini API."
-    )
+    if not _ensure_init():
+        raise RuntimeError(
+            "Vertex AI is not available. Set VERTEX_PROJECT_ID and "
+            "GOOGLE_APPLICATION_CREDENTIALS, and install google-cloud-aiplatform."
+        )
+    from vertexai.generative_models import GenerativeModel  # type: ignore[import-untyped]
+    return GenerativeModel(model_name)
 
 
 def is_available() -> bool:
-    """Return True if at least one AI backend is usable."""
-    return get_backend() is not None
+    """Return True if Vertex AI is usable."""
+    return _ensure_init()
