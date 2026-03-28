@@ -72,7 +72,7 @@ from app.core.config import settings
 from app.api.v1.router import api_router
 from app.db.session import init_db
 
-APP_VERSION = "1.3.0"
+APP_VERSION = "1.3.1"
 
 logger = logging.getLogger("contrared")
 
