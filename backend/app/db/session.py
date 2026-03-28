@@ -19,7 +19,11 @@ _is_supabase = "supabase.com" in settings.DATABASE_URL or "supabase.co" in setti
 if _is_supabase:
     import ssl as _ssl
     _ctx = _ssl.create_default_context()
-    connect_args["ssl"] = _ctx  # Full TLS verification — Supabase uses CA-signed certs
+    # Supabase pooler uses certs that may not pass full chain verification
+    # on all platforms. Use encrypted connection without strict cert check.
+    _ctx.check_hostname = False
+    _ctx.verify_mode = _ssl.CERT_NONE
+    connect_args["ssl"] = _ctx
     # Transaction pooler (port 6543) requires disabling prepared statements
     if ":6543/" in settings.DATABASE_URL:
         connect_args["statement_cache_size"] = 0
