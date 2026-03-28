@@ -396,6 +396,44 @@ async def health_check():
     return {"status": "healthy", "version": APP_VERSION}
 
 
+@app.get("/health/ai")
+async def ai_health_check():
+    """Diagnostic: test Vertex AI connectivity and return exact errors."""
+    import os
+    from app.core.config import settings
+
+    result = {
+        "vertex_project_id": settings.VERTEX_PROJECT_ID or "(not set)",
+        "vertex_location": settings.VERTEX_LOCATION,
+        "gemini_model": settings.GEMINI_ANALYSIS_MODEL,
+        "google_creds_set": bool(os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")),
+        "google_creds_type": "file" if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").endswith(".json") else "json_blob" if os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "").strip().startswith("{") else "unknown",
+    }
+
+    # Test client init
+    try:
+        from app.core.vertex_client import _get_client, is_available
+        result["is_available"] = is_available()
+        client = _get_client()
+        result["client_type"] = type(client).__name__ if client else None
+    except Exception as e:
+        result["client_init_error"] = f"{type(e).__name__}: {e}"
+
+    # Test actual API call
+    if result.get("client_type"):
+        try:
+            from app.core.vertex_client import get_generative_model
+            model = get_generative_model(settings.GEMINI_ANALYSIS_MODEL)
+            resp = model.generate_content("Say hello in exactly 3 words.")
+            result["api_call"] = "success"
+            result["response_preview"] = resp.text[:100] if hasattr(resp, "text") else str(resp)[:100]
+        except Exception as e:
+            result["api_call"] = "failed"
+            result["api_error"] = f"{type(e).__name__}: {e}"
+
+    return result
+
+
 @app.get("/health/db")
 async def db_health_check(response: Response):
     """Database connectivity check — returns actual error if DB is unreachable."""
