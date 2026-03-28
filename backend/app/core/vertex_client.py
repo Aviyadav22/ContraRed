@@ -8,10 +8,16 @@ IAM, audit logging, and data residency guarantees.
 Requires:
   - VERTEX_PROJECT_ID set in environment
   - google-cloud-aiplatform installed
-  - Service account credentials (GOOGLE_APPLICATION_CREDENTIALS or Workload Identity)
+  - Service account credentials via one of:
+    a) GOOGLE_APPLICATION_CREDENTIALS pointing to a JSON key file
+    b) GOOGLE_APPLICATION_CREDENTIALS containing raw JSON (Render/Heroku)
+    c) Workload Identity (GKE/Cloud Run)
 """
 
+import json
 import logging
+import os
+import tempfile
 from typing import Any, Optional
 
 from app.core.config import settings
@@ -19,6 +25,44 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _INITIALIZED: bool = False
+_CREDENTIALS_FILE: Optional[str] = None  # temp file path if we created one
+
+
+def _setup_credentials() -> None:
+    """Handle GOOGLE_APPLICATION_CREDENTIALS containing raw JSON.
+
+    On PaaS platforms like Render, the service account JSON is pasted
+    directly into an env var. The Google SDK expects a *file path*, so
+    we write the JSON to a temp file and update the env var to point to it.
+    """
+    global _CREDENTIALS_FILE
+    creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+    if not creds:
+        return
+
+    # Already a file path — nothing to do
+    if not creds.strip().startswith("{"):
+        return
+
+    # It's raw JSON — validate and write to a temp file
+    try:
+        creds_dict = json.loads(creds)
+        if creds_dict.get("type") != "service_account":
+            logger.warning("GOOGLE_APPLICATION_CREDENTIALS JSON is not a service account key")
+    except json.JSONDecodeError:
+        logger.error("GOOGLE_APPLICATION_CREDENTIALS looks like JSON but failed to parse")
+        return
+
+    fd, path = tempfile.mkstemp(suffix=".json", prefix="gcp_sa_")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(creds)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
+        _CREDENTIALS_FILE = path
+        logger.info("Wrote GCP service account credentials to temp file")
+    except Exception as exc:
+        logger.error("Failed to write credentials temp file: %s", exc)
+        os.close(fd)
 
 
 def _ensure_initialized() -> bool:
@@ -33,6 +77,9 @@ def _ensure_initialized() -> bool:
             "Consumer Gemini API is prohibited for contract data."
         )
         return False
+
+    # Handle raw JSON credentials from PaaS env vars
+    _setup_credentials()
 
     try:
         import vertexai  # type: ignore[import-untyped]
