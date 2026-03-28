@@ -402,40 +402,30 @@ async def ai_health_check():
     import os
     from app.core.config import settings
 
-    creds_env = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
-    if creds_env.strip().startswith("{"):
-        creds_type = "json_blob"
-    elif creds_env.endswith(".json"):
-        creds_type = "file"
-    else:
-        creds_type = "unknown" if creds_env else "not_set"
+    import json as _json
 
     result = {
         "vertex_project_id": settings.VERTEX_PROJECT_ID or "(not set)",
         "vertex_location": settings.VERTEX_LOCATION,
         "gemini_model": settings.GEMINI_ANALYSIS_MODEL,
-        "google_creds_set": bool(creds_env),
-        "google_creds_type": creds_type,
     }
 
-    # Check if creds were converted to file path by _setup_credentials
-    if creds_type == "file":
-        result["creds_file_exists"] = os.path.isfile(creds_env)
-        if os.path.isfile(creds_env):
-            import json as _json
-            try:
-                with open(creds_env) as _f:
-                    _d = _json.load(_f)
-                pk = _d.get("private_key", "")
-                result["creds_file_valid_json"] = True
-                result["private_key_has_newlines"] = "\n" in pk
-                result["private_key_starts"] = pk[:30] if pk else "(empty)"
-                result["private_key_ends"] = pk[-30:] if pk else "(empty)"
-            except Exception as _e:
-                result["creds_file_valid_json"] = False
-                result["creds_file_error"] = str(_e)
+    # Check env var BEFORE client init
+    creds_before = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+    result["creds_before_init"] = "json_blob" if creds_before.strip().startswith("{") else "file" if creds_before else "not_set"
+    if creds_before.strip().startswith("{"):
+        result["creds_json_len"] = len(creds_before)
+        # Try parsing to check
+        try:
+            parsed = _json.loads(creds_before)
+            pk = parsed.get("private_key", "")
+            result["creds_json_parse"] = "ok"
+            result["pk_len"] = len(pk)
+            result["pk_has_real_newlines"] = "\n" in pk
+        except _json.JSONDecodeError as e:
+            result["creds_json_parse"] = f"failed: {e}"
 
-    # Test client init
+    # Test client init (this calls _setup_credentials)
     try:
         from app.core.vertex_client import _get_client, is_available
         result["is_available"] = is_available()
@@ -443,6 +433,25 @@ async def ai_health_check():
         result["client_type"] = type(client).__name__ if client else None
     except Exception as e:
         result["client_init_error"] = f"{type(e).__name__}: {e}"
+
+    # Check env var AFTER client init (should be converted to file path)
+    creds_after = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+    result["creds_after_init"] = "file" if creds_after.endswith(".json") else "json_blob" if creds_after.strip().startswith("{") else "other"
+
+    # If it's now a file, check the file
+    if creds_after.endswith(".json") and os.path.isfile(creds_after):
+        result["creds_file_path"] = creds_after
+        try:
+            with open(creds_after) as _f:
+                _d = _json.load(_f)
+            pk = _d.get("private_key", "")
+            result["file_pk_len"] = len(pk)
+            result["file_pk_has_newlines"] = "\n" in pk
+            result["file_pk_first30"] = pk[:30]
+        except Exception as _e:
+            result["file_error"] = str(_e)
+    elif creds_after.strip().startswith("{"):
+        result["setup_creds_failed"] = "env var still JSON blob — _setup_credentials() likely failed"
 
     # Test actual API call
     if result.get("client_type"):
