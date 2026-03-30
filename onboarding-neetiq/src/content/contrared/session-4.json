@@ -1,0 +1,180 @@
+{
+  "id": 4,
+  "title": "The Full Picture",
+  "subtitle": "Architecture, numbers, and the road ahead",
+  "ambientTrack": "ambient-constellation",
+  "heroScene": "architecture-constellation",
+  "chapters": [
+    {
+      "id": 14,
+      "title": "How It All Works Together",
+      "sections": [
+        {
+          "type": "text",
+          "content": "We've told the story chapter by chapter. Now let's zoom out and see the whole picture -- from a lawyer clicking a button to seeing risk cards in their Word sidebar.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "diagram",
+          "content": "The Full Architecture: At the top, the User's World -- Microsoft Word with the ContraRed Add-in (TypeScript) for scanning contracts, highlighting risks, and applying fixes; and a Web Browser with the ContraRed Dashboard (React) for managing playbooks, teams, analytics, and billing. Both connect via HTTPS to the ContraRed Backend (FastAPI) which houses Auth & RBAC, Rate Limiter, Security Headers, the 5-Stage Analysis Pipeline, Rule Engine, Playbook Cache, and Hallucination Guard. The backend connects to Supabase PostgreSQL (30 tables, 48 RLS policies, 136 indexes) and Google Vertex AI (Gemini Pro for risk assessment, Gemini Flash for classification, with enterprise DPA and audit logs).",
+          "animation": "draw",
+          "visual": {
+            "type": "constellation",
+            "config": {
+              "layers": [
+                {
+                  "name": "User Layer",
+                  "nodes": ["Word Add-in (TypeScript)", "Dashboard (React)"]
+                },
+                {
+                  "name": "Backend Layer",
+                  "nodes": ["Auth & RBAC", "Rate Limiter", "5-Stage Pipeline", "Rule Engine", "Hallucination Guard"]
+                },
+                {
+                  "name": "Data Layer",
+                  "nodes": ["Supabase PostgreSQL (Mumbai)", "Google Vertex AI (asia-south1)"]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "type": "text",
+          "content": "The complete tech stack spans 26+ technologies: TypeScript and Office.js for the Word Add-in, React 19 and Vite 7 and TailwindCSS 4 for the Dashboard, FastAPI and Python 3.11 for the Backend, PostgreSQL 15 on Supabase for storage, google-genai SDK for Vertex AI, bcrypt and PyJWT and pyotp for auth, Razorpay and Stripe for payments, and much more.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "A complete scan step by step: 1. Lawyer clicks Scan Document -- Word.run reads the full document text. 2. Request hits the backend as POST /api/v1/documents/analyze with JWT auth. 3. Middleware chain processes: body size check, proxy headers, CORS, request ID, logging, security headers, tenant context, rate limiter, auth validation, quota check.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "code",
+          "content": "Stage 1 (EXTRACTION): 0.8 seconds\n  -> Contract parsed into structure map\n  -> 47 defined terms extracted\n  -> Jurisdiction: India (governing law on page 42)\n\nStage 2 (CLASSIFICATION): 2.1 seconds\n  -> 54 clauses classified\n  -> Rule engine: 18 keyword matches from 30 MSA rules\n\nStage 3 (RISK ASSESSMENT): 14.3 seconds\n  -> Gemini Pro analyzes with full context\n  -> 12 risks identified (3 RED, 5 YELLOW, 4 GREEN)\n\nStage 4 (VERIFICATION): 0.3 seconds\n  -> 11 verified, 1 hallucination removed\n\nStage 5 (ENRICHMENT): 2.8 seconds\n  -> Cross-references and defined terms linked\n\nTotal: 20.3 seconds",
+          "animation": "type"
+        },
+        {
+          "type": "text",
+          "content": "The response contains an executive summary, risk cards (RED first, then YELLOW, then GREEN) each with clause text, explanation, recommendation, and confidence score. Clicking Highlight scrolls Word to the clause. Generate Fix calls AI for replacement text. Apply inserts the fix with Track Changes. The audit trail is updated with an immutable, hash-chained log entry.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "diagram",
+          "content": "The Numbers: approximately 15,000 lines of Python backend code, 6,000 lines of TypeScript/HTML/CSS for the Word Add-in, 8,000 lines of React/TypeScript for the Dashboard. 30 database tables, 48 RLS policies, 136 indexes, 105+ API endpoints, 250 default playbook rules across 10 playbooks, 54 clause types detected, 10+ jurisdiction profiles, and 68 completed security audit tasks.",
+          "animation": "draw",
+          "visual": {
+            "type": "stats-grid",
+            "config": {
+              "items": [
+                { "value": "~29,000", "label": "Lines of code" },
+                { "value": "30", "label": "Database tables" },
+                { "value": "105+", "label": "API endpoints" },
+                { "value": "250+", "label": "Playbook rules" },
+                { "value": "54", "label": "Clause types" },
+                { "value": "68", "label": "Security tasks" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "title": "What's Next",
+      "sections": [
+        {
+          "type": "text",
+          "content": "ContraRed is live. It works. Real contracts go in, real insights come out. But the story is far from over.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "Short-term (next 4-6 weeks): Fix the known gaps from the GC Pilot -- upgrade from Render free tier for always-on performance, fix Dashboard stability, improve text replacement reliability from 70% to 95%+, and tune jurisdiction-specific suggestions so Indian law cites Indian precedent. Reconnect the GitHub-to-Render deployment pipeline. Set up Redis for caching (20-40% savings on repeat scans), persistent token blacklisting, and faster playbook loading.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "Medium-term (2-4 months): Paid pilot with 3-5 law firms. Advanced playbook features -- conditional rules, cross-rule dependencies, version history with rollback. Bulk operations -- batch upload 20 contracts, portfolio analysis across all active contracts, risk heat maps.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "Integration with Smriti (Legal OS): ContraRed is one piece of a larger legal intelligence platform. The roadmap includes \"Research This Clause\" for relevant Indian case law, citation intelligence linking contract terms to judicial precedents, AI clause generation grounded in case law, and judge intelligence showing how specific judges have ruled on similar clauses.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "Long-term (6-12 months): On-premise deployment for defense and government clients. Multi-party contracts (3+ parties in joint ventures). Contract comparison against historical NDAs. Firm-wide analytics showing top 10 risks across all clients.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "The competitive moat: Playbook ecosystem that improves as more firms use it. Deep Indian law jurisdiction intelligence (most competitors focus on US/UK). Word-native experience that respects the lawyer's workflow. Zero Data Retention for enterprise compliance. Hallucination Guard for verified AI output.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "split-screen",
+          "content": "The numbers that matter most: Time to scan a contract is approximately 20 seconds (vs. hours manually). Cost per scan is Rs.3-8 (vs. Rs.72,000 for manual review). Risks caught per contract average 10-15. Hallucination rate after guard is less than 1%. Lawyer workflow disruption is zero -- stays in Word.",
+          "animation": "fade-up",
+          "visual": {
+            "type": "comparison",
+            "config": {
+              "left": { "label": "Manual Review", "items": ["Hours per contract", "\u20b972,000 per review", "Human fatigue errors", "Context switching"] },
+              "right": { "label": "ContraRed", "items": ["~20 seconds", "\u20b93-8 per scan", "<1% hallucination rate", "Zero workflow disruption"] }
+            }
+          }
+        },
+        {
+          "type": "quote",
+          "content": "Make contract review faster, cheaper, and more accurate -- without asking lawyers to change how they work. The AI does the tedious work. The lawyer does the thinking. The contract gets better. The deal gets done. That's the story so far. And the best chapters are still being written.",
+          "animation": "fade-up"
+        }
+      ]
+    }
+  ],
+  "quiz": {
+    "type": "mixed",
+    "passingScore": 3,
+    "questions": [
+      {
+        "id": "s4q1",
+        "format": "true-false",
+        "question": "ContraRed uses Zero Data Retention -- no contract text is stored after analysis.",
+        "correctAnswer": "true",
+        "explanation": "In Zero Data Retention (ZDR) mode, contract text is processed in RAM only, never written to the database or disk. Once analysis completes, the text is gone. Only metadata is stored (filename, risk counts, timestamps). This preserves attorney-client privilege."
+      },
+      {
+        "id": "s4q2",
+        "format": "drag-order",
+        "question": "Order the complete scan flow from start to finish.",
+        "options": ["Audit", "Pipeline", "Response", "Middleware", "Request"],
+        "correctAnswer": ["Request", "Middleware", "Pipeline", "Response", "Audit"],
+        "explanation": "The complete flow: Request (lawyer clicks Scan Document) -> Middleware (auth, CORS, rate limiting, tenant context) -> Pipeline (5-stage Extract/Classify/Assess/Verify/Enrich) -> Response (risk cards sent to Word Add-in) -> Audit (immutable hash-chained log entry)."
+      },
+      {
+        "id": "s4q3",
+        "format": "multiple-choice",
+        "question": "How many database tables does ContraRed have?",
+        "options": ["10", "20", "30", "50"],
+        "correctAnswer": "30",
+        "explanation": "ContraRed has 30 database tables, protected by 48 Row-Level Security policies and 136 indexes. The database is hosted on Supabase PostgreSQL in Mumbai (ap-south-1) for Indian data residency."
+      },
+      {
+        "id": "s4q4",
+        "format": "multiple-choice",
+        "question": "What is the approximate cost per contract scan with ContraRed?",
+        "options": ["\u20b950-100", "\u20b93-8", "\u20b9500-1,000", "\u20b972,000"],
+        "correctAnswer": "\u20b93-8",
+        "explanation": "A ContraRed scan costs approximately \u20b93-8, compared to \u20b972,000 for traditional manual review by a team of junior associate, senior associate, and partner. That is a roughly 10,000x cost reduction."
+      },
+      {
+        "id": "s4q5",
+        "format": "interactive",
+        "question": "Identify the risky element in this clause: 'Vendor shall be liable for all damages arising from this agreement, including consequential and indirect damages, without any limitation.' Which phrase makes this clause dangerous?",
+        "options": ["'Vendor shall be liable'", "'all damages arising'", "'without any limitation'", "'consequential and indirect damages'"],
+        "correctAnswer": "without any limitation",
+        "explanation": "The phrase 'without any limitation' removes any cap on liability, exposing the Vendor to unlimited financial risk. ContraRed flags this as RED (critical) and recommends adding a liability cap equal to fees paid in the preceding 12 months."
+      }
+    ]
+  }
+}

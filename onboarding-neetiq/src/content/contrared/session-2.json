@@ -1,0 +1,276 @@
+{
+  "id": 2,
+  "title": "The Technology",
+  "subtitle": "AI, Playbooks, the Pipeline, and the Control Center",
+  "ambientTrack": "ambient-tech",
+  "heroScene": "tech-core",
+  "chapters": [
+    {
+      "id": 6,
+      "title": "The Brain Upgrade -- AI Enters the Picture",
+      "sections": [
+        {
+          "type": "text",
+          "content": "The regex rule engine was like having a very fast, very literal assistant. It could spot the word \"unlimited\" in a haystack. But it couldn't tell you whether the hay was actually dangerous. Avi needed a brain. A real one.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "Google's Gemini AI model is like having a brilliant legal analyst who has read millions of contracts, understands legal language and nuance, can explain why something is risky, can suggest specific replacement text, and never gets tired or distracted.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "split-screen",
+          "content": "Regex sees \"best efforts\" and simply matches. AI sees \"Vendor shall use best efforts to deliver\" and thinks: 'Best efforts' is a weaker standard than 'reasonable efforts.' Under Indian contract law, it may require exhausting all possibilities. This could be overly burdensome. Recommend changing to 'commercially reasonable efforts.'",
+          "animation": "fade-up",
+          "visual": {
+            "type": "comparison",
+            "config": {
+              "left": { "label": "Regex (Literal)", "items": ["Sees: 'best efforts'", "Matches? Yes. Done.", "No context, no nuance"] },
+              "right": { "label": "AI (Intelligent)", "items": ["Understands legal weight", "Considers jurisdiction", "Suggests specific alternative"] }
+            }
+          }
+        },
+        {
+          "type": "text",
+          "content": "AI can detect what's missing: \"This MSA has no Force Majeure clause. Given the post-COVID landscape and a 3-year agreement, a Force Majeure clause protecting both parties should be added.\" AI understands cross-references: it reads clause 3.1 on page 5 (Net 30 payment) and clause 18.4 on page 47 (18% interest) and flags the combined financial exposure.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "diagram",
+          "content": "The Hybrid Sentinel approach: Contract text flows to both the Rule Engine (fast, cheap, reliable -- keyword matching) and the AI (slower, smarter, expensive -- detailed analysis). The rule engine runs first so AI only analyzes actual risks, saving 60-70% of AI costs.",
+          "animation": "draw",
+          "visual": {
+            "type": "flow",
+            "config": {
+              "nodes": ["Contract Text", "Rule Engine (fast, free)", "AI Analysis (smart, costly)", "Combined Results"],
+              "branches": true,
+              "savings": "60-70% AI cost reduction"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "content": "AI has a dirty secret: sometimes it lies. It confidently generates text that isn't in the contract. In legal work, citing a non-existent clause would be malpractice. So ContraRed built the Hallucination Guard -- a fact-checker that verifies every AI quote against the original contract through exact match, normalized match, fuzzy match, or rejection.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "diagram",
+          "content": "Confidence Scores: 95-100% means exact text match plus clear rule violation (Very Confident). 80-94% means normalized match with AI agreement (Confident). 60-79% means fuzzy match, nuanced (Moderate, review recommended). Below 60% shown with a warning. ContraRed never pretends to be a lawyer -- the lawyer makes the final call.",
+          "animation": "draw",
+          "visual": {
+            "type": "gauge",
+            "config": {
+              "ranges": [
+                { "min": 95, "max": 100, "label": "Very Confident", "color": "green" },
+                { "min": 80, "max": 94, "label": "Confident", "color": "blue" },
+                { "min": 60, "max": 79, "label": "Moderate", "color": "yellow" },
+                { "min": 0, "max": 59, "label": "Low", "color": "red" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "The Playbook System",
+      "sections": [
+        {
+          "type": "text",
+          "content": "Here's the thing about contract review: there's no universal checklist. An NDA is nothing like a Lease Agreement. A SaaS contract has completely different risks than an Employment Agreement. That's why ContraRed has Playbooks -- recipe books for contract review.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "Each playbook contains: what type of contract it's for (NDA, MSA, SaaS, etc.), a list of rules with what to check, what's acceptable, and what's dangerous. For each rule: the ideal position, the fallback position, and the dealbreaker.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "counter",
+          "content": "ContraRed ships with 10 pre-built playbooks: Master Service Agreement, NDA Mutual, NDA Unilateral, SaaS Agreement, Employment Agreement, Data Processing Agreement, Consulting Agreement, Vendor Agreement, Joint Venture Agreement, and Lease Agreement.",
+          "animation": "count-up",
+          "visual": {
+            "type": "counter",
+            "config": {
+              "target": 10,
+              "prefix": "",
+              "suffix": " default playbooks",
+              "subtext": "Covering the most common contract types"
+            }
+          }
+        },
+        {
+          "type": "code",
+          "content": "Rule: \"Limitation of Liability\"\n  Clause Type: limitation_of_liability\n  Risk Level: RED (critical)\n\n  Primary Position (what we WANT):\n    \"Liability capped at 12 months of fees paid,\n     excluding gross negligence and willful misconduct.\"\n\n  Fallback Position (what we'd ACCEPT):\n    \"Liability capped at total contract value.\n     Consequential damages excluded with carve-outs.\"\n\n  Deal Breaker? YES\n  AI Verification Required? YES",
+          "animation": "type"
+        },
+        {
+          "type": "text",
+          "content": "Custom Playbooks let every company tailor the system: a healthcare company adds HIPAA rules, a fintech startup adds RBI regulations, a defense contractor adds ITAR restrictions. Start from a default or from blank, add rules, adjust risk levels, save and share with your team, and version-control changes over time.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "diagram",
+          "content": "How Playbooks Feed Into the AI: User selects MSA Playbook + 'I am the Vendor.' ContraRed loads the 30 MSA rules. Rule Engine runs first and finds 12 keyword matches. AI receives the contract text, all 30 rules with positions, the 12 matches, the Vendor perspective (which changes everything!), and governing law: India. The party side matters enormously -- the same clause great for a buyer is terrible for a vendor.",
+          "animation": "draw",
+          "visual": {
+            "type": "flow",
+            "config": {
+              "nodes": ["Select Playbook + Party Side", "Load Rules (30)", "Rule Engine (12 matches)", "AI Analysis with Full Context", "Perspective-Aware Results"],
+              "direction": "vertical"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "The Engine Room -- The Backend",
+      "sections": [
+        {
+          "type": "text",
+          "content": "If the Word Add-in is ContraRed's face, the backend is its brain, heart, and muscles combined. Built with FastAPI (a modern Python web framework), the backend handles everything: authentication, contract analysis, playbook management, billing, audit logging, and more.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "diagram",
+          "content": "The 5-Stage Analysis Pipeline -- the crown jewel of ContraRed. When you click 'Scan Document,' five stages process your contract in sequence, each with a specific purpose and cost profile.",
+          "animation": "draw",
+          "visual": {
+            "type": "pipeline",
+            "config": {
+              "stages": [
+                { "name": "Extract", "time": "~1s", "cost": "Free", "model": "Deterministic", "detail": "Parse structure, extract terms, detect jurisdiction" },
+                { "name": "Classify", "time": "~2s", "cost": "Cheap", "model": "AI Flash-Lite", "detail": "Classify 54 clause types, run keyword matching" },
+                { "name": "Assess", "time": "~10-20s", "cost": "Expensive", "model": "AI Pro", "detail": "Full risk assessment with explanations and recommendations" },
+                { "name": "Verify", "time": "~1s", "cost": "Free", "model": "Deterministic", "detail": "Hallucination Guard checks every AI quote against source" },
+                { "name": "Enrich", "time": "~3s", "cost": "Cheap", "model": "AI Flash-Lite", "detail": "Add cross-references, link defined terms, finalize scores" }
+              ]
+            }
+          }
+        },
+        {
+          "type": "text",
+          "content": "Stage 1 -- Extraction: The Structure Extractor parses the document into a map of sections, clauses, and sub-clauses. The Defined Terms Resolver finds definitions that change the meaning of every clause. The Jurisdiction Detector identifies the governing law. All done without any AI -- pure pattern matching. Fast and free.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "Stage 2 -- Classification: Each clause gets classified into one of 54 types (payment, liability, confidentiality, termination, etc.) using lightweight AI combined with keyword matching. Fast and cheap.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "Stage 3 -- Risk Assessment: The heavy lifting. Full-power Gemini Pro reads the entire contract, playbook rules, jurisdiction context, party side, and clause classifications. For each rule it produces a risk level, explanation, recommendation, and confidence score. Most expensive but most valuable.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "Stage 4 -- Verification: The Hallucination Guard takes every AI-generated quote and checks it against the original contract. Exact match, close match, or rejected as hallucination. No unverified quote ever reaches the lawyer.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "Stage 5 -- Enrichment: Cross-references (\"This conflicts with clause 12.4\"), defined term links, related clause connections, and finalized confidence scores. Uses lightweight AI -- fast and cheap.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "diagram",
+          "content": "The design goals: Cost efficiency (expensive AI only in Stage 3; Stages 1 and 4 are free), Speed (Stages 1 and 4 run in milliseconds), Accuracy (Stage 4 catches AI mistakes), Resilience (if Stage 5 fails, Stages 1-4 results still available), Transparency (each stage's results are visible and auditable).",
+          "animation": "draw",
+          "visual": {
+            "type": "grid",
+            "config": {
+              "items": [
+                { "icon": "dollar", "label": "Cost Efficiency", "detail": "Expensive AI only in Stage 3" },
+                { "icon": "zap", "label": "Speed", "detail": "Stages 1 & 4 in milliseconds" },
+                { "icon": "target", "label": "Accuracy", "detail": "Stage 4 catches AI mistakes" },
+                { "icon": "shield", "label": "Resilience", "detail": "Graceful degradation" },
+                { "icon": "eye", "label": "Transparency", "detail": "Every stage auditable" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "The Control Center -- The Dashboard",
+      "sections": [
+        {
+          "type": "text",
+          "content": "The Word Add-in is for individual lawyers reviewing contracts. But who manages the team? Who tracks usage? Who pays the bill? Who sets the rules? That's what the Dashboard is for -- the admin panel for ContraRed, built with React.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "counter",
+          "content": "The Dashboard has 19 pages covering everything from the Home Dashboard (documents analyzed, risks detected, fixes applied) to the Playbook Manager, Clause Library, Templates, Compare tool, Team Management, Billing, Audit Logs, Analytics, Executive Reports, and the Marketplace.",
+          "animation": "count-up",
+          "visual": {
+            "type": "counter",
+            "config": {
+              "target": 19,
+              "prefix": "",
+              "suffix": " dashboard pages",
+              "subtext": "From analytics to team management"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "content": "Role-Based Access Control with 5 tiers: Viewer (read-only), Reviewer (annotate documents), Manager (manage workflows), Admin (billing, team, playbooks), and Super Admin (platform-level access). Each role has specific permissions enforced at the API level.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "Audit Logs record every action: who scanned what document, who applied which fix, who changed a playbook rule, who invited a team member. These logs are immutable (can't be edited) and hash-chained (each entry includes a hash of the previous one, so tampering is detectable). When a regulator asks \"who reviewed this contract and when?\" -- ContraRed has the answer.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "split-screen",
+          "content": "ContraRed has 5 pricing tiers: Free (5 scans/month), Starter at Rs.2,499/mo (50 scans), Pro at Rs.7,499/mo (200 scans), Business at Rs.24,999/mo (1,000 scans), and Enterprise with unlimited scans at custom pricing.",
+          "animation": "fade-up",
+          "visual": {
+            "type": "pricing",
+            "config": {
+              "tiers": [
+                { "name": "Free", "scans": 5, "price": "Free" },
+                { "name": "Starter", "scans": 50, "price": "\u20b92,499/mo" },
+                { "name": "Pro", "scans": 200, "price": "\u20b97,499/mo" },
+                { "name": "Business", "scans": 1000, "price": "\u20b924,999/mo" },
+                { "name": "Enterprise", "scans": "Unlimited", "price": "Custom" }
+              ]
+            }
+          }
+        },
+        {
+          "type": "diagram",
+          "content": "How Dashboard and Word Add-in work together: Both talk to the same ContraRed Backend API. The Word Add-in (used by lawyers) handles scanning contracts, applying fixes, and researching clauses. The Dashboard (used by managers) handles playbooks, team management, analytics, and billing. One system with two faces -- a manager creates a playbook in the Dashboard, a lawyer sees it in the Word Add-in dropdown.",
+          "animation": "draw",
+          "visual": {
+            "type": "flow",
+            "config": {
+              "nodes": ["ContraRed Backend API", "Word Add-in (Lawyers)", "Dashboard (Managers)"],
+              "shared": ["User accounts", "Playbooks", "Scan history", "Billing quotas"]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "quiz": {
+    "type": "dragdrop",
+    "passingScore": 1,
+    "questions": [
+      {
+        "id": "s2q1",
+        "format": "drag-order",
+        "question": "Drag the 5 analysis pipeline stages into the correct order.",
+        "options": ["Enrich", "Assess", "Verify", "Extract", "Classify"],
+        "correctAnswer": ["Extract", "Classify", "Assess", "Verify", "Enrich"],
+        "explanation": "The 5-stage pipeline runs in order: Extract (parse structure, free), Classify (sort clauses, AI-lite), Assess (full risk analysis, AI Pro), Verify (hallucination guard, free), Enrich (cross-references, AI-lite). This design maximizes cost efficiency by running expensive AI only in Stage 3."
+      }
+    ]
+  }
+}

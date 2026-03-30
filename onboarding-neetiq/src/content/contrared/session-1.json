@@ -1,0 +1,290 @@
+{
+  "id": 1,
+  "title": "The Origin Story",
+  "subtitle": "From a chance meeting to the birth of ContraRed",
+  "ambientTrack": "ambient-origins",
+  "heroScene": "origin-spark",
+  "chapters": [
+    {
+      "id": 1,
+      "title": "The Meeting",
+      "sections": [
+        {
+          "type": "text",
+          "content": "One fine day, Avi walked into a business meeting with Mr. Satish of Intellect Design. It was supposed to be a routine meeting -- the kind where people exchange business cards, talk about \"synergies,\" and drink too much coffee. But this meeting was different. This meeting planted a seed.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "quote",
+          "content": "You know what eats up most of our legal team's time? Reading contracts. Not the exciting stuff -- not the negotiations, not the strategy. Just... reading. Page after page after page. Looking for problems.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "He explained how it worked at most companies: A contract arrives -- sometimes 50 pages, sometimes 200. A junior associate sits down and reads every single page, looking for hidden clauses buried in legal jargon. After hours (sometimes days), the contract goes to a senior associate for a second pass, then maybe to a partner for a third. Each pass costs money. Each pass takes time.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "The cost was enormous. A single contract review could take days and cost thousands of dollars in billable hours. The accuracy was uncertain -- junior associates are smart, but they're human. They get tired. They miss things. Especially on page 147 of a 200-page outsourcing agreement at 11 PM on a Friday.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "quote",
+          "content": "We need something better. But we can't ask our lawyers to learn a new tool. They live in Microsoft Word. That's their home.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "Avi listened. And on the drive home, he couldn't stop thinking. What if AI could read those contracts? What if it could find the hidden clauses -- the dangerous ones -- in seconds instead of days? What if lawyers never had to leave Microsoft Word to use it? That night, Avi opened his laptop. ContraRed was about to be born.",
+          "animation": "fade-up"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "The Problem",
+      "sections": [
+        {
+          "type": "text",
+          "content": "Before we talk about the solution, let's really understand the problem. When two companies want to work together, they sign a contract. But before signing, both sides review and mark it up with changes. This is called \"redlining\" -- because lawyers traditionally used red pens to mark changes.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "Think of it like editing an essay, except: the \"essay\" is 50-200 pages long, it's written in dense legal language, missing one bad sentence could cost your company millions, and there are hundreds of things to check.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "split-screen",
+          "content": "The Hidden Clause Problem: Contracts are full of traps. The Unlimited Liability Trap says \"Party A shall be liable for all damages\" -- sounds innocent, but means unlimited liability. The One-Sided Termination Trick buries contradictions 80 pages apart. The IP Grab makes all intellectual property belong to the client.",
+          "animation": "fade-up",
+          "visual": {
+            "type": "comparison",
+            "config": {
+              "left": { "label": "What It Says", "items": ["\"all damages arising\"", "\"terminate with 30 days notice\"", "\"IP created shall belong to Client\""] },
+              "right": { "label": "What It Means", "items": ["Unlimited liability -- could owe billions", "Buried exception: Client can terminate immediately", "Every tool and template you build becomes theirs"] }
+            }
+          }
+        },
+        {
+          "type": "diagram",
+          "content": "Why Humans Struggle: Volume (100+ page MSAs), Fatigue (attention drops after 45 minutes), Cross-references (page 5 contradicted on page 85), Jargon (\"notwithstanding\" hides meaning), Context (same clause differs under Indian vs. Delaware law), Speed (deals can't wait weeks).",
+          "animation": "draw",
+          "visual": {
+            "type": "grid",
+            "config": {
+              "items": [
+                { "icon": "stack", "label": "Volume", "detail": "100+ pages per MSA" },
+                { "icon": "brain", "label": "Fatigue", "detail": "Attention drops after 45 min" },
+                { "icon": "link", "label": "Cross-refs", "detail": "Page 5 vs. page 85" },
+                { "icon": "translate", "label": "Jargon", "detail": "Hidden meanings" },
+                { "icon": "globe", "label": "Context", "detail": "India vs. Delaware" },
+                { "icon": "clock", "label": "Speed", "detail": "Deals can't wait weeks" }
+              ]
+            }
+          }
+        },
+        {
+          "type": "counter",
+          "content": "The cost of a typical contract review at a mid-size law firm: Junior Associate (8 hours x Rs.3,000/hr) + Senior Associate (4 hours x Rs.6,000/hr) + Partner Review (2 hours x Rs.12,000/hr) = Rs.72,000 per contract. Multiply by 50-100 contracts per month: that's Rs.36-72 lakhs per month -- just for reading.",
+          "animation": "count-up",
+          "visual": {
+            "type": "counter",
+            "config": {
+              "target": 72000,
+              "prefix": "\u20b9",
+              "suffix": " per contract review",
+              "subtext": "\u20b936-72 lakhs/month for a busy legal team"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "content": "What Mr. Satish really wanted: Speed -- analyze in minutes, not days. Accuracy -- catch things humans miss. Consistency -- same standards every time, no Friday night fatigue. No context switching -- stay in Microsoft Word. Explainability -- not just \"this is bad\" but why and what to do. Customizable -- different companies, different risk tolerances. This was the problem Avi decided to solve.",
+          "animation": "fade-up"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "The First Spark",
+      "sections": [
+        {
+          "type": "text",
+          "content": "Avi's background wasn't in law. He was a tech guy. And tech guys think in systems. So instead of seeing a 200-page contract, he saw a pattern-matching problem. A dangerous liability clause usually contains words like \"unlimited,\" \"all damages,\" \"without limitation.\" A one-sided termination clause often says \"for any reason\" or \"at its sole discretion.\"",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "What if a computer could scan for these patterns? Not read the whole contract. Not understand law. Just search for red flags. Like a spell checker, but for legal risk.",
+          "animation": "type"
+        },
+        {
+          "type": "code",
+          "content": "Pattern: \"unlimited liability\"\n  -> If found, flag as HIGH RISK\n\nPattern: \"sole discretion\" + \"terminate\"\n  -> If found, flag as MEDIUM RISK\n\nPattern: \"intellectual property\" + \"belong to\" + \"Client\"\n  -> If found, flag as HIGH RISK",
+          "animation": "type"
+        },
+        {
+          "type": "text",
+          "content": "It was crude. It was simple. But it was a starting point. Avi quickly realized the limitations: language is messy (\"unlimited liability\" vs. \"liability without any cap\" mean the same thing), context matters (who gets to terminate?), what's NOT there is just as important (a missing clause), and different contracts need different rules.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "text",
+          "content": "The Name: Contra (against bad clauses) + Red (redlining). ContraRed. Against the red flags. Making redlines. Fighting bad contracts. It stuck.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "diagram",
+          "content": "The first architecture sketch -- drawn on a whiteboard: Contract Text flows into a Pattern Matcher (Rule Engine using regex rules), which produces a Risk Report showing found red flags.",
+          "animation": "draw",
+          "visual": {
+            "type": "flow",
+            "config": {
+              "nodes": ["Contract Text", "Pattern Matcher (Regex Rules)", "Risk Report"],
+              "direction": "vertical"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Baby Steps -- The Regex Engine",
+      "sections": [
+        {
+          "type": "text",
+          "content": "Every great product starts ugly. ContraRed was no exception. The Rule Engine is like teaching a robot to review contracts with a checklist. Each rule has what to look for (patterns/keywords), what it means (risk level: RED, YELLOW, or GREEN), and what to do about it (suggested fix).",
+          "animation": "fade-up"
+        },
+        {
+          "type": "code",
+          "content": "Rule: \"Unlimited Liability\"\n  Patterns: [\"unlimited liability\", \"no cap on damages\",\n             \"without limitation\", \"liable for all\"]\n  Risk Level: RED (critical)\n  What's wrong: \"No liability cap exposes unlimited risk\"\n  Suggested fix: \"Add cap equal to fees paid in last 12 months\"",
+          "animation": "type"
+        },
+        {
+          "type": "split-screen",
+          "content": "The traffic-light system any lawyer understands instantly: RED means critical risk that could cost millions (unlimited liability, missing indemnification). YELLOW means medium risk worth negotiating (short termination notice, vague scope). GREEN means low risk or acceptable (standard confidentiality, reasonable payment terms).",
+          "animation": "fade-up",
+          "visual": {
+            "type": "traffic-light",
+            "config": {
+              "red": { "label": "RED -- Critical", "example": "Unlimited liability" },
+              "yellow": { "label": "YELLOW -- Medium", "example": "Short termination notice" },
+              "green": { "label": "GREEN -- Acceptable", "example": "Standard confidentiality" }
+            }
+          }
+        },
+        {
+          "type": "text",
+          "content": "Smart Rules (Version 2.0): Negative Patterns avoid false alarms -- don't flag \"Missing Confidentiality\" if the document IS an NDA. Escalation Conditions adjust severity -- a non-compete escalates to RED if duration exceeds 2 years or scope is worldwide. Three Detection Modes range from pure regex (fastest) to AI-only (catches subtle issues).",
+          "animation": "fade-up"
+        },
+        {
+          "type": "code",
+          "content": "Found 12 issues:\n  RED:    Unlimited liability (page 15, clause 8.1)\n  RED:    One-sided indemnification (page 22, clause 12.3)\n  RED:    Missing data protection clause\n  YELLOW: Non-compete exceeds 1 year (page 31, clause 15.2)\n  YELLOW: Auto-renewal with no opt-out (page 28, clause 14.1)\n  YELLOW: Vague scope of services (page 3, clause 2.1)\n  GREEN:  Confidentiality clause present and mutual\n  GREEN:  Termination for convenience (mutual, 30 days)\n  GREEN:  Payment terms (Net 30, standard)",
+          "animation": "type"
+        },
+        {
+          "type": "text",
+          "content": "The rule engine was good for a first version. But it had a ceiling. It could find what was there, but struggled with what was missing, subtle meaning differences (\"best efforts\" vs. \"reasonable efforts\"), cross-references spanning 80 pages, and jurisdiction context. For those, Avi needed AI.",
+          "animation": "fade-up"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "The Big Decision -- A Word Add-in",
+      "sections": [
+        {
+          "type": "text",
+          "content": "Every startup faces a moment where they have to choose: build what's easy, or build what's right. For ContraRed, that moment was about where the tool would live.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "split-screen",
+          "content": "Option A: Standalone Web App -- easier to build, works on any device, full UI control. But lawyers have to leave Word, upload sensitive contracts, copy-paste fixes back. It breaks their workflow. Option B: Inside Microsoft Word -- zero context-switching, direct document access, fixes with Track Changes, feels native. But much harder to build with Office.js, limited to 340px side panel, painful debugging.",
+          "animation": "fade-up",
+          "visual": {
+            "type": "comparison",
+            "config": {
+              "left": { "label": "Web App (Easy Path)", "items": ["Leave Word", "Upload contracts", "Copy-paste fixes", "Breaks workflow"] },
+              "right": { "label": "Word Add-in (Hard Path)", "items": ["Stay in Word", "Direct access", "Track Changes", "Native feel"] }
+            }
+          }
+        },
+        {
+          "type": "quote",
+          "content": "We can't ask our lawyers to learn a new tool. They live in Microsoft Word. That settled it. ContraRed would be a Word Add-in.",
+          "animation": "fade-up"
+        },
+        {
+          "type": "diagram",
+          "content": "How a Word Add-in works: Install it (one-time), a new button appears in Word's ribbon, click it and a side panel opens on the right. That panel is a mini web page running inside Word. It can read the document, search text, highlight things, and insert Track Changes.",
+          "animation": "draw",
+          "visual": {
+            "type": "word-mockup",
+            "config": {
+              "document": "Contract text with highlighted risky clause",
+              "sidePanel": ["ContraRed", "Scan Doc button", "Found 8 issues", "RED/YELLOW/GREEN cards", "Apply Fix button"]
+            }
+          }
+        },
+        {
+          "type": "text",
+          "content": "The tech stack: TypeScript for type-safe JavaScript, Office.js as Microsoft's official Word API, Webpack to bundle everything, Fuse.js for fuzzy text matching, and HTML+CSS for the side panel UI. The entire add-in lives in three main files: taskpane.html (the UI), taskpane.ts (3,099 lines of logic), and api.ts (backend communication).",
+          "animation": "fade-up"
+        },
+        {
+          "type": "diagram",
+          "content": "The Three-Tier Text Search: Tier 1 Exact Match works 70% of the time. Tier 2 Normalized Match (strip spaces, fix punctuation, ignore case) covers 20% more. Tier 3 Fuzzy Match via Fuse.js (75%+ similarity) handles the remaining 10%. Combined: 95%+ text location accuracy.",
+          "animation": "draw",
+          "visual": {
+            "type": "funnel",
+            "config": {
+              "tiers": [
+                { "label": "Exact Match", "percentage": "70%" },
+                { "label": "Normalized Match", "percentage": "20%" },
+                { "label": "Fuzzy Match (Fuse.js)", "percentage": "10%" }
+              ],
+              "total": "95%+ accuracy"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "content": "The user experience: Open a contract in Word, click ContraRed in the ribbon, choose a playbook, click Scan Document, wait 10-30 seconds, see color-coded risk cards, click a risk to scroll and highlight, click Generate Fix for AI replacement text, click Apply to insert with Track Changes. No uploading. No downloading. No new tool to learn. Just a button in Word.",
+          "animation": "fade-up"
+        }
+      ]
+    }
+  ],
+  "quiz": {
+    "type": "flashcard",
+    "passingScore": 2,
+    "questions": [
+      {
+        "id": "s1q1",
+        "format": "true-false",
+        "question": "ContraRed was originally built as a standalone desktop application.",
+        "correctAnswer": "false",
+        "explanation": "ContraRed was built as a Microsoft Word Add-in, not a standalone desktop application. Mr. Satish's key requirement was that lawyers should never have to leave Word -- their natural working environment."
+      },
+      {
+        "id": "s1q2",
+        "format": "true-false",
+        "question": "The first prototype used regex patterns to identify contract risks.",
+        "correctAnswer": "true",
+        "explanation": "The first version of ContraRed used Regular Expressions (regex) to scan for dangerous phrases like \"unlimited liability\" and \"sole discretion.\" This rule engine was the foundation before AI was added."
+      },
+      {
+        "id": "s1q3",
+        "format": "true-false",
+        "question": "Manual contract review by a senior partner costs approximately \u20b972,000.",
+        "correctAnswer": "true",
+        "explanation": "A typical contract review involves a Junior Associate (8 hrs x \u20b93,000), Senior Associate (4 hrs x \u20b96,000), and Partner Review (2 hrs x \u20b912,000), totaling \u20b972,000 per contract."
+      }
+    ]
+  }
+}
