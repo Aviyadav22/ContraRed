@@ -1,17 +1,32 @@
-function App() {
+import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { lazy, Suspense } from 'react'
+
+const Home = lazy(() => import('./routes/Home'))
+const ContraRedLanding = lazy(() => import('./routes/books/contrared/Landing'))
+const ContraRedSession = lazy(() => import('./routes/books/contrared/Session'))
+const Lock = lazy(() => import('./routes/Lock'))
+const Completion = lazy(() => import('./routes/Completion'))
+
+function Loading() {
   return (
-    <div className="min-h-screen bg-bg text-text-primary grain-overlay grid-overlay">
-      <div className="max-w-3xl mx-auto px-6 py-12">
-        <h1 className="text-gold font-serif text-4xl">NeetiQ Chronicles</h1>
-        <p className="text-text-muted mt-2 font-sans">Your onboarding library.</p>
-        <div className="scan-divider my-8" />
-        <p className="text-text-primary font-sans">If you see gold text on dark background with a grain texture, a subtle grid, and a gold divider sweep — everything works.</p>
-        <div className="mt-6 p-4 bg-surface border border-border rounded-lg">
-          <code className="font-mono text-sm text-risk-green">✓ TailwindCSS configured</code>
-        </div>
-      </div>
+    <div className="min-h-screen bg-bg flex items-center justify-center grain-overlay">
+      <div className="text-gold animate-pulse font-mono text-sm tracking-widest">LOADING</div>
     </div>
   )
 }
 
-export default App
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Suspense fallback={<Loading />}>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/contrared" element={<ContraRedLanding />} />
+          <Route path="/contrared/session/:sessionId" element={<ContraRedSession />} />
+          <Route path="/locked" element={<Lock />} />
+          <Route path="/completion" element={<Completion />} />
+        </Routes>
+      </Suspense>
+    </BrowserRouter>
+  )
+}
