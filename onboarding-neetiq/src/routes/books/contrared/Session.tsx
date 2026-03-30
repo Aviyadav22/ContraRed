@@ -58,16 +58,6 @@ export default function ContraRedSession() {
   // Graceful ambient audio (won't crash if audio files don't exist)
   useAudioPlayer(sessionData?.ambientTrack)
 
-  // Lock check
-  if (sessionProgress?.status === 'locked') {
-    return <Navigate to="/locked" replace />
-  }
-
-  // Invalid session
-  if (!sessionData) {
-    return <Navigate to="/contrared" replace />
-  }
-
   // Start session on mount
   useEffect(() => {
     if (sessionProgress?.status === 'available') {
@@ -77,14 +67,16 @@ export default function ContraRedSession() {
 
   // Time tracking: add 10s every 10 seconds
   useEffect(() => {
+    if (!sessionData) return
     const timer = setInterval(() => {
       addTime('contrared', id, 10)
     }, 10_000)
     return () => clearInterval(timer)
-  }, [id, addTime])
+  }, [id, addTime, sessionData])
 
   // Track scroll progress
   useEffect(() => {
+    if (!sessionData) return
     function handleScroll() {
       const scrollHeight = document.documentElement.scrollHeight - window.innerHeight
       if (scrollHeight > 0) {
@@ -94,7 +86,7 @@ export default function ContraRedSession() {
     }
     window.addEventListener('scroll', handleScroll, { passive: true })
     return () => window.removeEventListener('scroll', handleScroll)
-  }, [id, updateScrollProgress])
+  }, [id, updateScrollProgress, sessionData])
 
   // Entrance animation
   useEffect(() => {
@@ -120,15 +112,25 @@ export default function ContraRedSession() {
   )
 
   // Auto-show quiz when all chapters complete
-  const allChaptersComplete = sessionData.chapters.every((c) =>
-    completedChapterIds.has(c.id),
-  )
+  const allChaptersComplete = sessionData
+    ? sessionData.chapters.every((c) => completedChapterIds.has(c.id))
+    : false
 
   useEffect(() => {
     if (allChaptersComplete && !showQuiz) {
       setShowQuiz(true)
     }
   }, [allChaptersComplete, showQuiz])
+
+  // Lock check (after all hooks)
+  if (sessionProgress?.status === 'locked') {
+    return <Navigate to="/locked" replace />
+  }
+
+  // Invalid session (after all hooks)
+  if (!sessionData) {
+    return <Navigate to="/contrared" replace />
+  }
 
   // Quiz completion: navigate to next session or completion
   const handleQuizComplete = useCallback(() => {

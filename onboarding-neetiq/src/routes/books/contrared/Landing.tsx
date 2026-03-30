@@ -17,11 +17,12 @@ export default function ContraRedLanding() {
 
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const completedSessions = Object.values(contrared.sessions).filter(
+  const sessions = contrared?.sessions ?? {}
+  const completedSessions = Object.values(sessions).filter(
     (s) => s.status === 'completed'
   ).length
-  const totalSessions = Object.keys(contrared.sessions).length
-  const progressPct = (completedSessions / totalSessions) * 100
+  const totalSessions = Object.keys(sessions).length
+  const progressPct = totalSessions > 0 ? (completedSessions / totalSessions) * 100 : 0
 
   useEffect(() => {
     if (!containerRef.current) return

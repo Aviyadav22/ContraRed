@@ -140,8 +140,9 @@ function DiagramVisual({ visual, fallbackContent }: { visual?: VisualConfig; fal
     case 'scorecard':
       return <ScoreCard className="mt-4" />
     case 'deployment':
-    case 'architecture':
       return <DeploymentMap className="mt-4" />
+    case 'architecture':
+      return <ArchitectureDiagram className="mt-4" />
     case 'flow':
       return <VisualFlow config={visual.config} />
     case 'funnel':
