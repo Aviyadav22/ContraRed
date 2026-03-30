@@ -1,0 +1,23 @@
+@import "./grain.css";
+@import "./animations.css";
+
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #0A0A0A;
+  --color-surface: #111111;
+  --color-surface-elevated: #1A1A1A;
+  --color-border: #1E1E1E;
+  --color-text-primary: #E8E8E8;
+  --color-text-muted: #6B6B6B;
+  --color-gold: #C5A880;
+  --color-gold-dim: #8B7355;
+  --color-risk-red: #DC2626;
+  --color-risk-yellow: #EAB308;
+  --color-risk-green: #22C55E;
+
+  --font-family-serif: Georgia, 'Times New Roman', serif;
+  --font-family-sans: 'Inter', system-ui, sans-serif;
+  --font-family-mono: 'JetBrains Mono', monospace;
+  --font-family-handwriting: 'Caveat', cursive;
+}
