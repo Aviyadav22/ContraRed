@@ -1395,6 +1395,90 @@ async def list_batches(
 
 
 # ============================================================================
+# Consolidated Batch Report Endpoint
+# ============================================================================
+
+
+class BatchReportResponse(BaseModel):
+    """Consolidated batch analysis report."""
+    batch_id: str
+    total_files: int
+    completed_files: int
+    failed_files: int
+    aggregate_risk_summary: dict  # {red, yellow, green, total}
+    common_risks: List[str]  # Most frequently flagged rule names
+    per_file_summary: List[dict]
+    compliance_scores: Optional[dict] = None
+
+
+@router.get("/batch/{batch_id}/report", response_model=BatchReportResponse)
+async def batch_report(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get a consolidated report for a completed batch analysis."""
+    from app.models.batch_job import BatchJob, BatchJobFile
+
+    result = await db.execute(
+        select(BatchJob)
+        .options(selectinload(BatchJob.files))
+        .where(BatchJob.id == UUID(batch_id), BatchJob.user_id == current_user.id)
+    )
+    batch_job = result.scalar_one_or_none()
+    if not batch_job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "Batch not found.", "error_code": "batch_not_found"},
+        )
+
+    # Aggregate risk summary
+    agg = {"red": 0, "yellow": 0, "green": 0, "total": 0}
+    per_file = []
+    risk_rule_counts: Dict[str, int] = {}
+
+    for f in sorted(batch_job.files, key=lambda x: x.created_at):
+        rs = f.risk_summary or {}
+        for k in agg:
+            agg[k] += rs.get(k, 0)
+
+        per_file.append({
+            "filename": f.filename,
+            "status": f.status,
+            "risk_summary": rs,
+            "processing_ms": f.processing_ms,
+            "error": f.error_message,
+        })
+
+    # Find common risks from document risks in DB
+    common_risks: List[str] = []
+    try:
+        doc_ids = [f.document_id for f in batch_job.files if f.document_id]
+        if doc_ids:
+            risk_result = await db.execute(
+                select(DocumentRisk.rule_name, func.count(DocumentRisk.id).label("cnt"))
+                .where(DocumentRisk.document_id.in_(doc_ids))
+                .group_by(DocumentRisk.rule_name)
+                .order_by(func.count(DocumentRisk.id).desc())
+                .limit(10)
+            )
+            common_risks = [row[0] for row in risk_result.all() if row[0]]
+    except Exception:
+        pass  # Non-critical
+
+    return BatchReportResponse(
+        batch_id=batch_id,
+        total_files=batch_job.total_files,
+        completed_files=batch_job.completed_files or 0,
+        failed_files=batch_job.failed_files or 0,
+        aggregate_risk_summary=agg,
+        common_risks=common_risks,
+        per_file_summary=per_file,
+        compliance_scores=None,  # TODO: aggregate from individual analyses
+    )
+
+
+# ============================================================================
 # Compliance Layer Endpoints
 # ============================================================================
 
