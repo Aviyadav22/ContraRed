@@ -4,7 +4,7 @@
 > **LOG:** `RALPH_LOOP_LOG.md`
 > **STATUS:** IN_PROGRESS
 > **CURRENT_SPRINT:** 1
-> **CURRENT_TASK:** S1-F1-T05
+> **CURRENT_TASK:** S1-F1-T06
 > **LAST_GREEN_COMMIT:** (none yet)
 > **TESTS_PASSING:** true (baseline)
 
@@ -71,16 +71,22 @@ If ANY gate fails:
 - **STATUS:** DONE
 
 #### S1-F1-T05: Write unit tests for compliance layer service
-- [ ] Create `backend/tests/test_compliance_layers.py`
+- [x] Create `backend/tests/test_compliance_layers.py`
   - test_merge_rules_no_overlap — separate rules combine
-  - test_merge_rules_with_overlap — duplicate clause_type keeps RED over YELLOW
+  - test_merge_rules_with_overlap_layer_stricter — compliance layer RED beats playbook YELLOW
+  - test_merge_rules_with_overlap_playbook_stricter — playbook RED kept over layer YELLOW
   - test_merge_rules_empty_layer — no layer rules returns playbook rules unchanged
   - test_merge_rules_empty_playbook — no playbook returns layer rules
+  - test_merge_rules_both_empty — both empty returns empty
   - test_dpdp_layer_has_12_rules — validate count
-  - test_dpdp_deal_breakers — exactly 4 deal-breakers (consent, breach notification, cross-border, processor)
-- [ ] GATE: `pytest tests/test_compliance_layers.py -v` — ALL pass
-- [ ] GATE: `pytest tests/ -v` — ALL existing tests still pass
-- **STATUS:** NOT_DONE
+  - test_dpdp_deal_breakers — exactly 4 deal-breakers (consent, data_principal_rights, breach notification, cross-border)
+  - test_dpdp_all_rules_have_required_fields — structural validation
+  - test_compliance_score_all_green/red/mixed/empty — scoring logic
+  - test_strip_layer_prefix — helper function
+  - test_find_matching_key — helper function
+- [x] GATE: `pytest tests/test_compliance_layers.py -v` — 15/15 pass
+- [x] GATE: `pytest tests/ -v` — 50/50 pass
+- **STATUS:** DONE
 
 #### S1-F1-T06: Modify AnalyzeRequest to accept compliance_layers
 - [ ] Edit `backend/app/api/v1/endpoints/documents.py`

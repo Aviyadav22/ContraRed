@@ -50,6 +50,13 @@ Each entry follows:
 **Quality Gate:** PASS
 **Next Task:** S1-F1-T05
 
+### Iteration 5 — S1-F1-T05
+**Action:** Created 15 unit tests for compliance layer service: merge_rules (6 tests), DPDP layer validation (3 tests), compliance score calculation (4 tests), helper functions (2 tests).
+**Files Changed:** `backend/tests/test_compliance_layers.py` (new)
+**Tests:** 50/50 passed (15 new + 35 existing)
+**Quality Gate:** PASS
+**Next Task:** S1-F1-T06
+
 ---
 
 ## Failures & Rollbacks
