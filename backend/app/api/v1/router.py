@@ -4,7 +4,7 @@ API V1 Router - Aggregates all endpoint routers.
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, users, documents, playbooks, billing, audit, team, clauses, templates, analytics, sso, feedback, jurisdictions, agent
+from app.api.v1.endpoints import auth, users, documents, playbooks, billing, audit, team, clauses, templates, analytics, sso, feedback, jurisdictions, agent, drafting
 
 api_router = APIRouter()
 
@@ -104,4 +104,11 @@ api_router.include_router(
     agent.router,
     prefix="/agent",
     tags=["Agent"]
+)
+
+# Contract Drafting (multi-agent pipeline)
+api_router.include_router(
+    drafting.router,
+    prefix="/drafting",
+    tags=["Contract Drafting"]
 )
