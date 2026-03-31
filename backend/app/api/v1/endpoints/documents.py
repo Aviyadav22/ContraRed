@@ -1324,6 +1324,76 @@ async def batch_status(
 
 
 # ============================================================================
+# Batch History Endpoint
+# ============================================================================
+
+
+class BatchHistoryItem(BaseModel):
+    """Summary of a past batch job."""
+    batch_id: str
+    created_at: str
+    status: str
+    total_files: int = 0
+    completed_files: int = 0
+    failed_files: int = 0
+    risk_summary: Optional[dict] = None
+    compliance_layers: Optional[list] = None
+
+
+class BatchHistoryResponse(BaseModel):
+    """Paginated batch history."""
+    batches: List[BatchHistoryItem]
+    total: int
+    page: int
+    page_size: int
+
+
+@router.get("/batches", response_model=BatchHistoryResponse)
+async def list_batches(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """List user's past batch jobs with pagination."""
+    from app.models.batch_job import BatchJob
+
+    # Count total
+    count_result = await db.execute(
+        select(func.count(BatchJob.id)).where(BatchJob.user_id == current_user.id)
+    )
+    total = count_result.scalar() or 0
+
+    # Fetch page
+    result = await db.execute(
+        select(BatchJob)
+        .where(BatchJob.user_id == current_user.id)
+        .order_by(BatchJob.created_at.desc())
+        .offset((page - 1) * page_size)
+        .limit(page_size)
+    )
+    batches = result.scalars().all()
+
+    return BatchHistoryResponse(
+        batches=[
+            BatchHistoryItem(
+                batch_id=str(b.id),
+                created_at=b.created_at.isoformat() if b.created_at else "",
+                status=b.status or "unknown",
+                total_files=b.total_files or 0,
+                completed_files=b.completed_files or 0,
+                failed_files=b.failed_files or 0,
+                risk_summary=b.risk_summary,
+                compliance_layers=b.compliance_layers if isinstance(b.compliance_layers, list) else [],
+            )
+            for b in batches
+        ],
+        total=total,
+        page=page,
+        page_size=page_size,
+    )
+
+
 # ============================================================================
 # Compliance Layer Endpoints
 # ============================================================================
