@@ -16,6 +16,7 @@ from app.models.feedback import RuleFeedback
 from app.models.billing import Invoice
 from app.models.template import ContractTemplate
 from app.models.analytics import ReviewSession, TimeBenchmark, ROIConfig, BenchmarkProfile, GeneratedReport
+from app.models.compliance_layer import ComplianceLayer, ComplianceLayerRule
 
 __all__ = [
     "RiskLevel",
@@ -48,4 +49,6 @@ __all__ = [
     "ROIConfig",
     "BenchmarkProfile",
     "GeneratedReport",
+    "ComplianceLayer",
+    "ComplianceLayerRule",
 ]
