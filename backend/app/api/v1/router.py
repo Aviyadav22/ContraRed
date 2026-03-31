@@ -4,7 +4,7 @@ API V1 Router - Aggregates all endpoint routers.
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, users, documents, playbooks, billing, audit, team, clauses, templates, analytics, sso, feedback, jurisdictions
+from app.api.v1.endpoints import auth, users, documents, playbooks, billing, audit, team, clauses, templates, analytics, sso, feedback, jurisdictions, agent
 
 api_router = APIRouter()
 
@@ -97,4 +97,11 @@ api_router.include_router(
     jurisdictions.router,
     prefix="/jurisdictions",
     tags=["Jurisdictions"]
+)
+
+# Agent (AI-powered review agent)
+api_router.include_router(
+    agent.router,
+    prefix="/agent",
+    tags=["Agent"]
 )
