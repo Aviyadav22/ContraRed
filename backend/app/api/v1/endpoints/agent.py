@@ -15,6 +15,8 @@ from app.db.session import get_db
 from app.api.v1.endpoints.auth import get_current_user
 from app.models.user import User
 from app.services.review_agent import ReviewAgent
+from app.services.smriti_mcp_client import smriti_client
+from app.services.smriti_tools import get_tool_schemas_for_agent
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -85,3 +87,78 @@ async def agent_review(
         raise HTTPException(status_code=500, detail="Agent review failed")
 
     return AgentReviewResponse(**result.to_dict())
+
+
+# ---------------------------------------------------------------------------
+# Research endpoint (Smriti MCP deep research)
+# ---------------------------------------------------------------------------
+
+class ResearchRequest(BaseModel):
+    clause_text: str = Field(..., min_length=1, max_length=10000)
+    clause_type: Optional[str] = None
+    jurisdiction: Optional[str] = None
+
+
+class CaseLawItem(BaseModel):
+    citation: str = ""
+    court: str = ""
+    date: str = ""
+    summary: str = ""
+    relevance_score: float = 0.0
+
+
+class ResearchResponse(BaseModel):
+    statutory_basis: Optional[dict] = None
+    case_law: List[CaseLawItem] = []
+    legal_principle: Optional[dict] = None
+    smriti_available: bool = False
+
+
+@router.post("/research", response_model=ResearchResponse)
+async def agent_research(
+    body: ResearchRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Deep research on a specific clause using Smriti MCP.
+
+    Returns statutory basis, relevant case law, and legal principles.
+    """
+    if not smriti_client.is_configured:
+        return ResearchResponse(smriti_available=False)
+
+    result = ResearchResponse(smriti_available=True)
+
+    try:
+        # Search for case law
+        cases = await smriti_client.search_case_law(
+            query=body.clause_text[:500],
+            jurisdiction=body.jurisdiction,
+            max_results=3,
+        )
+        result.case_law = [CaseLawItem(**c) for c in cases]
+
+        # Get judicial interpretation if clause type known
+        if body.clause_type:
+            interpretations = await smriti_client.find_judicial_interpretation(
+                clause_type=body.clause_type,
+                jurisdiction=body.jurisdiction,
+                max_results=2,
+            )
+            if interpretations:
+                result.legal_principle = {
+                    "clause_type": body.clause_type,
+                    "interpretations": interpretations,
+                }
+
+    except Exception as e:
+        logger.warning("Smriti research failed: %s", e)
+
+    return result
+
+
+@router.get("/tools", response_model=List[dict])
+async def list_agent_tools(
+    current_user: User = Depends(get_current_user),
+):
+    """List available agent tools and their schemas."""
+    return get_tool_schemas_for_agent()

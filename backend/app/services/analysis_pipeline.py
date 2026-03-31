@@ -49,6 +49,7 @@ from app.services.rule_engine import RuleEngine, RuleMatch, RiskLevel
 from app.services.structure_extractor import ContractMap, StructureExtractor
 from app.services.scope_analyzer import ScopeAnalyzer, ScopeAnalysisResult, scope_analyzer
 from app.services.jurisdiction_detector import apply_jurisdiction_overrides, jurisdiction_detector
+from app.services.smriti_mcp_client import smriti_client
 
 logger = logging.getLogger(__name__)
 
@@ -155,6 +156,9 @@ class FinalRedline:
     cross_references: List[str] = field(default_factory=list)
     clause_type: str = ""
     suggested_fix: Optional[str] = None
+    # Smriti MCP enrichment (optional — empty when Smriti unavailable)
+    statutory_basis: Optional[Dict[str, Any]] = None
+    case_law_context: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -214,6 +218,8 @@ class PipelineResult:
                     "cross_references": r.cross_references,
                     "clause_type": r.clause_type,
                     "suggested_fix": r.suggested_fix,
+                    "statutory_basis": r.statutory_basis,
+                    "case_law_context": r.case_law_context,
                 }
                 for r in self.redlines
             ],
@@ -625,6 +631,23 @@ class AnalysisPipeline:
                 len(final_redlines),
             )
 
+        # ---- Stage 5c: SMRITI MCP ENRICHMENT (optional) ----
+        if smriti_client.is_configured:
+            try:
+                s5c_start = time.monotonic()
+                final_redlines = await self._stage5c_smriti_enrichment(
+                    final_redlines, detected_jurisdiction
+                )
+                stage_metrics.append(StageMetrics(
+                    stage_name="smriti_enrichment",
+                    duration_seconds=time.monotonic() - s5c_start,
+                    items_processed=len(final_redlines),
+                    items_passed=sum(1 for r in final_redlines if r.statutory_basis or r.case_law_context),
+                ))
+            except Exception as e:
+                logger.warning("Smriti enrichment failed (non-fatal): %s", e)
+                stage_metrics.append(StageMetrics(stage_name="smriti_enrichment", error=str(e)))
+
         # ---- Stage 6: FIX GENERATION ----
         s6_start = time.monotonic()
         try:
@@ -1030,6 +1053,54 @@ class AnalysisPipeline:
         ))
 
         return final
+
+    # ======================================================================
+    # Stage 5c: SMRITI MCP ENRICHMENT (optional)
+    # ======================================================================
+
+    async def _stage5c_smriti_enrichment(
+        self,
+        redlines: List[FinalRedline],
+        jurisdiction: Optional[str] = None,
+    ) -> List[FinalRedline]:
+        """Enrich redlines with statutory basis and case law from Smriti MCP.
+
+        Only enriches RED and YELLOW findings to limit API calls.
+        Non-fatal — returns redlines unchanged if Smriti fails.
+        """
+        high_risk = [r for r in redlines if r.risk_level in ("RED", "YELLOW")]
+        if not high_risk:
+            return redlines
+
+        # Limit to top 5 findings to avoid excessive API calls
+        to_enrich = high_risk[:5]
+
+        for redline in to_enrich:
+            try:
+                # Get case law for this clause type
+                cases = await smriti_client.search_case_law(
+                    query=f"{redline.clause_type} {redline.explanation[:100]}",
+                    jurisdiction=jurisdiction,
+                    max_results=2,
+                )
+                if cases:
+                    redline.case_law_context = cases
+
+                # Get statute text if there are statutory references in the explanation
+                if redline.cross_references:
+                    for ref in redline.cross_references[:1]:  # Limit to first ref
+                        statute = await smriti_client.get_statute_text(
+                            statute_reference=ref,
+                            jurisdiction=jurisdiction,
+                        )
+                        if statute:
+                            redline.statutory_basis = statute
+                            break
+            except Exception as e:
+                logger.debug("Smriti enrichment failed for %s: %s", redline.rule_name, e)
+                continue
+
+        return redlines
 
     # ======================================================================
     # Stage 5b: OFFSET-BASED DEDUPLICATION
