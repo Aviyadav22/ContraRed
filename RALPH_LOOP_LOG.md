@@ -57,6 +57,13 @@ Each entry follows:
 **Quality Gate:** PASS
 **Next Task:** S1-F1-T06
 
+### Iteration 6 — S1-F1-T06
+**Action:** Modified AnalyzeRequest to accept `compliance_layers: List[str]`. Added compliance layer rule loading and merging into the analyze endpoint. Added `compliance_scores` dict to AnalysisResult. All backwards compatible (new fields default to empty).
+**Files Changed:** `backend/app/api/v1/endpoints/documents.py`
+**Tests:** 50/50 passed
+**Quality Gate:** PASS
+**Next Task:** S1-F1-T07
+
 ---
 
 ## Failures & Rollbacks

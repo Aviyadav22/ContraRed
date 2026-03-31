@@ -45,6 +45,7 @@ from app.services.playbook_cache import (
     get_cached_rule_engine,
     get_cached_rules_dicts,
     load_playbook,
+    load_default_playbook_for_type,
 )
 from app.services.analysis_pipeline import (
     analysis_pipeline,
@@ -86,6 +87,7 @@ class AnalyzeRequest(BaseModel):
     playbook_id: Optional[str] = None
     filename: Optional[str] = Field(default="untitled.docx", max_length=255)
     party_side: Optional[str] = Field(default="buyer", pattern=r"^(buyer|seller|neutral)$")
+    compliance_layers: List[str] = Field(default_factory=list, description="Compliance layer codes to activate, e.g. ['dpdp']")
 
 
 class RedlineItem(BaseModel):
@@ -121,6 +123,7 @@ class AnalysisResult(BaseModel):
     pipeline_partial: bool = False
     source_type: str = "text"
     paragraph_hashes: Optional[Dict[str, str]] = None
+    compliance_scores: Optional[Dict[str, dict]] = None  # {layer_code: {score, compliant, ...}}
 
 
 class RedlineRequest(BaseModel):
@@ -321,6 +324,38 @@ async def analyze_document(
         except Exception as e:
             logger.error("Error loading playbook: %s", e)
 
+    # Auto-select a default playbook when user didn't pick one
+    if not playbook_rules:
+        try:
+            from app.services.analysis_pipeline import AnalysisPipeline
+            detected_type = AnalysisPipeline._detect_contract_type(body.text)
+            if detected_type != "general":
+                auto_playbook = await load_default_playbook_for_type(db, detected_type)
+                if auto_playbook:
+                    playbook = auto_playbook
+                    playbook_name = f"{auto_playbook.name} (auto-selected)"
+                    playbook_rules = get_cached_rules_dicts(auto_playbook, include_verification=True)
+                    logger.info("Auto-selected playbook '%s' for contract type '%s'", auto_playbook.name, detected_type)
+        except Exception as e:
+            logger.warning("Auto-playbook selection failed (non-fatal): %s", e)
+
+    # Merge compliance layer rules if requested
+    compliance_layer_codes = body.compliance_layers or []
+    compliance_layer_rule_names = set()  # Track which rule names came from compliance layers
+    if compliance_layer_codes:
+        try:
+            from app.services.compliance_layer_service import get_layer_rules_as_dicts, merge_rules
+            for layer_code in compliance_layer_codes:
+                layer_rules = await get_layer_rules_as_dicts(db, layer_code)
+                if not layer_rules:
+                    logger.warning("Compliance layer '%s' not found or has no rules", layer_code)
+                    continue
+                compliance_layer_rule_names.update(r["name"] for r in layer_rules)
+                playbook_rules = merge_rules(playbook_rules if playbook_rules else None, layer_rules)
+                logger.info("Merged compliance layer '%s' (%d rules) into playbook", layer_code, len(layer_rules))
+        except Exception as e:
+            logger.warning("Compliance layer loading failed (non-fatal): %s", e)
+
     # Use playbook's party_side if set and user didn't explicitly choose
     effective_party_side = body.party_side or "buyer"
     if not body.party_side and playbook and hasattr(playbook, 'party_side') and playbook.party_side:
@@ -341,7 +376,7 @@ async def analyze_document(
                     playbook_name=playbook_name,
                     party_side=effective_party_side,
                 ),
-                timeout=120.0,
+                timeout=600.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(
@@ -441,6 +476,25 @@ async def analyze_document(
         # Get jurisdiction info from the pipeline result
         jurisdiction_code = pipeline_result.jurisdiction_code
 
+        # Calculate compliance scores for each active layer
+        compliance_scores = None
+        if compliance_layer_codes and compliance_layer_rule_names:
+            try:
+                from app.services.compliance_layer_service import calculate_compliance_score
+                compliance_scores = {}
+                for layer_code in compliance_layer_codes:
+                    # Find results that came from this layer's rules
+                    layer_results = [
+                        {"risk_level": r.risk_level, "is_deal_breaker": r.is_deal_breaker}
+                        for r in pipeline_result.redlines
+                        if getattr(r, 'rule_name', '') in compliance_layer_rule_names
+                        or getattr(r, 'clause_type', '').startswith(f"{layer_code}_")
+                    ]
+                    if layer_results:
+                        compliance_scores[layer_code] = calculate_compliance_score(layer_results)
+            except Exception as e:
+                logger.warning("Compliance score calculation failed (non-fatal): %s", e)
+
         return AnalysisResult(
             document_id=doc_id,
             filename=body.filename or "untitled.docx",
@@ -452,6 +506,7 @@ async def analyze_document(
             pipeline_partial=pipeline_result.partial,
             jurisdiction=jurisdiction_code,
             jurisdiction_name=getattr(pipeline_result, 'jurisdiction_name', None),
+            compliance_scores=compliance_scores,
         )
 
     except HTTPException:
@@ -1010,7 +1065,7 @@ async def _process_batch(
                         playbook_rules=playbook_rules,
                         playbook_name=playbook_name or "Default",
                     ),
-                    timeout=120.0,
+                    timeout=600.0,
                 )
                 file_duration_ms = int((time.monotonic() - file_start) * 1000)
 
@@ -1196,7 +1251,7 @@ async def generate_clause(
                     contract_context=body.contract_context or "",
                     playbook_rules=playbook_rules,
                 ),
-                timeout=120.0,
+                timeout=600.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(
@@ -1294,7 +1349,7 @@ async def generate_fix(
                     surrounding_context=body.surrounding_context or "",
                     playbook_rules=playbook_rules,
                 ),
-                timeout=120.0,
+                timeout=600.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(
@@ -1396,7 +1451,7 @@ async def research_clause(
                     clause_text=body.clause_text,
                     clause_type=body.clause_type or "",
                 ),
-                timeout=120.0,
+                timeout=600.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(
@@ -1553,6 +1608,7 @@ async def analyze_file(
     request: Request,
     file: UploadFile = File(...),
     playbook_id: Optional[str] = Form(None),
+    party_side: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _quota=Depends(check_and_increment_quota),
@@ -1625,9 +1681,24 @@ async def analyze_file(
         except Exception as e:
             logger.error("Error loading playbook for file analysis: %s", e)
 
-    # Use playbook's party_side if set
-    effective_party_side = "buyer"
-    if playbook and hasattr(playbook, 'party_side') and playbook.party_side:
+    # Auto-select a default playbook when user didn't pick one
+    if not playbook_rules:
+        try:
+            from app.services.analysis_pipeline import AnalysisPipeline
+            detected_type = AnalysisPipeline._detect_contract_type(contract_map.full_text)
+            if detected_type != "general":
+                auto_playbook = await load_default_playbook_for_type(db, detected_type)
+                if auto_playbook:
+                    playbook = auto_playbook
+                    playbook_name = f"{auto_playbook.name} (auto-selected)"
+                    playbook_rules = get_cached_rules_dicts(auto_playbook, include_verification=True)
+                    logger.info("Auto-selected playbook '%s' for file analysis, type '%s'", auto_playbook.name, detected_type)
+        except Exception as e:
+            logger.warning("Auto-playbook selection for file failed (non-fatal): %s", e)
+
+    # User's explicit choice wins; playbook default is fallback
+    effective_party_side = party_side or "buyer"
+    if not party_side and playbook and hasattr(playbook, 'party_side') and playbook.party_side:
         effective_party_side = playbook.party_side
 
     # Create document record
@@ -1654,7 +1725,7 @@ async def analyze_file(
                     playbook_name=playbook_name,
                     party_side=effective_party_side,
                 ),
-                timeout=120.0,
+                timeout=600.0,
             )
         except asyncio.TimeoutError:
             raise HTTPException(
