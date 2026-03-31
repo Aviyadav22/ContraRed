@@ -17,6 +17,7 @@ from app.models.billing import Invoice
 from app.models.template import ContractTemplate
 from app.models.analytics import ReviewSession, TimeBenchmark, ROIConfig, BenchmarkProfile, GeneratedReport
 from app.models.compliance_layer import ComplianceLayer, ComplianceLayerRule
+from app.models.batch_job import BatchJob, BatchJobFile
 
 __all__ = [
     "RiskLevel",
@@ -51,4 +52,6 @@ __all__ = [
     "GeneratedReport",
     "ComplianceLayer",
     "ComplianceLayerRule",
+    "BatchJob",
+    "BatchJobFile",
 ]
