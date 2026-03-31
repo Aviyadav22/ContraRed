@@ -368,6 +368,15 @@ async def analyze_document(
         # Sanitize playbook name before passing to AI
         playbook_name = _sanitize_for_prompt(playbook_name, max_length=200)
 
+        # Load org context for institutional memory (non-fatal)
+        org_context = ""
+        if current_user.organization_id:
+            try:
+                from app.services.org_learning import generate_org_context
+                org_context = await generate_org_context(db, current_user.organization_id)
+            except Exception as e:
+                logger.debug("Failed to load org context (non-fatal): %s", e)
+
         # Run the 5-stage analysis pipeline
         # Pipeline: extraction -> classification -> risk assessment ->
         # hallucination verification -> confidence scoring + fix generation
@@ -378,6 +387,7 @@ async def analyze_document(
                     playbook_rules=playbook_rules,
                     playbook_name=playbook_name,
                     party_side=effective_party_side,
+                    org_context=org_context,
                 ),
                 timeout=600.0,
             )

@@ -104,6 +104,28 @@ async def submit_feedback(
     await db.commit()
     await db.refresh(entry)
 
+    # Record decision for institutional memory (org risk profiles)
+    if current_user.organization_id and feedback.playbook_rule_id:
+        try:
+            from app.models.playbook import PlaybookRule
+            from app.services.org_learning import record_user_decision
+            rule_result = await db.execute(
+                select(PlaybookRule).where(PlaybookRule.id == feedback.playbook_rule_id)
+            )
+            rule = rule_result.scalar_one_or_none()
+            if rule and rule.clause_type:
+                decision_map = {
+                    "correct": "accept",
+                    "false_positive": "reject",
+                    "needs_improvement": "modify",
+                    "false_negative": "escalate",
+                }
+                decision = decision_map.get(feedback.feedback_type, "accept")
+                await record_user_decision(db, current_user.organization_id, rule.clause_type, decision)
+                await db.commit()
+        except Exception as e:
+            logger.warning("Failed to record org learning (non-fatal): %s", e)
+
     return FeedbackResponse(
         id=entry.id,
         feedback_type=entry.feedback_type,

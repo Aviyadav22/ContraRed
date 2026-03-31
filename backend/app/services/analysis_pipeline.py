@@ -72,7 +72,7 @@ class JurisdictionHint:
     governing_law: str = ""
     jurisdiction: str = ""
     arbitration_seat: str = ""
-    is_indian: bool = False
+    # is_indian removed — jurisdiction is detected from governing law clause, not keywords
     raw_text: str = ""
 
 
@@ -266,12 +266,9 @@ _JURISDICTION_PATTERNS = [
     ),
 ]
 
-_INDIAN_JURISDICTION_MARKERS = [
-    "india", "indian", "mumbai", "delhi", "new delhi", "bangalore", "bengaluru",
-    "chennai", "hyderabad", "kolkata", "pune", "ahmedabad",
-    "indian contract act", "arbitration and conciliation act",
-    "information technology act", "dpdp act",
-]
+# Removed: _INDIAN_JURISDICTION_MARKERS — jurisdiction detection is now
+# handled entirely by JurisdictionDetector which reads the governing law
+# clause from the contract, not keyword mentions of country names.
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +335,7 @@ class AnalysisPipeline:
         playbook_rules: Optional[List[Dict[str, Any]]] = None,
         playbook_name: str = "Default",
         party_side: str = "seller",
+        org_context: str = "",
     ) -> PipelineResult:
         """
         Run the full 5-stage pipeline.
@@ -477,7 +475,7 @@ class AnalysisPipeline:
             s3_start = time.monotonic()
             raw_redlines, ai_summary, s3_tokens = await self._stage3_risk_assessment(
                 extraction, classification, playbook_rules, playbook_name,
-                party_side, contract_type=contract_type,
+                party_side, contract_type=contract_type, org_context=org_context,
             )
             executive_summary = ai_summary
 
@@ -727,11 +725,6 @@ class AnalysisPipeline:
                 elif not hint.arbitration_seat:
                     hint.arbitration_seat = location
 
-        # Check if Indian jurisdiction
-        hint.is_indian = any(
-            marker in text_lower for marker in _INDIAN_JURISDICTION_MARKERS
-        )
-
         return hint
 
     # ======================================================================
@@ -777,6 +770,7 @@ class AnalysisPipeline:
         playbook_name: str,
         party_side: str = "seller",
         contract_type: str = "general",
+        org_context: str = "",
     ) -> Tuple[List[RawRedline], List[str], int]:
         """
         Full AI analysis using GeminiAnalyzer.
@@ -820,6 +814,7 @@ class AnalysisPipeline:
             playbook_name=playbook_name,
             jurisdiction_override=jurisdiction_hint,
             party_side=party_side,
+            org_context=org_context,
         )
 
         # Build a set of regex-matched texts for corroboration

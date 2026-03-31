@@ -129,6 +129,12 @@ class _CircuitBreaker:
             self._failures = 0
             self._is_open = False
 
+    def reset(self) -> None:
+        """Force-reset the circuit breaker."""
+        self._failures = 0
+        self._is_open = False
+        logger.info("Circuit breaker manually RESET")
+
     def is_open(self) -> bool:
         if not self._is_open:
             return False
@@ -136,11 +142,12 @@ class _CircuitBreaker:
         if time.monotonic() - self._last_failure > self.recovery_seconds:
             logger.info("Circuit breaker HALF-OPEN — allowing probe request")
             self._is_open = False
+            self._failures = 0
             return False
         return True
 
 
-_circuit_breaker = _CircuitBreaker()
+_circuit_breaker = _CircuitBreaker(threshold=15, recovery_seconds=30.0)
 
 # ── Rate-limit-aware retry with exponential backoff ──────────────────────
 _RETRY_MAX_ATTEMPTS = 3
@@ -148,7 +155,7 @@ _RETRY_BASE_DELAY = 2.0    # seconds
 _RETRY_MAX_DELAY = 60.0    # seconds
 # Global rate limiter: track last call time per model to stay within 25 req/min
 _last_call_time: float = 0.0
-_MIN_CALL_INTERVAL = 2.5   # seconds (~24 req/min, under 25 limit)
+_MIN_CALL_INTERVAL = 0.5   # seconds — Vertex AI has higher rate limits than consumer API
 
 
 def _is_rate_limit_error(e: Exception) -> bool:
@@ -281,7 +288,7 @@ class GeminiAnalyzer:
         if not playbook_rules:
             return "No specific playbook rules provided. Apply standard commercial contract best practices."
 
-        lines = [f"Total rules to check: {len(playbook_rules)}. Evaluate EACH rule against the contract.\n"]
+        lines = [f"Total rules to check: {len(playbook_rules)}. Evaluate EACH rule against the contract.\nIMPORTANT: These rules are a MINIMUM FLOOR — they enhance your analysis but do NOT limit it. Flag any additional risks you identify beyond these rules.\n"]
         for i, rule in enumerate(playbook_rules, 1):
             name = rule.get('name', rule.get('rule_name', 'Unknown'))
             risk = rule.get('risk_level', 'YELLOW')
@@ -330,6 +337,7 @@ class GeminiAnalyzer:
         playbook_name: str = "Default",
         jurisdiction_override: Optional[str] = None,
         party_side: str = "seller",
+        org_context: str = "",
     ) -> AIAnalysisResult:
         """
         Perform full AI analysis of a contract.
@@ -368,9 +376,11 @@ class GeminiAnalyzer:
 
         # Sanitize user-supplied inputs before prompt interpolation
         truncation_warning = None
-        safe_contract_text = _sanitize_for_prompt(contract_text, max_length=200000)
-        if len(contract_text) > 200000:
-            truncation_warning = f"Document truncated: Only the first ~{200000 // 1000}K characters ({200000 // 4000} pages) were analyzed. Later sections may contain unreviewed risks."
+        # gemini-2.5-flash supports 1M tokens (~4M chars); use 1M chars as safe limit
+        _MAX_CONTRACT_CHARS = 1_000_000
+        safe_contract_text = _sanitize_for_prompt(contract_text, max_length=_MAX_CONTRACT_CHARS)
+        if len(contract_text) > _MAX_CONTRACT_CHARS:
+            truncation_warning = f"Document truncated: Only the first ~{_MAX_CONTRACT_CHARS // 1000}K characters were analyzed. Later sections may contain unreviewed risks."
         safe_playbook_name = _sanitize_for_prompt(playbook_name, max_length=200)
 
         # --- Phase 4: Build V2 structured prompts ---
@@ -379,6 +389,9 @@ class GeminiAnalyzer:
             defined_terms=defined_terms_context,
             party_side=party_side,
         )
+        # Inject org context (institutional memory) if available
+        if org_context:
+            system_prompt += "\n\n" + org_context
         user_prompt = render_user_prompt(
             contract_text=safe_contract_text,
             playbook_rules=rules_text,
@@ -404,7 +417,7 @@ class GeminiAnalyzer:
                             }
                         )
                     ),
-                    timeout=90.0,
+                    timeout=600.0,
                 )
 
             response = await _rate_limited_call(_do_analysis)
@@ -600,7 +613,7 @@ class GeminiAnalyzer:
                         }
                     )
                 ),
-                timeout=90.0,
+                timeout=600.0,
             )
 
             response_text = ""
@@ -710,7 +723,7 @@ class GeminiAnalyzer:
                             }
                         )
                     ),
-                    timeout=90.0,
+                    timeout=600.0,
                 )
                 return resp
 
@@ -809,7 +822,7 @@ class GeminiAnalyzer:
                             }
                         )
                     ),
-                    timeout=120.0,
+                    timeout=600.0,
                 )
 
             response = await _rate_limited_call(_do_batch_fix)
@@ -912,7 +925,7 @@ IMPORTANT: Return ONLY the JSON array, no markdown fences, no commentary."""
                             }
                         )
                     ),
-                    timeout=30.0,
+                    timeout=600.0,
                 )
 
             response = await _rate_limited_call(_do_clause_analysis)
@@ -1009,7 +1022,7 @@ IMPORTANT: Return ONLY the JSON array, no markdown fences, no commentary."""
                         }
                     )
                 ),
-                timeout=90.0,
+                timeout=600.0,
             )
 
             response_text = ""
