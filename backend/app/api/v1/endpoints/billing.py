@@ -60,6 +60,7 @@ PLAN_CATALOG = {
         ],
         "overage_price_inr": 0,  # No overage for free
         "overage_price_usd": 0,
+        "batch_files_limit": 5,
     },
     "starter": {
         "name": "Starter",
@@ -75,6 +76,7 @@ PLAN_CATALOG = {
         ],
         "overage_price_inr": 14900,  # ₹149/scan overage
         "overage_price_usd": 200,  # $2/scan overage
+        "batch_files_limit": 10,
     },
     "pro": {
         "name": "Pro",
@@ -92,6 +94,7 @@ PLAN_CATALOG = {
         ],
         "overage_price_inr": 9900,  # ₹99/scan overage
         "overage_price_usd": 150,  # $1.50/scan overage
+        "batch_files_limit": 25,
     },
     "business": {
         "name": "Business",
@@ -109,6 +112,7 @@ PLAN_CATALOG = {
         ],
         "overage_price_inr": 7900,  # ₹79/scan overage
         "overage_price_usd": 100,  # $1/scan overage
+        "batch_files_limit": 50,
     },
     "enterprise": {
         "name": "Enterprise",
@@ -127,6 +131,7 @@ PLAN_CATALOG = {
         ],
         "overage_price_inr": 0,
         "overage_price_usd": 0,
+        "batch_files_limit": 50,
     },
 }
 

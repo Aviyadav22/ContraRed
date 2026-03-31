@@ -889,10 +889,20 @@ async def batch_analyze(
     for k in stale:
         del _batch_store[k]
 
-    if len(files) > 10:
+    # Determine batch file limit by subscription tier
+    try:
+        from app.api.v1.endpoints.billing import get_plan_info, get_user_subscription
+        subscription = await get_user_subscription(current_user, db)
+        plan = subscription.plan.value if subscription else current_user.subscription_tier.value
+        plan_info = get_plan_info(plan)
+        max_batch_files = plan_info.get("batch_files_limit", 10)
+    except Exception:
+        max_batch_files = 10  # Safe default
+
+    if len(files) > max_batch_files:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail={"message": "Maximum 10 files per batch.", "error_code": "batch_too_large"},
+            detail={"message": f"Maximum {max_batch_files} files per batch for your plan.", "error_code": "batch_too_large"},
         )
 
     if len(files) == 0:
