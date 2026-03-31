@@ -103,9 +103,11 @@ class RedlineItem(BaseModel):
     redline_type: Literal["violation", "missing"] = "violation"
     confidence: Optional[float] = None
     confidence_level: Optional[str] = None
+    confidence_breakdown: Optional[dict] = None  # Per-factor confidence scores (source trail)
     verification_status: Optional[str] = None
     is_deal_breaker: bool = False
     cross_references: Optional[List[str]] = None
+    statutory_references: Optional[List[str]] = None  # Statute section citations (source trail)
     paragraph_hash: Optional[str] = None
 
 
@@ -123,6 +125,7 @@ class AnalysisResult(BaseModel):
     pipeline_partial: bool = False
     source_type: str = "text"
     paragraph_hashes: Optional[Dict[str, str]] = None
+    hallucination_stats: Optional[dict] = None  # Verification stage stats (source trail)
     compliance_scores: Optional[Dict[str, dict]] = None  # {layer_code: {score, compliant, ...}}
 
 
@@ -466,6 +469,7 @@ async def analyze_document(
                 redline_type=r.redline_type,
                 confidence=round(r.confidence.score, 3),
                 confidence_level=r.confidence.level.value,
+                confidence_breakdown=r.confidence.breakdown.to_dict() if hasattr(r.confidence, 'breakdown') and r.confidence.breakdown else None,
                 verification_status=r.verification_status,
                 is_deal_breaker=r.is_deal_breaker,
                 cross_references=r.cross_references or None,
@@ -506,6 +510,7 @@ async def analyze_document(
             pipeline_partial=pipeline_result.partial,
             jurisdiction=jurisdiction_code,
             jurisdiction_name=getattr(pipeline_result, 'jurisdiction_name', None),
+            hallucination_stats=pipeline_result.hallucination_stats or None,
             compliance_scores=compliance_scores,
         )
 
