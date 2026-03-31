@@ -997,7 +997,7 @@ async def batch_analyze(
         for _ in range(valid_file_count):
             await _increment_usage(current_user, db)
 
-    # Store batch info
+    # Store batch info (in-memory for fast polling)
     _batch_store[batch_id] = {
         "user_id": str(current_user.id),
         "files": file_statuses,
@@ -1005,6 +1005,31 @@ async def batch_analyze(
         "compliance_layers": compliance_layer_codes,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Persist to database (survives restarts)
+    try:
+        from app.models.batch_job import BatchJob, BatchJobFile
+        batch_job = BatchJob(
+            id=UUID(batch_id),
+            user_id=current_user.id,
+            organization_id=current_user.organization_id,
+            status="processing",
+            total_files=len(files),
+            playbook_id=UUID(playbook_id) if playbook_id else None,
+            compliance_layers=compliance_layer_codes or [],
+        )
+        db.add(batch_job)
+        for fs in file_statuses:
+            bjf = BatchJobFile(
+                batch_id=UUID(batch_id),
+                filename=fs["filename"],
+                status=fs["status"],
+                error_message=fs.get("error"),
+            )
+            db.add(bjf)
+        await db.flush()
+    except Exception as e:
+        logger.warning("Failed to persist batch job to DB (non-fatal): %s", e)
 
     # Audit log
     await log_audit_event(
@@ -1181,31 +1206,98 @@ async def _process_batch(
         batch["completed_at"] = datetime.now(timezone.utc).isoformat()
         logger.info(f"Batch {batch_id} finished: {batch['overall_status']}")
 
+    # Update DB records
+    try:
+        async with AsyncSessionLocal() as db_session:
+            from app.models.batch_job import BatchJob, BatchJobFile
+            result = await db_session.execute(
+                select(BatchJob).options(selectinload(BatchJob.files)).where(BatchJob.id == UUID(batch_id))
+            )
+            batch_job = result.scalar_one_or_none()
+            if batch_job and batch:
+                completed = sum(1 for f in batch["files"] if f["status"] == "completed")
+                failed = sum(1 for f in batch["files"] if f["status"] == "error")
+                batch_job.completed_files = completed
+                batch_job.failed_files = failed
+                batch_job.status = batch.get("overall_status", "completed")
+                batch_job.completed_at = datetime.now(timezone.utc)
+                # Aggregate risk summary
+                agg = {"red": 0, "yellow": 0, "green": 0, "total": 0}
+                for f in batch["files"]:
+                    rs = f.get("risk_summary")
+                    if rs:
+                        for k in agg:
+                            agg[k] += rs.get(k, 0)
+                batch_job.risk_summary = agg
+                # Update per-file records
+                for bjf in batch_job.files:
+                    for f in batch["files"]:
+                        if f["filename"] == bjf.filename:
+                            bjf.status = f["status"]
+                            bjf.error_message = f.get("error")
+                            bjf.risk_summary = f.get("risk_summary")
+                            bjf.document_id = UUID(f["document_id"]) if f.get("document_id") else None
+                            break
+                await db_session.commit()
+    except Exception as e:
+        logger.warning("Failed to update batch job %s in DB: %s", batch_id, e)
+
 
 @router.get("/batch/{batch_id}/status", response_model=BatchStatusResponse)
 async def batch_status(
     batch_id: str,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get the status of a batch analysis job.
 
     Returns progress and per-file status for the given batch_id.
+    Checks in-memory store first, falls back to database.
     """
     batch = _batch_store.get(batch_id)
-    if not batch:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail={"message": "Batch not found.", "error_code": "batch_not_found"},
-        )
 
-    if batch["user_id"] != str(current_user.id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={"message": "Access denied.", "error_code": "forbidden"},
-        )
-
-    file_statuses = [BatchFileStatus(**f) for f in batch["files"]]
+    if batch:
+        # In-memory path (fast, for active batches)
+        if batch["user_id"] != str(current_user.id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"message": "Access denied.", "error_code": "forbidden"},
+            )
+        file_statuses = [BatchFileStatus(**f) for f in batch["files"]]
+    else:
+        # DB fallback (for batches after server restart)
+        try:
+            from app.models.batch_job import BatchJob, BatchJobFile
+            result = await db.execute(
+                select(BatchJob)
+                .options(selectinload(BatchJob.files))
+                .where(BatchJob.id == UUID(batch_id), BatchJob.user_id == current_user.id)
+            )
+            batch_job = result.scalar_one_or_none()
+            if not batch_job:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail={"message": "Batch not found.", "error_code": "batch_not_found"},
+                )
+            file_statuses = [
+                BatchFileStatus(
+                    filename=f.filename,
+                    status=f.status,
+                    document_id=str(f.document_id) if f.document_id else None,
+                    risk_summary=f.risk_summary,
+                    error=f.error_message,
+                )
+                for f in sorted(batch_job.files, key=lambda x: x.created_at)
+            ]
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.warning("DB fallback for batch %s failed: %s", batch_id, e)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"message": "Batch not found.", "error_code": "batch_not_found"},
+            )
 
     total = len(file_statuses)
     done = sum(1 for f in file_statuses if f.status in ("completed", "error"))
