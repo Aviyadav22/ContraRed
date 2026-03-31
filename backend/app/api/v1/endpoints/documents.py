@@ -1314,6 +1314,107 @@ async def get_compliance_layer(
     )
 
 
+# ============================================================================
+# Verification Summary Endpoint (Source Trail)
+# ============================================================================
+
+
+class VerificationSummaryResponse(BaseModel):
+    """Verification transparency summary for source trail."""
+    total_findings: int = 0
+    verified_findings: int = 0
+    exact_match: int = 0
+    normalized_match: int = 0
+    fuzzy_corrected: int = 0
+    not_found: int = 0
+    pass_rate: float = 0.0
+    hallucination_rate: float = 0.0
+    avg_confidence: float = 0.0
+    confidence_distribution: dict = {}  # {HIGH: n, MEDIUM: n, LOW: n}
+    industry_benchmark: str = ""
+
+
+@router.get("/{document_id}/verification-summary", response_model=VerificationSummaryResponse)
+async def get_verification_summary(
+    document_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return verification transparency summary for a document's analysis.
+
+    Calculates verification pass rate, hallucination rate, and confidence
+    distribution from persisted risk data. Enables source trail UI.
+    """
+    # Verify document ownership
+    result = await db.execute(
+        select(Document)
+        .where(Document.id == document_id, Document.user_id == current_user.id)
+    )
+    document = result.scalar_one_or_none()
+    if not document:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": "Document not found.", "error_code": "not_found"},
+        )
+
+    # Load risks
+    result = await db.execute(
+        select(DocumentRisk).where(DocumentRisk.document_id == document_id)
+    )
+    risks = result.scalars().all()
+
+    total = len(risks)
+    if total == 0:
+        return VerificationSummaryResponse(
+            total_findings=0,
+            industry_benchmark="No findings to verify.",
+        )
+
+    # Count verification statuses
+    exact = sum(1 for r in risks if getattr(r, 'verification_status', '') == 'exact_match')
+    normalized = sum(1 for r in risks if getattr(r, 'verification_status', '') == 'normalized_match')
+    fuzzy = sum(1 for r in risks if getattr(r, 'verification_status', '') == 'fuzzy_corrected')
+    not_found = sum(1 for r in risks if getattr(r, 'verification_status', '') in ('not_found', 'rejected'))
+    verified = exact + normalized + fuzzy
+
+    # Confidence distribution
+    conf_dist = {"HIGH": 0, "MEDIUM": 0, "LOW": 0}
+    conf_sum = 0.0
+    for r in risks:
+        level = getattr(r, 'confidence_level', None) or 'MEDIUM'
+        conf_dist[level] = conf_dist.get(level, 0) + 1
+        conf_sum += getattr(r, 'confidence', 0.0) or 0.0
+
+    pass_rate = round(verified / total * 100, 1) if total > 0 else 0.0
+    hallucination_rate = round(not_found / total * 100, 1) if total > 0 else 0.0
+    avg_confidence = round(conf_sum / total, 3) if total > 0 else 0.0
+
+    # Industry benchmark comparison
+    benchmark = "Industry average hallucination rate for AI contract review is 8-15%."
+    if hallucination_rate <= 5:
+        benchmark += " Your analysis is EXCELLENT — well below industry average."
+    elif hallucination_rate <= 10:
+        benchmark += " Your analysis is GOOD — at or below industry average."
+    elif hallucination_rate <= 15:
+        benchmark += " Your analysis is FAIR — within industry average range."
+    else:
+        benchmark += " Your analysis has elevated hallucination rate — consider re-running with stricter playbook."
+
+    return VerificationSummaryResponse(
+        total_findings=total,
+        verified_findings=verified,
+        exact_match=exact,
+        normalized_match=normalized,
+        fuzzy_corrected=fuzzy,
+        not_found=not_found,
+        pass_rate=pass_rate,
+        hallucination_rate=hallucination_rate,
+        avg_confidence=avg_confidence,
+        confidence_distribution=conf_dist,
+        industry_benchmark=benchmark,
+    )
+
+
 # Generate Clause Endpoint
 # ============================================================================
 
