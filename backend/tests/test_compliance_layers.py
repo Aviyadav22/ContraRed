@@ -194,3 +194,93 @@ def test_find_matching_key():
     }
     assert _find_matching_key(rules, "data_protection") == "data_protection"
     assert _find_matching_key(rules, "consent_mechanism") is None
+
+
+# ============================================================
+# API integration tests
+# ============================================================
+
+@pytest.mark.asyncio
+async def test_list_compliance_layers_requires_auth(client):
+    """GET /compliance-layers should require authentication."""
+    resp = await client.get("/api/v1/documents/compliance-layers")
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_list_compliance_layers_empty(client, test_user_data):
+    """GET /compliance-layers returns empty list when no layers are seeded."""
+    from tests.conftest import register_and_login
+    token = await register_and_login(client, test_user_data)
+    resp = await client.get(
+        "/api/v1/documents/compliance-layers",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_get_compliance_layer_not_found(client, test_user_data):
+    """GET /compliance-layers/{code} returns 404 for unknown layer."""
+    from tests.conftest import register_and_login
+    token = await register_and_login(client, test_user_data)
+    resp = await client.get(
+        "/api/v1/documents/compliance-layers/nonexistent",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_compliance_layers_after_seed(client, db_session, test_user_data):
+    """GET /compliance-layers returns seeded layers."""
+    from tests.conftest import register_and_login
+    from app.services.compliance_layer_service import seed_compliance_layers
+    await seed_compliance_layers(db_session)
+    token = await register_and_login(client, test_user_data)
+    resp = await client.get(
+        "/api/v1/documents/compliance-layers",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    layers = resp.json()
+    assert len(layers) >= 1
+    codes = [l["code"] for l in layers]
+    assert "dpdp" in codes
+
+
+@pytest.mark.asyncio
+async def test_get_compliance_layer_detail(client, db_session, test_user_data):
+    """GET /compliance-layers/dpdp returns layer with 12 rules."""
+    from tests.conftest import register_and_login
+    from app.services.compliance_layer_service import seed_compliance_layers
+    await seed_compliance_layers(db_session)
+    token = await register_and_login(client, test_user_data)
+    resp = await client.get(
+        "/api/v1/documents/compliance-layers/dpdp",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["code"] == "dpdp"
+    assert len(data["rules"]) == 12
+    # Verify deal-breaker count
+    deal_breakers = [r for r in data["rules"] if r["is_deal_breaker"]]
+    assert len(deal_breakers) == 4
+
+
+@pytest.mark.asyncio
+async def test_analyze_request_schema_accepts_no_compliance_layers():
+    """AnalyzeRequest model should accept requests without compliance_layers (backwards compatible)."""
+    # Import the Pydantic model directly to verify schema compatibility
+    # (Can't do full HTTP test because tenant_context middleware uses PostgreSQL set_config)
+    import sys
+    sys.path.insert(0, ".")
+    from app.api.v1.endpoints.documents import AnalyzeRequest
+    # No compliance_layers — should default to empty list
+    req = AnalyzeRequest(text="Test contract text here.")
+    assert req.compliance_layers == []
+    # With compliance_layers
+    req2 = AnalyzeRequest(text="Test contract text here.", compliance_layers=["dpdp"])
+    assert req2.compliance_layers == ["dpdp"]
