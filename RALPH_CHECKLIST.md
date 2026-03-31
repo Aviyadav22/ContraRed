@@ -4,7 +4,7 @@
 > **LOG:** `RALPH_LOOP_LOG.md`
 > **STATUS:** IN_PROGRESS
 > **CURRENT_SPRINT:** 1
-> **CURRENT_TASK:** S1-F1-T03
+> **CURRENT_TASK:** S1-F1-T04
 > **LAST_GREEN_COMMIT:** (none yet)
 > **TESTS_PASSING:** true (baseline)
 
@@ -51,13 +51,13 @@ If ANY gate fails:
 - **STATUS:** DONE
 
 #### S1-F1-T03: Create DPDP layer seed script
-- [ ] Create `backend/scripts/compliance_layers/dpdp.py`
+- [x] Create `backend/scripts/compliance_layers/dpdp.py`
   - 12 DPDP Act 2023 rules as defined in the plan
   - Rules: consent_mechanism, data_principal_rights, fiduciary_obligations, breach_notification, cross_border_transfer, consent_manager, processor_agreement, childrens_data, purpose_limitation, data_retention, significant_fiduciary, penalty_indemnification
   - Each rule has: clause_type, risk_level, is_deal_breaker, primary_position, detection_patterns, unacceptable_signals, risk_description
-- [ ] GATE: Python syntax valid
-- [ ] GATE: pytest passes
-- **STATUS:** NOT_DONE
+- [x] GATE: Python syntax valid
+- [x] GATE: pytest passes
+- **STATUS:** DONE
 
 #### S1-F1-T04: Create compliance layer seeding service
 - [ ] Create `backend/app/services/compliance_layer_service.py`

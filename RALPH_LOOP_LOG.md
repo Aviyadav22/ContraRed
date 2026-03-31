@@ -36,6 +36,13 @@ Each entry follows:
 **Quality Gate:** PASS
 **Next Task:** S1-F1-T03
 
+### Iteration 3 — S1-F1-T03
+**Action:** Created DPDP compliance layer seed script with 12 rules covering consent, data principal rights, fiduciary obligations, breach notification, cross-border transfer, consent manager, processor agreement, children's data, purpose limitation, data retention, significant fiduciary, and penalty indemnification.
+**Files Changed:** `backend/scripts/compliance_layers/__init__.py` (new), `backend/scripts/compliance_layers/dpdp.py` (new)
+**Tests:** 35/35 passed (14 regression)
+**Quality Gate:** PASS
+**Next Task:** S1-F1-T04
+
 ---
 
 ## Failures & Rollbacks
