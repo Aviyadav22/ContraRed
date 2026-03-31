@@ -4,7 +4,7 @@
 > **LOG:** `RALPH_LOOP_LOG.md`
 > **STATUS:** IN_PROGRESS
 > **CURRENT_SPRINT:** 1
-> **CURRENT_TASK:** S1-F1-T02
+> **CURRENT_TASK:** S1-F1-T03
 > **LAST_GREEN_COMMIT:** (none yet)
 > **TESTS_PASSING:** true (baseline)
 
@@ -41,14 +41,14 @@ If ANY gate fails:
 - **STATUS:** DONE
 
 #### S1-F1-T02: Create compliance_layers migration SQL
-- [ ] Create `backend/migrations/021_compliance_layers.sql`
+- [x] Create `backend/migrations/021_compliance_layers.sql`
   - CREATE TABLE compliance_layers (...)
   - CREATE TABLE compliance_layer_rules (...)
   - CREATE INDEX on layer_id, code
   - Add compliance_layers JSONB column to documents table
-- [ ] GATE: SQL is syntactically valid
-- [ ] GATE: pytest passes (no model conflicts)
-- **STATUS:** NOT_DONE
+- [x] GATE: SQL is syntactically valid
+- [x] GATE: pytest passes (no model conflicts)
+- **STATUS:** DONE
 
 #### S1-F1-T03: Create DPDP layer seed script
 - [ ] Create `backend/scripts/compliance_layers/dpdp.py`

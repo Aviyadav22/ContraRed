@@ -29,6 +29,13 @@ Each entry follows:
 **Quality Gate:** PASS
 **Next Task:** S1-F1-T02
 
+### Iteration 2 — S1-F1-T02
+**Action:** Created migration SQL `backend/migrations/021_compliance_layers.sql` with compliance_layers table, compliance_layer_rules table, indexes, and added compliance_layers JSONB column to documents table.
+**Files Changed:** `backend/migrations/021_compliance_layers.sql` (new)
+**Tests:** 35/35 passed (14 regression)
+**Quality Gate:** PASS
+**Next Task:** S1-F1-T03
+
 ---
 
 ## Failures & Rollbacks
