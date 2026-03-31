@@ -7,9 +7,10 @@ from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY, UUID as PG_UUID
-from sqlalchemy import JSON, String, Uuid
+from sqlalchemy import JSON, String, Uuid, TypeDecorator
 
 from app.db.session import Base, get_db
+import app.models  # noqa: F401 — register all models with Base.metadata
 from main import app
 
 # Use in-memory SQLite for tests
@@ -18,6 +19,24 @@ TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 # Register UUID adapter for SQLite (Python 3.12+ removed implicit converters)
 sqlite3.register_adapter(uuid.UUID, lambda u: str(u))
 sqlite3.register_converter("UUID", lambda b: uuid.UUID(b.decode()))
+
+
+class SQLiteUUID(TypeDecorator):
+    """Store UUID as a 32-char hex string in SQLite, auto-convert on bind/result."""
+    impl = String(32)
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        if value is not None:
+            if isinstance(value, uuid.UUID):
+                return value.hex
+            return uuid.UUID(value).hex
+        return value
+
+    def process_result_value(self, value, dialect):
+        if value is not None:
+            return uuid.UUID(value)
+        return value
 
 
 def _remap_pg_types_for_sqlite(base):
@@ -29,9 +48,9 @@ def _remap_pg_types_for_sqlite(base):
             elif isinstance(column.type, ARRAY):
                 column.type = JSON()
             elif isinstance(column.type, PG_UUID):
-                column.type = String(36)
+                column.type = SQLiteUUID()
             elif isinstance(column.type, Uuid):
-                column.type = String(36)
+                column.type = SQLiteUUID()
 
 
 @pytest.fixture(scope="session")
