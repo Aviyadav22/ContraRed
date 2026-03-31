@@ -88,6 +88,7 @@ class AnalyzeRequest(BaseModel):
     filename: Optional[str] = Field(default="untitled.docx", max_length=255)
     party_side: Optional[str] = Field(default="buyer", pattern=r"^(buyer|seller|neutral)$")
     compliance_layers: List[str] = Field(default_factory=list, description="Compliance layer codes to activate, e.g. ['dpdp']")
+    jurisdiction: Optional[str] = Field(default=None, description="Jurisdiction code override, e.g. 'IN', 'CA-US'. If omitted, auto-detected from contract text.")
 
 
 class RedlineItem(BaseModel):
@@ -388,6 +389,7 @@ async def analyze_document(
                     playbook_name=playbook_name,
                     party_side=effective_party_side,
                     org_context=org_context,
+                    jurisdiction_override=body.jurisdiction,
                 ),
                 timeout=600.0,
             )

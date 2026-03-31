@@ -634,10 +634,10 @@ JAPAN = _register(JurisdictionProfile(
 # ---------------------------------------------------------------------------
 
 _JURISDICTION_ALIASES: Dict[str, str] = {
-    # India
+    # India — only match clear jurisdiction references, not adjectives like "Indian"
     "india": "IN",
-    "indian": "IN",
     "republic of india": "IN",
+    "laws of india": "IN",
     "mumbai": "IN",
     "delhi": "IN",
     "new delhi": "IN",
@@ -675,8 +675,8 @@ _JURISDICTION_ALIASES: Dict[str, str] = {
     "uae": "AE",
     "united arab emirates": "AE",
     "abu dhabi": "AE",
-    "adgm": "AE-DIFC",  # Changed: ADGM is common-law like DIFC, NOT onshore UAE civil law
-    "abu dhabi global market": "AE-DIFC",  # Changed: same reason
+    "adgm": "AE-ADGM",
+    "abu dhabi global market": "AE-ADGM",
     # Germany
     "germany": "DE",
     "federal republic of germany": "DE",
@@ -704,6 +704,24 @@ _JURISDICTION_ALIASES: Dict[str, str] = {
     # Japan
     "japan": "JP",
     "tokyo": "JP",
+    # US Federal
+    "united states": "US",
+    "us federal": "US",
+    "federal law": "US",
+    # Texas
+    "texas": "TX-US",
+    "state of texas": "TX-US",
+    "houston": "TX-US",
+    "dallas": "TX-US",
+    "austin": "TX-US",
+    "san antonio": "TX-US",
+    # EU
+    "eu": "EU",
+    "european union": "EU",
+    "brussels": "EU",
+    "european": "EU",
+    # ADGM
+    # (already mapped above)
 }
 
 
@@ -786,13 +804,13 @@ class JurisdictionDetector:
         prompt_ctx = result.prompt_context()
     """
 
-    def __init__(self, default_jurisdiction: str = "IN"):
+    def __init__(self, default_jurisdiction: Optional[str] = None):
         """
         Initialize detector.
 
         Args:
             default_jurisdiction: Profile code to use when no governing law
-                is detected. Defaults to "IN" (India).
+                is detected. Defaults to None (neutral — no assumption).
         """
         self.default_code = default_jurisdiction
 
@@ -828,13 +846,16 @@ class JurisdictionDetector:
         all_matches = self._extract_candidates(contract_text)
 
         if not all_matches:
-            # Default fallback
-            default_profile = JURISDICTION_PROFILES.get(self.default_code)
+            # No governing law detected — stay neutral, don't assume any jurisdiction
+            if self.default_code:
+                default_profile = JURISDICTION_PROFILES.get(self.default_code)
+            else:
+                default_profile = None
             return JurisdictionDetectionResult(
                 detected_jurisdiction=self.default_code,
                 profile=default_profile,
                 raw_match="",
-                confidence=0.3,
+                confidence=0.1,
                 all_matches=[],
                 source="default",
             )
@@ -903,14 +924,17 @@ class JurisdictionDetector:
             code = _JURISDICTION_ALIASES[lower]
             return JURISDICTION_PROFILES.get(code)
 
-        # Substring match against aliases
+        # Word-boundary match against aliases — avoid "indian" matching "Indiana"
+        import re as _re
+        words = set(_re.findall(r'\b\w+\b', lower))
         for alias, code in _JURISDICTION_ALIASES.items():
-            if alias in lower or lower in alias:
+            alias_words = set(_re.findall(r'\b\w+\b', alias))
+            if alias_words and alias_words.issubset(words):
                 return JURISDICTION_PROFILES.get(code)
 
-        # Substring match against profile names
+        # Exact profile name match (not substring)
         for code, profile in JURISDICTION_PROFILES.items():
-            if lower in profile.name.lower() or lower in profile.display_name.lower():
+            if lower == profile.name.lower() or lower == profile.display_name.lower():
                 return profile
 
         return None

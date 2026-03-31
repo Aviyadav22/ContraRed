@@ -336,6 +336,7 @@ class AnalysisPipeline:
         playbook_name: str = "Default",
         party_side: str = "seller",
         org_context: str = "",
+        jurisdiction_override: Optional[str] = None,
     ) -> PipelineResult:
         """
         Run the full 5-stage pipeline.
@@ -455,7 +456,7 @@ class AnalysisPipeline:
                 )
 
                 # Apply jurisdiction overrides to rule matches
-                jur_result = jurisdiction_detector.detect(contract_text)
+                jur_result = jurisdiction_detector.detect(contract_text, user_override=jurisdiction_override)
                 if jur_result.detected_jurisdiction:
                     detected_jurisdiction = jur_result.detected_jurisdiction
                     classification.rule_matches = apply_jurisdiction_overrides(

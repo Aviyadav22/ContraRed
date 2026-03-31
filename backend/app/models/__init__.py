@@ -19,6 +19,7 @@ from app.models.analytics import ReviewSession, TimeBenchmark, ROIConfig, Benchm
 from app.models.compliance_layer import ComplianceLayer, ComplianceLayerRule
 from app.models.batch_job import BatchJob, BatchJobFile
 from app.models.org_risk_profile import OrganizationRiskProfile
+from app.models.jurisdiction import Jurisdiction, JurisdictionRuleOverride
 
 __all__ = [
     "RiskLevel",
@@ -56,4 +57,6 @@ __all__ = [
     "BatchJob",
     "BatchJobFile",
     "OrganizationRiskProfile",
+    "Jurisdiction",
+    "JurisdictionRuleOverride",
 ]
