@@ -852,6 +852,7 @@ async def batch_analyze(
     request: Request,
     files: List[UploadFile] = File(...),
     playbook_id: Optional[str] = Form(None),
+    compliance_layers: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -862,6 +863,17 @@ async def batch_analyze(
     Returns immediately with a batch_id to poll for status.
     Charges 1 quota unit per valid file (not per batch).
     """
+    # Parse compliance_layers from JSON string (Form doesn't support lists directly)
+    compliance_layer_codes: List[str] = []
+    if compliance_layers:
+        try:
+            compliance_layer_codes = json.loads(compliance_layers)
+            if not isinstance(compliance_layer_codes, list):
+                compliance_layer_codes = [str(compliance_layer_codes)]
+        except (json.JSONDecodeError, TypeError):
+            # Try comma-separated fallback
+            compliance_layer_codes = [s.strip() for s in compliance_layers.split(",") if s.strip()]
+
     # Check quota upfront for all files (charge per valid file count after validation)
     # We'll charge after counting valid files below
 
@@ -985,6 +997,7 @@ async def batch_analyze(
         "user_id": str(current_user.id),
         "files": file_statuses,
         "playbook_id": playbook_id,
+        "compliance_layers": compliance_layer_codes,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1000,7 +1013,7 @@ async def batch_analyze(
 
     # Launch background processing
     asyncio.create_task(
-        _process_batch(batch_id, file_contents, playbook_id, str(current_user.id), organization_id=str(current_user.organization_id) if current_user.organization_id else None)
+        _process_batch(batch_id, file_contents, playbook_id, str(current_user.id), organization_id=str(current_user.organization_id) if current_user.organization_id else None, compliance_layer_codes=compliance_layer_codes)
     )
 
     logger.info(f"Batch {batch_id} created with {len(files)} files for user {current_user.id}")
@@ -1018,6 +1031,7 @@ async def _process_batch(
     playbook_id: Optional[str],
     user_id: str,
     organization_id: Optional[str] = None,
+    compliance_layer_codes: Optional[List[str]] = None,
 ):
     """Background task to process all files in a batch concurrently."""
     semaphore = asyncio.Semaphore(3)  # Max 3 concurrent analyses
@@ -1040,6 +1054,20 @@ async def _process_batch(
                     ]
         except Exception as e:
             logger.warning("Batch %s: failed to load playbook %s: %s", batch_id, playbook_id, e)
+
+    # Load and merge compliance layer rules once (same as single-file analyze)
+    compliance_layer_rule_names: set = set()
+    if compliance_layer_codes:
+        try:
+            async with AsyncSessionLocal() as db:
+                from app.services.compliance_layer_service import get_layer_rules_as_dicts, merge_rules
+                for layer_code in compliance_layer_codes:
+                    layer_rules = await get_layer_rules_as_dicts(db, layer_code)
+                    if layer_rules:
+                        compliance_layer_rule_names.update(r["name"] for r in layer_rules)
+                        playbook_rules = merge_rules(playbook_rules, layer_rules)
+        except Exception as e:
+            logger.warning("Batch %s: failed to load compliance layers %s: %s", batch_id, compliance_layer_codes, e)
 
     async def _analyze_single(idx: int, file_info: dict):
         """Analyze a single file within the batch."""
