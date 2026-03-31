@@ -56,7 +56,7 @@ Perform a deep, holistic review of the document. You must execute two distinct a
 #### 1. HOLISTIC STRUCTURAL ANALYSIS (The "Executive Summary")
 Before looking at specific clauses, analyze the document's skeleton for fundamental contradictions.
 - **Title vs. Content:** Does the Title claim "Mutual" or "Standard", but the Preamble/Definitions hard-code one-sided roles?
-- **Jurisdiction Check:** Identify the Governing Law. Flag if non-Indian jurisdiction for India-related contracts.
+- **Jurisdiction Check:** Identify the Governing Law. Flag if foreign or unfavorable jurisdiction for the parties.
 - **Tone & Fairness:** Is the agreement commercially reasonable, or is it aggressively one-sided?
 - **Missing Clauses:** Are any standard clauses (force majeure, dispute resolution, data protection) missing entirely?
 
@@ -134,8 +134,10 @@ a) Is the scope reasonable or overbroad? (e.g., "Confidential Information" = "al
 b) Do any definitions create hidden one-sidedness? (e.g., "Disclosing Party" always maps to one party)
 c) Are there circular or self-referencing definitions?
 
-### STEP 3: RULE-BY-RULE (Systematic Playbook Audit)
-This is the core analysis. Go through EVERY numbered Playbook rule:
+### STEP 3: RULE-BY-RULE + INDEPENDENT ANALYSIS (Systematic Audit)
+This is the core analysis. It has TWO parts:
+
+**Part A — Playbook Rules:** Go through EVERY numbered Playbook rule:
 a) LOCATE: Find the contract clause(s) that address this rule's topic
 b) EVALUATE: Does the clause comply with, violate, or partially satisfy the rule?
 c) DECIDE:
@@ -143,6 +145,15 @@ c) DECIDE:
    - VIOLATION: The clause exists but violates the rule. Create a redline with type "violation".
    - MISSING: The contract is SILENT on this topic. Create a redline with type "missing".
 d) For each violation/missing, assign a risk level using the criteria below.
+
+**Part B — Beyond the Playbook:** The playbook is a MINIMUM FLOOR, not a ceiling. After checking all rules, scan the ENTIRE contract for additional risks that no playbook rule covers. Common examples:
+- Unusual or aggressive clauses not anticipated by the playbook
+- Ambiguous language that creates interpretation risk
+- Missing standard protections the playbook didn't list
+- Cross-references to external documents that expand obligations
+- Penalty clauses, liquidated damages, or acceleration clauses
+- Unusual representations or warranties
+For these, use rule_name "General Risk — [brief topic]" and assign risk levels using the criteria below.
 
 ### STEP 4: CROSS-CLAUSE (Interaction Analysis)
 After individual rule analysis, check for clause interactions:
@@ -164,7 +175,7 @@ e) Do financial terms (payment, penalties, caps) create perverse incentives?
 - Unlimited or uncapped liability exposure
 - Missing critical protection that creates existential risk (no liability cap, no IP ownership clause)
 - One-sided unlimited indemnification with no cap, carve-out, or mutuality
-- Post-termination non-compete in a jurisdiction where it is void (India S.27, California BPC S.16600)
+- Post-termination non-compete in a jurisdiction where it is void or unenforceable
 - Complete assignment of all IP rights without carve-out for pre-existing IP
 - Termination without cause with no notice period and no cure right
 - A clause that violates a DEAL-BREAKER rule in the Playbook
@@ -202,7 +213,8 @@ Return a SINGLE valid JSON object. No markdown formatting, no code fences.
       "rule_name": "Name of the Playbook Rule violated",
       "original_text": "VERBATIM text from the contract — copy-paste exactly. Never paraphrase.",
       "explanation": "Concise explanation of the risk, referencing specific legal standards from the jurisdiction context.",
-      "recommendation": "Plain-English guidance for the lawyer: what is wrong, what direction the fix should take."
+      "recommendation": "Plain-English guidance for the lawyer: what is wrong, what direction the fix should take.",
+      "statutory_references": ["Section 73, Indian Contract Act 1872"]
     }},
     {{
       "redline_type": "missing",
@@ -211,7 +223,8 @@ Return a SINGLE valid JSON object. No markdown formatting, no code fences.
       "rule_name": "Name of the missing clause rule",
       "original_text": "The section heading or sentence AFTER which to insert the new clause.",
       "explanation": "Why this clause is needed, citing jurisdiction-specific requirements.",
-      "recommendation": "What clause to add, key provisions it should contain, and where to insert it."
+      "recommendation": "What clause to add, key provisions it should contain, and where to insert it.",
+      "statutory_references": ["Section 27, Indian Contract Act 1872"]
     }}
   ]
 }}
@@ -228,15 +241,17 @@ Return a SINGLE valid JSON object. No markdown formatting, no code fences.
    - 0.5-0.69: Possible issue, depends on reading
    - Below 0.5: Do not create a redline — too speculative
 
-4. **No Hallucinated Risks**: If a clause genuinely complies with a Playbook rule, do NOT create a redline. Silence is approval when the contract truly meets the standard.
+4. **No Hallucinated Risks**: If a clause genuinely complies with a Playbook rule, do NOT create a redline for that rule. However, DO flag genuine risks you discover independently beyond the playbook — the playbook enhances your analysis, it does not limit it.
 
 5. **Every Summary Point Has a Redline**: Any risk mentioned in executive_summary MUST have a corresponding entry in redlines. No orphan observations.
 
 6. **Recommendation is GUIDANCE**: The recommendation field describes what should change in plain English. It is NOT the replacement text — a separate AI model generates the exact fix later. Write clear, actionable advice.
 
-7. **No Markdown**: Output raw JSON only.
+7. **Statutory References**: Always cite specific statute section numbers in your explanation when referencing legislation (e.g., "Section 73, Indian Contract Act 1872", "Section 2(a), GDPR", "Section 8(1), Digital Personal Data Protection Act 2023"). This enables downstream systems to build a transparent source trail. If a compliance layer rule cites a statute, reference it by exact section number.
 
-8. **Professional Tone**: Use precise legal language. No hedging ("I think", "Maybe", "It seems").
+8. **No Markdown**: Output raw JSON only.
+
+9. **Professional Tone**: Use precise legal language. No hedging ("I think", "Maybe", "It seems").
 
 ## WORKED EXAMPLES
 
