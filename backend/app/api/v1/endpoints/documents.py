@@ -1227,6 +1227,88 @@ async def batch_status(
 
 
 # ============================================================================
+# ============================================================================
+# Compliance Layer Endpoints
+# ============================================================================
+
+
+class ComplianceLayerSummary(BaseModel):
+    """Summary of a compliance layer."""
+    code: str
+    name: str
+    description: Optional[str] = None
+    jurisdiction: Optional[str] = None
+    version: int = 1
+    rule_count: int = 0
+
+
+class ComplianceLayerRuleResponse(BaseModel):
+    """A single compliance layer rule."""
+    clause_type: str
+    risk_level: str
+    is_deal_breaker: bool = False
+    primary_position: str
+    fallback_position: Optional[str] = None
+    detection_mode: str = "ai_with_keywords"
+    risk_description: Optional[str] = None
+
+
+class ComplianceLayerDetail(BaseModel):
+    """Detailed compliance layer with rules."""
+    code: str
+    name: str
+    description: Optional[str] = None
+    jurisdiction: Optional[str] = None
+    version: int = 1
+    rules: List[ComplianceLayerRuleResponse] = []
+
+
+@router.get("/compliance-layers", response_model=List[ComplianceLayerSummary])
+async def list_compliance_layers(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return all active compliance layers with rule counts."""
+    from app.services.compliance_layer_service import get_active_layers
+    layers = await get_active_layers(db)
+    return [ComplianceLayerSummary(**layer) for layer in layers]
+
+
+@router.get("/compliance-layers/{code}", response_model=ComplianceLayerDetail)
+async def get_compliance_layer(
+    code: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return a compliance layer with its rules."""
+    from app.services.compliance_layer_service import get_layer_by_code
+    layer = await get_layer_by_code(db, code)
+    if not layer:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"message": f"Compliance layer '{code}' not found.", "error_code": "layer_not_found"},
+        )
+    return ComplianceLayerDetail(
+        code=layer.code,
+        name=layer.name,
+        description=layer.description,
+        jurisdiction=layer.jurisdiction,
+        version=layer.version,
+        rules=[
+            ComplianceLayerRuleResponse(
+                clause_type=rule.clause_type,
+                risk_level=rule.risk_level or "YELLOW",
+                is_deal_breaker=rule.is_deal_breaker,
+                primary_position=rule.primary_position,
+                fallback_position=rule.fallback_position,
+                detection_mode=rule.detection_mode or "ai_with_keywords",
+                risk_description=rule.risk_description,
+            )
+            for rule in sorted(layer.rules, key=lambda r: r.sort_order)
+        ],
+    )
+
+
 # Generate Clause Endpoint
 # ============================================================================
 
