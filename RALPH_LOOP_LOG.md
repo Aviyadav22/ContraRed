@@ -43,6 +43,13 @@ Each entry follows:
 **Quality Gate:** PASS
 **Next Task:** S1-F1-T04
 
+### Iteration 4 — S1-F1-T04
+**Action:** Created `compliance_layer_service.py` with seed_compliance_layers, get_active_layers, get_layer_by_code, get_layer_rules_as_dicts, merge_rules (with dedup by clause_type keeping stricter risk), and calculate_compliance_score.
+**Files Changed:** `backend/app/services/compliance_layer_service.py` (new)
+**Tests:** 35/35 passed (14 regression)
+**Quality Gate:** PASS
+**Next Task:** S1-F1-T05
+
 ---
 
 ## Failures & Rollbacks

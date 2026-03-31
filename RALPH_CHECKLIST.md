@@ -4,7 +4,7 @@
 > **LOG:** `RALPH_LOOP_LOG.md`
 > **STATUS:** IN_PROGRESS
 > **CURRENT_SPRINT:** 1
-> **CURRENT_TASK:** S1-F1-T04
+> **CURRENT_TASK:** S1-F1-T05
 > **LAST_GREEN_COMMIT:** (none yet)
 > **TESTS_PASSING:** true (baseline)
 
@@ -60,14 +60,15 @@ If ANY gate fails:
 - **STATUS:** DONE
 
 #### S1-F1-T04: Create compliance layer seeding service
-- [ ] Create `backend/app/services/compliance_layer_service.py`
+- [x] Create `backend/app/services/compliance_layer_service.py`
   - `seed_compliance_layers(db)` — inserts DPDP layer + rules if not exists
   - `get_active_layers(db)` — returns all active layers
-  - `get_layer_rules(db, layer_code)` — returns rules for a layer
+  - `get_layer_rules(db, layer_code)` — returns rules for a layer (get_layer_rules_as_dicts)
   - `merge_rules(playbook_rules, layer_rules)` — merges playbook + compliance layer rules, deduplicates by clause_type (keeps stricter risk level)
-- [ ] GATE: pytest passes
-- [ ] GATE: Unit test for merge_rules logic
-- **STATUS:** NOT_DONE
+  - `calculate_compliance_score(layer_results)` — readiness score calculation
+- [x] GATE: pytest passes
+- [ ] GATE: Unit test for merge_rules logic (deferred to S1-F1-T05)
+- **STATUS:** DONE
 
 #### S1-F1-T05: Write unit tests for compliance layer service
 - [ ] Create `backend/tests/test_compliance_layers.py`
