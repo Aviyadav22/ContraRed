@@ -407,6 +407,8 @@ class RatingCreate(BaseModel):
 @router.get("/marketplace/browse", response_model=MarketplaceBrowseResponse)
 async def browse_marketplace(
     category: Optional[str] = None,
+    search: Optional[str] = Query(None, max_length=200, description="Search by playbook name"),
+    sort_by: Optional[str] = Query("rating", pattern=r"^(rating|downloads|name)$"),
     skip: int = 0,
     limit: int = Query(20, le=100),
     current_user: User = Depends(get_current_user),
@@ -418,18 +420,29 @@ async def browse_marketplace(
         .join(Playbook, PlaybookMarketplace.playbook_id == Playbook.id)
     )
 
-    # Filter by category in SQL instead of Python
+    # Filter by category
     if category:
         try:
             cat_enum = PlaybookCategory(category)
             base_query = base_query.where(Playbook.category == cat_enum)
         except ValueError:
-            # Invalid category value -- return empty results
             return MarketplaceBrowseResponse(items=[], total=0)
+
+    # Search by name
+    if search:
+        base_query = base_query.where(Playbook.name.ilike(f"%{search}%"))
 
     # Total count
     count_query = select(func.count()).select_from(base_query.subquery())
     total = (await db.execute(count_query)).scalar() or 0
+
+    # Sort
+    if sort_by == "downloads":
+        base_query = base_query.order_by(PlaybookMarketplace.download_count.desc())
+    elif sort_by == "name":
+        base_query = base_query.order_by(Playbook.name)
+    else:  # default: rating
+        base_query = base_query.order_by(PlaybookMarketplace.avg_rating.desc())
 
     # Paginated results
     data_query = base_query.options(selectinload(PlaybookMarketplace.playbook)).offset(skip).limit(limit)

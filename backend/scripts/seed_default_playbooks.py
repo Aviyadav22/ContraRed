@@ -21,9 +21,9 @@ load_dotenv()
 
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5433/contrared")
 
-# Admin user and org IDs (from local dev setup)
-ADMIN_USER_ID = "34193e6c-557e-4887-81d8-067e18432578"
-ORG_ID = "78e2b3ab-9ea0-4735-9e6f-1fa4a15c52af"
+# Admin user (from Supabase). Org is NULL for system-level default playbooks.
+ADMIN_USER_ID = "19f4b5b2-8fc3-4e75-bbae-6a60ef225b0e"
+ORG_ID = None  # System defaults have no org — visible to all
 
 
 def make_rule(clause_type, primary_position, risk_level, detection_patterns,
@@ -64,15 +64,30 @@ from scripts.playbooks.consulting import CONSULTING
 from scripts.playbooks.vendor import VENDOR
 from scripts.playbooks.joint_venture import JOINT_VENTURE
 from scripts.playbooks.lease import LEASE
+from scripts.playbooks.fintech import FINTECH
+from scripts.playbooks.healthcare import HEALTHCARE
+from scripts.playbooks.it_services import IT_SERVICES
 
 ALL_PLAYBOOKS = [
     NDA_MUTUAL, NDA_UNILATERAL, MSA, SAAS, EMPLOYMENT,
     DPA, CONSULTING, VENDOR, JOINT_VENTURE, LEASE,
+    FINTECH, HEALTHCARE, IT_SERVICES,
 ]
 
 
 async def seed():
-    engine = create_async_engine(DATABASE_URL, echo=False)
+    # Use statement_cache_size=0 for PgBouncer transaction pooler compatibility
+    connect_args = {}
+    if "supabase" in DATABASE_URL:
+        import ssl as _ssl
+        _ctx = _ssl.create_default_context()
+        _ctx.check_hostname = False
+        _ctx.verify_mode = _ssl.CERT_NONE
+        connect_args["ssl"] = _ctx
+        if ":6543/" in DATABASE_URL:
+            connect_args["statement_cache_size"] = 0
+            connect_args["prepared_statement_name_func"] = lambda: ""
+    engine = create_async_engine(DATABASE_URL, echo=False, connect_args=connect_args)
     async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     async with async_session() as session:
@@ -90,8 +105,8 @@ async def seed():
             playbook_id = str(uuid.uuid4())
             await session.execute(
                 text("""
-                    INSERT INTO playbooks (id, organization_id, created_by, name, description, category, is_public, is_default, version, created_at, updated_at)
-                    VALUES (:id, :org_id, :user_id, :name, :description, :category, true, true, 1, NOW(), NOW())
+                    INSERT INTO playbooks (id, organization_id, created_by, name, description, category, party_side, is_public, is_default, version, created_at, updated_at)
+                    VALUES (:id, :org_id, :user_id, :name, :description, :category, :party_side, true, true, 1, NOW(), NOW())
                 """),
                 {
                     "id": playbook_id,
@@ -100,6 +115,7 @@ async def seed():
                     "name": pb["name"],
                     "description": pb["description"],
                     "category": pb["category"],
+                    "party_side": pb.get("party_side", "buyer"),
                 }
             )
 
