@@ -12,7 +12,7 @@ const Login = React.lazy(() => import('@/pages/Login'));
 const Register = React.lazy(() => import('@/pages/Register'));
 const Dashboard = React.lazy(() => import('@/pages/Dashboard'));
 const Playbooks = React.lazy(() => import('@/pages/Playbooks'));
-const PlaybookEditor = React.lazy(() => import('@/pages/PlaybookEditor'));
+const PlaybookEditor = React.lazy(() => import('@/pages/playbook-editor'));
 const Billing = React.lazy(() => import('@/pages/Billing'));
 const AuditLogs = React.lazy(() => import('@/pages/AuditLogs'));
 const Team = React.lazy(() => import('@/pages/Team'));
