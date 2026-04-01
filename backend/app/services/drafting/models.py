@@ -52,6 +52,11 @@ class DraftRequest(BaseModel):
     saas_details: Optional[SaaSDetails] = None
     risk_profile: dict[str, str] = Field(default_factory=dict)
     negotiation_context: str = ""
+    # Employment-specific fields
+    employee_title: str = ""
+    base_salary: str = ""
+    reporting_manager: str = ""
+    work_location: str = "Hybrid"
 
 
 class DraftSection(BaseModel):

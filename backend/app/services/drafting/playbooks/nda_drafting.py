@@ -701,11 +701,11 @@ _mutual_governing_law = _clause(
     position=11,
     drafting_notes="Governs choice of law, venue, and dispute mechanism.",
     jurisdiction_variants={
-        "US_Delaware": "laws of the State of Delaware",
-        "US_New_York": "laws of the State of New York",
-        "UK": "laws of England and Wales",
-        "India": "laws of India",
-        "Singapore": "laws of the Republic of Singapore",
+        "US-DE": "laws of the State of Delaware",
+        "US-NY": "laws of the State of New York",
+        "GB": "laws of England and Wales",
+        "IN": "laws of India",
+        "SG": "laws of the Republic of Singapore",
     },
     preferred=_tier(
         tone="protective",

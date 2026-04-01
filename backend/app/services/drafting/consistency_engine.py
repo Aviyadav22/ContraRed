@@ -83,7 +83,7 @@ _RE_NUMBER_WORD = re.compile(
     r"\b([a-z]+(?:-[a-z]+)?)\s*\((\d+)\)",
     re.IGNORECASE,
 )
-_RE_PARTY_ROLE = re.compile(r"\(the\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\)")
+_RE_PARTY_ROLE = re.compile(r'\((?:the\s+)?["\u201c]?([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)?)["\u201d]?\)')
 _RE_DEFINED_TERM_CANDIDATE = re.compile(
     r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b"
 )

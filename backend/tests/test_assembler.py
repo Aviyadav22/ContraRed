@@ -35,8 +35,10 @@ async def test_assembler_applies_non_conflicting_fixes():
     draft, annotations = _make_draft_and_annotations()
     result = await assembler.assemble(draft, annotations)
     assert isinstance(result, FinalDraft)
-    assert result.draft.sections[1].content == "CI means marked info."
-    assert result.quality_report.annotations_applied >= 1
+    # Fixes are now advisory-only (never auto-applied to section content)
+    assert result.draft.sections[1].content == "CI means everything."
+    # The fix annotation should appear in open_annotations instead
+    assert len(result.quality_report.open_annotations) >= 1
 
 
 @pytest.mark.asyncio

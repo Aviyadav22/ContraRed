@@ -116,6 +116,11 @@ class GenerateRequest(BaseModel):
     dispute_resolution: str = "arbitration"
     risk_profile: Dict[str, str] = Field(default_factory=dict)
     negotiation_context: str = ""
+    # Employment-specific
+    employee_title: str = ""
+    base_salary: str = ""
+    reporting_manager: str = ""
+    work_location: str = "Hybrid"
 
 
 class GenerateResponse(BaseModel):
@@ -188,6 +193,17 @@ _SAAS_FIELDS = [
      "show_when": {"contract_type": ["saas"]}},
 ]
 
+_EMPLOYMENT_FIELDS = [
+    {"name": "employee_title", "type": "text", "required": True, "placeholder": "e.g. VP of Engineering",
+     "show_when": {"contract_type": ["employment"]}},
+    {"name": "base_salary", "type": "text", "required": True, "placeholder": "e.g. $250,000",
+     "show_when": {"contract_type": ["employment"]}},
+    {"name": "reporting_manager", "type": "text", "required": False, "placeholder": "e.g. CTO",
+     "show_when": {"contract_type": ["employment"]}},
+    {"name": "work_location", "type": "text", "required": False, "default": "Hybrid", "placeholder": "Office/Remote/Hybrid",
+     "show_when": {"contract_type": ["employment"]}},
+]
+
 _LEGAL_FIELDS = [
     {"name": "term", "type": "number", "required": True, "default": 12, "placeholder": "Term in months"},
     {"name": "governing_law", "type": "text", "required": True, "default": "Delaware",
@@ -205,6 +221,8 @@ def _build_schema(contract_type: str) -> dict:
         stages.append({"stage": "nda_details", "label": "NDA Details", "fields": _NDA_FIELDS})
     if contract_type == "saas":
         stages.append({"stage": "saas_details", "label": "SaaS Details", "fields": _SAAS_FIELDS})
+    if contract_type == "employment":
+        stages.append({"stage": "employment_details", "label": "Employment Details", "fields": _EMPLOYMENT_FIELDS})
     stages.append({"stage": "legal", "label": "Legal Terms", "fields": _LEGAL_FIELDS})
     return {"contract_type": contract_type, "stages": stages}
 
@@ -249,6 +267,15 @@ async def generate_draft(req: GenerateRequest, current_user = Depends(get_curren
         raw_input["risk_profile"] = req.risk_profile
     if req.negotiation_context:
         raw_input["negotiation_context"] = req.negotiation_context
+    # Employment-specific passthrough
+    if req.employee_title:
+        raw_input["employee_title"] = req.employee_title
+    if req.base_salary:
+        raw_input["base_salary"] = req.base_salary
+    if req.reporting_manager:
+        raw_input["reporting_manager"] = req.reporting_manager
+    if req.work_location and req.work_location != "Hybrid":
+        raw_input["work_location"] = req.work_location
 
     try:
         result = await drafting_orchestrator.run(raw_input)

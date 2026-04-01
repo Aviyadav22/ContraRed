@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import List
 
 from app.services.drafting.compliance_rules import ComplianceRuleEngine
@@ -70,6 +71,30 @@ class ComplianceAgent:
                     reasoning=finding,
                 )
             )
+
+        # --- Liability cap check ---
+        all_text = " ".join(s.content for s in draft.sections)
+        if "limitation of liability" in all_text.lower():
+            cap_match = re.search(
+                r'(\d+)\s*(?:months?|x)\s*(?:of\s+)?(?:fees?|amounts?)',
+                all_text,
+                re.IGNORECASE,
+            )
+            if cap_match:
+                cap_months = int(cap_match.group(1))
+                cap_findings = self._rule_engine.check_liability_cap(
+                    cap_months=cap_months
+                )
+                for f in cap_findings:
+                    annotations.append(
+                        Annotation(
+                            section_number="*",
+                            agent="compliance",
+                            severity="warning",
+                            issue=f,
+                            reasoning="Deterministic liability cap check",
+                        )
+                    )
 
         return annotations
 

@@ -43,26 +43,16 @@ class Assembler:
                 open_annotations.extend(
                     a for a in section_anns if a.severity in ("warning", "critical")
                 )
-            elif len(fixes) == 1:
-                # Single fix — apply it
-                section.content = fixes[0].suggested_fix  # type: ignore[assignment]
-                applied += 1
-                open_annotations.extend(
-                    a
-                    for a in section_anns
-                    if a not in fixes and a.severity in ("warning", "critical")
-                )
             else:
-                # Multiple fixes for the same section — conflict
-                conflicts += 1
-                open_annotations.extend(fixes)
+                # Never auto-replace section content. All fixes are advisory.
+                if len(fixes) > 1:
+                    conflicts += 1
+                open_annotations.extend(section_anns)
 
-        # Add global annotations (section_number="*") that are unresolved
-        open_annotations.extend(
-            a
-            for a in by_section.get("*", [])
-            if a.severity in ("warning", "critical") and not a.suggested_fix
-        )
+        # Add global annotations (various sentinel section_number values)
+        for global_key in ("*", "general", "ALL", "0", ""):
+            global_anns = by_section.get(global_key, [])
+            open_annotations.extend(global_anns)
 
         quality = self._compute_scores(annotations, applied, conflicts)
         quality.annotations_applied = applied

@@ -122,6 +122,12 @@ class IntakeAgent:
             venue=raw.get("venue"),
             nda_details=nda_details,
             saas_details=saas_details,
+            risk_profile=raw.get("risk_profile", {}),
+            negotiation_context=raw.get("negotiation_context", ""),
+            employee_title=raw.get("employee_title", ""),
+            base_salary=raw.get("base_salary", ""),
+            reporting_manager=raw.get("reporting_manager", ""),
+            work_location=raw.get("work_location", "Hybrid"),
         )
 
     def select_playbook(self, contract_type: str, jurisdiction: str) -> dict:
