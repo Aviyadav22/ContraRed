@@ -113,6 +113,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Customer-protective preamble with recitals and best-practices representation.",
         ),
+        category="boilerplate",
         position=1,
     ),
 
@@ -207,6 +208,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Customer-protective: broad Service definition, analytics included in Customer Data.",
         ),
+        category="boilerplate",
         position=2,
         required_defined_terms=["Service", "Customer Data", "Authorized Users", "SLA"],
     ),
@@ -268,6 +270,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Customer-protective: no reduction without consent; compliance certifications required.",
         ),
+        category="commercial_terms",
         position=3,
         cross_references=["sla", "order_form"],
     ),
@@ -323,6 +326,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Broad license with sublicensing to affiliates and wide usage rights.",
         ),
+        category="ip_ownership",
         position=4,
     ),
 
@@ -375,6 +379,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Minimal obligations; Provider bears responsibility for own vulnerabilities.",
         ),
+        category="commercial_terms",
         position=5,
     ),
 
@@ -450,6 +455,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Customer-protective: locked pricing, generous cure periods, pro-rata refunds.",
         ),
+        category="commercial_terms",
         position=6,
         cross_references=["order_form", "sla"],
     ),
@@ -520,6 +526,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Customer-protective: no aggregated data without consent; feedback license retained.",
         ),
+        category="ip_ownership",
         position=7,
     ),
 
@@ -569,6 +576,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Customer-protective: 90-day retention, free data portability.",
         ),
+        category="data_protection",
         position=8,
         cross_references=["dpa", "effects_of_termination"],
     ),
@@ -654,6 +662,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Customer-protective: Customer Data auto-classified as CI; perpetual protection.",
         ),
+        category="confidentiality",
         position=9,
     ),
 
@@ -721,6 +730,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Extensive Provider warranties including SOC 2, non-infringement, and insurance.",
         ),
+        category="representations",
         position=10,
     ),
 
@@ -769,6 +779,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Narrow disclaimers with broad carve-outs for SLA, security, and intentional acts.",
         ),
+        category="representations",
         position=11,
     ),
 
@@ -844,6 +855,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Broad uncapped Provider indemnity; minimal Customer indemnity.",
         ),
+        category="indemnification",
         position=12,
         cross_references=["limitation_of_liability", "data_security", "dpa"],
     ),
@@ -914,6 +926,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             guidance="24-month or $1M cap; super cap for breaches at 3x; broad consequential carve-outs.",
             key_terms={"liability_cap": "24 months or $1M"},
         ),
+        category="limitation_of_liability",
         position=13,
     ),
 
@@ -981,6 +994,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Comprehensive: NIST framework, specific encryption, audit rights, 24-hour notice.",
         ),
+        category="data_protection",
         position=14,
         cross_references=["dpa", "confidentiality"],
     ),
@@ -1053,6 +1067,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Customer-protective: short cure periods, SLA-based termination, pro-rata refunds.",
         ),
+        category="termination",
         position=15,
     ),
 
@@ -1107,6 +1122,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Extended transition support, multiple export formats, refund of unused fees.",
         ),
+        category="termination",
         position=16,
     ),
 
@@ -1174,6 +1190,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Customer-protective: Customer's choice of jurisdiction; fee-shifting.",
         ),
+        category="dispute_resolution",
         position=17,
     ),
 
@@ -1258,6 +1275,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Customer-protective: no clickwrap modification; change of control termination right.",
         ),
+        category="boilerplate",
         position=18,
     ),
 
@@ -1312,6 +1330,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Detailed signature block with entity type and address.",
         ),
+        category="boilerplate",
         position=19,
     ),
 
@@ -1418,6 +1437,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             guidance="99.95% target; credits not sole remedy; audit rights; aggressive response times.",
             key_terms={"uptime": "99.95%", "max_credit": "50% monthly fee"},
         ),
+        category="commercial_terms",
         position=20,
         cross_references=["fees_and_payment", "term_and_termination"],
     ),
@@ -1566,6 +1586,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Strict GDPR: specific sub-processor consent, 24-hour breach notice, full audit rights.",
         ),
+        category="data_protection",
         position=21,
         cross_references=["data_security", "confidentiality", "data_ownership"],
     ),
@@ -1667,6 +1688,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             ),
             guidance="Customer-protective: locked pricing, Net 45, customer-favorable conflict resolution.",
         ),
+        category="commercial_terms",
         position=22,
         cross_references=["fees_and_payment", "sla"],
     ),
