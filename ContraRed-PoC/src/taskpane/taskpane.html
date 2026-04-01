@@ -14,21 +14,21 @@
            ================================================================ */
         :root {
             /* Backgrounds */
-            --bg-app: #FAFAF9;
+            --bg-app: #F8FAFC;
             --bg-surface: #FFFFFF;
-            --bg-elevated: #F5F4F2;
-            --bg-overlay: #EFEDE9;
+            --bg-elevated: #F1F5F9;
+            --bg-overlay: #E2E8F0;
 
             /* Borders */
-            --border-subtle: #E8E5E0;
-            --border-default: #D4CFC8;
-            --border-focus: #1A1A1A;
+            --border-subtle: #E2E8F0;
+            --border-default: #CBD5E1;
+            --border-focus: #0F172A;
 
             /* Text */
-            --text-primary: #111110;
-            --text-secondary: #6B6760;
-            --text-muted: #A09B96;
-            --text-inverse: #FAFAF9;
+            --text-primary: #0F172A;
+            --text-secondary: #475569;
+            --text-muted: #94A3B8;
+            --text-inverse: #F8FAFC;
 
             /* Brand */
             --accent: #C0392B;
@@ -36,16 +36,16 @@
             --accent-subtle: #FDECEA;
             --accent-border: #F5B7B1;
 
-            /* Risk — desaturated, professional (darkened for WCAG 4.5+ contrast) */
-            --risk-critical: #B91C1C;
+            /* Risk — distinct from brand red */
+            --risk-critical: #EF4444;
             --risk-critical-bg: #FEE2E2;
-            --risk-critical-border: #F1948A;
-            --risk-medium: #92400E;
+            --risk-critical-border: #FCA5A5;
+            --risk-medium: #F59E0B;
             --risk-medium-bg: #FEF3C7;
-            --risk-medium-border: #F0C060;
-            --risk-low: #166534;
+            --risk-medium-border: #FCD34D;
+            --risk-low: #22C55E;
             --risk-low-bg: #DCFCE7;
-            --risk-low-border: #82C9A0;
+            --risk-low-border: #86EFAC;
 
             /* Shadows & Radii */
             --shadow-sm: 0 1px 2px rgba(0,0,0,0.06);
@@ -69,34 +69,34 @@
            ================================================================ */
         @media (prefers-color-scheme: dark) {
             :root {
-                --bg-app: #1A1A19;
-                --bg-surface: #222221;
-                --bg-elevated: #2A2A28;
-                --bg-overlay: #333331;
+                --bg-app: #0F172A;
+                --bg-surface: #1E293B;
+                --bg-elevated: #334155;
+                --bg-overlay: #475569;
 
-                --border-subtle: #3A3A38;
-                --border-default: #4A4A47;
-                --border-focus: #FAFAF9;
+                --border-subtle: #334155;
+                --border-default: #475569;
+                --border-focus: #F8FAFC;
 
-                --text-primary: #EDEDEC;
-                --text-secondary: #9B9892;
-                --text-muted: #6B6860;
-                --text-inverse: #1A1A19;
+                --text-primary: #F8FAFC;
+                --text-secondary: #94A3B8;
+                --text-muted: #64748B;
+                --text-inverse: #0F172A;
 
-                --accent: #E05A4E;
-                --accent-hover: #C84B40;
-                --accent-subtle: rgba(224, 90, 78, 0.15);
-                --accent-border: rgba(224, 90, 78, 0.3);
+                --accent: #C0392B;
+                --accent-hover: #A93226;
+                --accent-subtle: rgba(192, 57, 43, 0.15);
+                --accent-border: rgba(192, 57, 43, 0.3);
 
-                --risk-critical: #E05A4E;
-                --risk-critical-bg: rgba(224, 90, 78, 0.12);
-                --risk-critical-border: rgba(224, 90, 78, 0.25);
-                --risk-medium: #D4A03A;
-                --risk-medium-bg: rgba(212, 160, 58, 0.12);
-                --risk-medium-border: rgba(212, 160, 58, 0.25);
-                --risk-low: #4CAF7A;
-                --risk-low-bg: rgba(76, 175, 122, 0.12);
-                --risk-low-border: rgba(76, 175, 122, 0.25);
+                --risk-critical: #EF4444;
+                --risk-critical-bg: rgba(239, 68, 68, 0.12);
+                --risk-critical-border: rgba(239, 68, 68, 0.25);
+                --risk-medium: #F59E0B;
+                --risk-medium-bg: rgba(245, 158, 11, 0.12);
+                --risk-medium-border: rgba(245, 158, 11, 0.25);
+                --risk-low: #22C55E;
+                --risk-low-bg: rgba(34, 197, 94, 0.12);
+                --risk-low-border: rgba(34, 197, 94, 0.25);
 
                 --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
                 --shadow-md: 0 4px 12px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.2);
@@ -105,34 +105,34 @@
 
         /* Manual dark mode override via data attribute */
         [data-theme="dark"] {
-            --bg-app: #1A1A19;
-            --bg-surface: #222221;
-            --bg-elevated: #2A2A28;
-            --bg-overlay: #333331;
+            --bg-app: #0F172A;
+            --bg-surface: #1E293B;
+            --bg-elevated: #334155;
+            --bg-overlay: #475569;
 
-            --border-subtle: #3A3A38;
-            --border-default: #4A4A47;
-            --border-focus: #FAFAF9;
+            --border-subtle: #334155;
+            --border-default: #475569;
+            --border-focus: #F8FAFC;
 
-            --text-primary: #EDEDEC;
-            --text-secondary: #9B9892;
-            --text-muted: #6B6860;
-            --text-inverse: #1A1A19;
+            --text-primary: #F8FAFC;
+            --text-secondary: #94A3B8;
+            --text-muted: #64748B;
+            --text-inverse: #0F172A;
 
-            --accent: #E05A4E;
-            --accent-hover: #C84B40;
-            --accent-subtle: rgba(224, 90, 78, 0.15);
-            --accent-border: rgba(224, 90, 78, 0.3);
+            --accent: #C0392B;
+            --accent-hover: #A93226;
+            --accent-subtle: rgba(192, 57, 43, 0.15);
+            --accent-border: rgba(192, 57, 43, 0.3);
 
-            --risk-critical: #E05A4E;
-            --risk-critical-bg: rgba(224, 90, 78, 0.12);
-            --risk-critical-border: rgba(224, 90, 78, 0.25);
-            --risk-medium: #D4A03A;
-            --risk-medium-bg: rgba(212, 160, 58, 0.12);
-            --risk-medium-border: rgba(212, 160, 58, 0.25);
-            --risk-low: #4CAF7A;
-            --risk-low-bg: rgba(76, 175, 122, 0.12);
-            --risk-low-border: rgba(76, 175, 122, 0.25);
+            --risk-critical: #EF4444;
+            --risk-critical-bg: rgba(239, 68, 68, 0.12);
+            --risk-critical-border: rgba(239, 68, 68, 0.25);
+            --risk-medium: #F59E0B;
+            --risk-medium-bg: rgba(245, 158, 11, 0.12);
+            --risk-medium-border: rgba(245, 158, 11, 0.25);
+            --risk-low: #22C55E;
+            --risk-low-bg: rgba(34, 197, 94, 0.12);
+            --risk-low-border: rgba(34, 197, 94, 0.25);
 
             --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
             --shadow-md: 0 4px 12px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.2);
@@ -307,8 +307,10 @@
         }
 
         .btn:disabled {
-            opacity: 0.38;
+            opacity: 0.45;
             cursor: not-allowed;
+            filter: grayscale(0.3);
+            pointer-events: none;
         }
 
         .btn:active:not(:disabled) {
@@ -353,7 +355,7 @@
         }
 
         .btn-primary:hover:not(:disabled) {
-            background: #333331;
+            background: #1E293B;
         }
 
         /* Secondary — tinted */
@@ -1478,7 +1480,7 @@
         }
 
         .template-badge.nda { background: var(--risk-critical-bg); color: var(--risk-critical); }
-        .template-badge.msa { background: #F3EEF8; color: #6D28D9; }
+        .template-badge.msa { background: var(--accent-subtle); color: var(--accent); }
         .template-badge.saas { background: var(--risk-low-bg); color: var(--risk-low); }
         .template-badge.employment { background: var(--risk-medium-bg); color: var(--risk-medium); }
         .template-badge.custom { background: var(--bg-elevated); color: var(--text-secondary); }
@@ -1584,6 +1586,37 @@
         .neg-btn.escalate.active { background: #C0392B; }
 
         /* ================================================================
+           SCROLL AFFORDANCE — Gradient fade at bottom of risk list
+           ================================================================ */
+        .risk-list-container {
+            position: relative;
+        }
+
+        .risk-list-container::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 32px;
+            background: linear-gradient(transparent, var(--bg-app));
+            pointer-events: none;
+        }
+
+        /* ================================================================
+           RISK CARD ICONS — Inline SVG icons for risk levels
+           ================================================================ */
+        .risk-level-icon {
+            display: inline-flex;
+            align-items: center;
+            width: 14px;
+            height: 14px;
+            flex-shrink: 0;
+            vertical-align: middle;
+            margin-right: 2px;
+        }
+
+        /* ================================================================
            REDUCED MOTION
            ================================================================ */
         @media (prefers-reduced-motion: reduce) {
@@ -1662,7 +1695,7 @@
             <span style="font-size: 15px; font-weight: 700; letter-spacing: -0.3px; color: var(--text-primary);">Contra<span style="color: #C0392B;">Red</span></span>
             <div style="display: flex; align-items: center; gap: 6px;">
                 <button id="shortcutsHelpBtn" class="btn-icon" aria-label="Show keyboard shortcuts" title="Keyboard shortcuts" style="width: 28px; height: 28px; font-size: 13px; font-weight: 600;">?</button>
-                <a href="https://contrared.netlify.app" target="_blank" class="btn btn-ghost btn-sm" style="text-decoration: none; font-size: 11px; padding: 4px 10px;" aria-label="Open ContraRed Dashboard">Dashboard</a>
+                <a href="https://contrared-dashboard.netlify.app" target="_blank" class="btn btn-ghost btn-sm" style="text-decoration: none; font-size: 11px; padding: 4px 10px;" aria-label="Open ContraRed Dashboard">Dashboard</a>
             </div>
         </header>
 
@@ -1696,9 +1729,9 @@
 
                 <div style="text-align: center; margin-top: 12px; font-size: 12px; color: #8B8680;">
                     Don't have an account?
-                    <a href="https://contrared.netlify.app/register" target="_blank" style="color: #C0392B; text-decoration: underline;">Sign up</a>
+                    <a href="https://contrared-dashboard.netlify.app/register" target="_blank" style="color: #C0392B; text-decoration: underline;">Sign up</a>
                     <br/>
-                    <a href="https://contrared.netlify.app/forgot-password" target="_blank" style="color: #8B8680; text-decoration: underline; font-size: 11px;">Forgot password?</a>
+                    <a href="https://contrared-dashboard.netlify.app/forgot-password" target="_blank" style="color: #8B8680; text-decoration: underline; font-size: 11px;">Forgot password?</a>
                 </div>
             </section>
         </div>
@@ -1725,7 +1758,7 @@
                     <button id="addPlaybookBtn" class="btn btn-secondary btn-sm" style="flex: 1;" aria-label="Create a new playbook">
                         + New Playbook
                     </button>
-                    <a id="dashboardLink" href="https://contrared.netlify.app/dashboard"
+                    <a id="dashboardLink" href="https://contrared-dashboard.netlify.app/dashboard"
                        target="_blank" class="btn btn-ghost btn-sm"
                        style="flex: 1; text-decoration: none; text-align: center;">
                         Dashboard
@@ -1794,6 +1827,32 @@
                     </select>
                 </div>
 
+                <!-- Jurisdiction Selector -->
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label class="form-label" for="jurisdictionSelect">Jurisdiction</label>
+                    <select id="jurisdictionSelect" class="form-input" style="margin: 0;">
+                        <optgroup label="Asia Pacific">
+                            <option value="IN">India</option>
+                            <option value="SG">Singapore</option>
+                            <option value="AU">Australia</option>
+                            <option value="HK">Hong Kong SAR</option>
+                        </optgroup>
+                        <optgroup label="Americas">
+                            <option value="US-DE">Delaware, US</option>
+                            <option value="US-NY">New York, US</option>
+                            <option value="US-CA">California, US</option>
+                            <option value="US-TX">Texas, US</option>
+                        </optgroup>
+                        <optgroup label="Europe">
+                            <option value="UK">United Kingdom</option>
+                            <option value="EU">European Union</option>
+                        </optgroup>
+                        <optgroup label="Middle East">
+                            <option value="UAE">UAE (DIFC)</option>
+                        </optgroup>
+                    </select>
+                </div>
+
                 <!-- Scan Button (full width) -->
                 <div style="margin-bottom: 8px;">
                     <button id="scanBtn" class="btn btn-primary" aria-label="Scan entire document for risks">
@@ -1802,13 +1861,15 @@
                                 d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                         </svg>
                         <span id="scanBtnText">Scan Document</span>
+                        <kbd style="font-size:10px;padding:1px 4px;border-radius:3px;background:var(--bg-elevated);border:1px solid var(--border-default);color:var(--text-muted);margin-left:6px;font-family:'Inter',monospace;">Ctrl+Shift+D</kbd>
                         <div id="scanSpinner" class="spinner" style="display: none;"></div>
                     </button>
                     <button id="scanSelectionBtn" class="btn btn-secondary btn-full" style="margin-top: 6px;" aria-label="Scan selected text for risks">
                         <span id="scanSelectionBtnText">Scan Selection</span>
+                        <kbd style="font-size:10px;padding:1px 4px;border-radius:3px;background:var(--bg-elevated);border:1px solid var(--border-default);color:var(--text-muted);margin-left:6px;font-family:'Inter',monospace;">Ctrl+Alt+S</kbd>
                         <div id="scanSelectionSpinner" class="spinner" style="display:none;"></div>
                     </button>
-                    <button id="negotiationBtn" class="btn btn-full" style="margin-top: 6px; background: linear-gradient(135deg, #7C3AED, #6D28D9); color: #fff; border: none; font-weight: 600;" aria-label="Start live negotiation mode">
+                    <button id="negotiationBtn" class="btn btn-full" style="margin-top: 6px; background: var(--accent); color: #fff; border: none; font-weight: 600;" aria-label="Start live negotiation mode">
                         <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" style="width:16px;height:16px;margin-right:4px;vertical-align:middle;">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a2 2 0 01-2-2v-1m0-3V4a2 2 0 012-2h6a2 2 0 012 2v4a2 2 0 01-2 2H9l-4 4V8z" />
@@ -1978,7 +2039,9 @@
                     <span id="riskCount" class="version-badge">0 items</span>
                 </div>
 
-                <div id="riskList" class="risk-list" aria-live="polite" aria-label="Contract risk analysis results">
+                <div class="risk-list-container">
+                    <div id="riskList" class="risk-list" aria-live="polite" aria-label="Contract risk analysis results">
+                    </div>
                 </div>
 
                 <!-- Empty state -->
@@ -1987,8 +2050,8 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
                             d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
-                    <div class="empty-state-title">No risks detected</div>
-                    <div>This document looks good!</div>
+                    <div class="empty-state-title" id="emptyStateTitle">No risks detected</div>
+                    <div id="emptyStateSubtitle">This document looks good!</div>
                 </div>
             </section>
         </div>

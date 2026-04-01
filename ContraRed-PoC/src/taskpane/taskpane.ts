@@ -55,33 +55,41 @@ const log = {
 // Persistent Scan State
 // ============================================================================
 
-/** Save current scan state to localStorage for session persistence. */
+/** Save current scan state to sessionStorage for session persistence. */
 // Note: Scan state may contain contract excerpts. Cleared on logout and after 24h TTL.
 function saveScanState(docFingerprint?: string): void {
     if (!currentAIAnalysis) return;
     try {
+        const TTL_MS = 24 * 60 * 60 * 1000;
         const state = {
             analysis: currentAIAnalysis,
             fixedRisks: Array.from(fixedRisks),
             timestamp: Date.now(),
-            docHash: docFingerprint || localStorage.getItem('contrared_doc_hash') || '',
+            expiresAt: Date.now() + TTL_MS,
+            docHash: docFingerprint || sessionStorage.getItem('contrared_doc_hash') || '',
         };
-        localStorage.setItem('contrared_scan_state', JSON.stringify(state));
-        log.info('Scan state saved to localStorage');
+        sessionStorage.setItem('contrared_scan_state', JSON.stringify(state));
+        log.info('Scan state saved to sessionStorage');
     } catch (e) {
         log.warn('Failed to save scan state:', e);
     }
 }
 
-/** Restore previous scan state from localStorage (if < 24h old and same document). */
+/** Restore previous scan state from sessionStorage (if < 24h old and same document). */
 async function restoreScanState(): Promise<boolean> {
     try {
-        const stored = localStorage.getItem('contrared_scan_state');
+        // Try sessionStorage first, migrate from localStorage if needed
+        const stored = sessionStorage.getItem('contrared_scan_state') || localStorage.getItem('contrared_scan_state');
         if (!stored) return false;
-        const state = JSON.parse(stored);
-        const age = Date.now() - state.timestamp;
-        if (age > 24 * 60 * 60 * 1000) {
+        // Migrate from localStorage
+        if (localStorage.getItem('contrared_scan_state')) {
+            sessionStorage.setItem('contrared_scan_state', stored);
             localStorage.removeItem('contrared_scan_state');
+        }
+        const state = JSON.parse(stored);
+        const expiresAt = state.expiresAt || (state.timestamp + 24 * 60 * 60 * 1000);
+        if (Date.now() > expiresAt) {
+            sessionStorage.removeItem('contrared_scan_state');
             return false;
         }
 
@@ -92,7 +100,7 @@ async function restoreScanState(): Promise<boolean> {
                 const currentHash = simpleHash(currentText);
                 if (state.docHash !== currentHash) {
                     log.info('Document fingerprint mismatch — not restoring stale scan state');
-                    localStorage.removeItem('contrared_scan_state');
+                    sessionStorage.removeItem('contrared_scan_state');
                     return false;
                 }
             } catch {
@@ -103,7 +111,7 @@ async function restoreScanState(): Promise<boolean> {
         currentAIAnalysis = state.analysis;
         state.fixedRisks.forEach((id: string) => fixedRisks.add(id));
         displayAIResults(currentAIAnalysis!);
-        log.info('Scan state restored from localStorage');
+        log.info('Scan state restored from sessionStorage');
         return true;
     } catch {
         return false;
@@ -116,8 +124,9 @@ async function restoreScanState(): Promise<boolean> {
 
 /** Compute a word-level diff between original and modified text, returning HTML. */
 function wordDiff(original: string, modified: string): string {
-    const origWords = original.split(/(\s+)/);
-    const modWords = modified.split(/(\s+)/);
+    // Split into words only (no whitespace tokens) — avoids lost-space bugs
+    const origWords = original.split(/\s+/).filter(Boolean);
+    const modWords = modified.split(/\s+/).filter(Boolean);
     const m = origWords.length;
     const n = modWords.length;
 
@@ -149,17 +158,79 @@ function wordDiff(original: string, modified: string): string {
         }
     }
 
-    const result: string[] = [];
+    // Merge consecutive same-type ops for cleaner output
+    const merged: Array<{ type: 'keep' | 'del' | 'ins'; words: string[] }> = [];
     for (const op of ops) {
-        if (op.type === 'del') {
-            result.push(`<del style="background:#FECACA;text-decoration:line-through;color:#991B1B;">${escapeHtml(op.text)}</del>`);
-        } else if (op.type === 'ins') {
-            result.push(`<ins style="background:#BBF7D0;text-decoration:underline;color:#166534;">${escapeHtml(op.text)}</ins>`);
+        if (merged.length > 0 && merged[merged.length - 1].type === op.type) {
+            merged[merged.length - 1].words.push(op.text);
         } else {
-            result.push(escapeHtml(op.text));
+            merged.push({ type: op.type, words: [op.text] });
         }
     }
-    return result.join('');
+
+    const result: string[] = [];
+    for (const group of merged) {
+        const text = escapeHtml(group.words.join(' '));
+        if (group.type === 'del') {
+            result.push(`<del style="background:#FECACA;text-decoration:line-through;color:#991B1B;padding:1px 2px;border-radius:2px;">${text}</del>`);
+        } else if (group.type === 'ins') {
+            result.push(`<ins style="background:#BBF7D0;text-decoration:none;color:#166534;padding:1px 2px;border-radius:2px;font-weight:600;">${text}</ins>`);
+        } else {
+            result.push(text);
+        }
+    }
+    return result.join(' ');
+}
+
+/**
+ * Render a diff view from surgical edit pairs [{find, replace}].
+ * Much more precise than LCS word-diff — shows exactly what a lawyer struck/inserted.
+ */
+function editsDiff(originalText: string, edits: Array<{find: string; replace: string}>): string {
+    if (!edits || edits.length === 0) {
+        return escapeHtml(originalText);
+    }
+
+    // Apply edits sequentially, tracking positions for rendering
+    let text = originalText;
+    const markers: Array<{start: number; end: number; type: 'del' | 'ins'; text: string}> = [];
+
+    // Sort edits by position in text (first occurrence) for stable rendering
+    const positionedEdits = edits
+        .map(e => ({ ...e, pos: text.indexOf(e.find) }))
+        .filter(e => e.pos >= 0)
+        .sort((a, b) => a.pos - b.pos);
+
+    // Build result by walking through text and applying edits
+    const parts: string[] = [];
+    let cursor = 0;
+
+    for (const edit of positionedEdits) {
+        const pos = text.indexOf(edit.find, cursor);
+        if (pos < 0) continue;
+
+        // Text before this edit (unchanged)
+        if (pos > cursor) {
+            parts.push(escapeHtml(text.slice(cursor, pos)));
+        }
+
+        // The struck text
+        parts.push(`<del style="background:#FECACA;text-decoration:line-through;color:#991B1B;padding:1px 2px;border-radius:2px;">${escapeHtml(edit.find)}</del>`);
+
+        // The replacement text
+        if (edit.replace) {
+            parts.push(`<ins style="background:#BBF7D0;text-decoration:none;color:#166534;padding:1px 2px;border-radius:2px;font-weight:600;">${escapeHtml(edit.replace)}</ins>`);
+        }
+
+        cursor = pos + edit.find.length;
+    }
+
+    // Remaining text after last edit
+    if (cursor < text.length) {
+        parts.push(escapeHtml(text.slice(cursor)));
+    }
+
+    return parts.join('');
 }
 
 // ============================================================================
@@ -170,6 +241,7 @@ const TOOLTIPS = [
     { target: 'scanBtn', text: 'Click here to scan the entire document for legal risks. The AI will analyze every clause against your selected playbook.' },
     { target: 'scanSelectionBtn', text: 'Highlight text in Word first, then click this to scan just that selection. Great for quick checks during calls.' },
     { target: 'playbookSelect', text: 'Choose which playbook to scan against. Different playbooks have different rules for different contract types.' },
+    { target: 'jurisdictionSelect', text: 'Select the governing jurisdiction for this contract. This determines which laws and rules apply to the analysis.' },
 ];
 
 function showOnboardingTooltips(): void {
@@ -400,6 +472,10 @@ const statusText = () => getEl('statusText');
 // ============================================================================
 
 Office.onReady((info) => {
+  // Theme sync: restore saved theme from localStorage
+  const savedTheme = localStorage.getItem('contrared-theme') || 'dark';
+  document.documentElement.setAttribute('data-theme', savedTheme);
+
   if (info.host === Office.HostType.Word) {
     statusIndicator()?.classList.remove('offline');
     if (statusText()) statusText()!.textContent = `Connected to Word`;
@@ -862,6 +938,10 @@ function handleLogout(): void {
 
   // Clear all persisted state (but keep onboarding — it's per-device, not per-session)
   // Note: Scan state may contain contract excerpts. Cleared on logout and after 24h TTL.
+  sessionStorage.removeItem('contrared_scan_state');
+  sessionStorage.removeItem('contrared_negotiation_session');
+  sessionStorage.removeItem('contrared_doc_hash');
+  // Clean up any legacy localStorage data
   localStorage.removeItem('contrared_scan_state');
   localStorage.removeItem('contrared_negotiation_session');
   localStorage.removeItem('contrared_doc_hash');
@@ -919,29 +999,46 @@ async function findTextInDocument(
   await context.sync();
 
   if (exactResults.items.length > 0) {
-    // P0 #3: 255-char long clause handling — verify full text matches when truncated
+    // P0 #3: 255-char long clause handling — expand range to cover full clause text
     if (searchText.length > WORD_SEARCH_LIMIT && exactResults.items.length > 0) {
-      // For each candidate match, expand range and verify full text
       for (const candidate of exactResults.items) {
         try {
-          // Load the paragraph text and check if full text is contained
+          // Search for the LAST ~200 chars of the clause text to find its end
+          const tailText = searchText.slice(-Math.min(200, searchText.length));
+          const tailSearch = body.search(
+            tailText.slice(0, WORD_SEARCH_LIMIT),
+            { matchCase: false, matchWholeWord: false }
+          );
+          tailSearch.load('items');
+          await context.sync();
+
+          if (tailSearch.items.length > 0) {
+            // Expand the range from the start match to the end of the tail match
+            const expandedRange = candidate.expandTo(tailSearch.items[0]);
+            expandedRange.load('text');
+            await context.sync();
+
+            // Verify the expanded range contains the full clause
+            const normalizedSearch = searchText.replace(/\s+/g, ' ').trim();
+            const normalizedRange = expandedRange.text.replace(/\s+/g, ' ').trim();
+            if (normalizedRange.includes(normalizedSearch) || normalizedSearch.includes(normalizedRange)) {
+              return { range: expandedRange, method: 'exact', confidence: 1.0 };
+            }
+          }
+
+          // Fallback: use paragraph range if tail search failed
           const parentParagraph = candidate.paragraphs.getFirst();
           parentParagraph.load('text');
           await context.sync();
-          const paraText = parentParagraph.text;
-          // Normalize whitespace for comparison
           const normalizedSearch = searchText.replace(/\s+/g, ' ').trim();
-          const normalizedPara = paraText.replace(/\s+/g, ' ').trim();
+          const normalizedPara = parentParagraph.text.replace(/\s+/g, ' ').trim();
           if (normalizedPara.includes(normalizedSearch) || normalizedSearch.includes(normalizedPara)) {
-            // Full text confirmed — select best match with position awareness
-            return { range: candidate, method: 'exact', confidence: 1.0 };
+            return { range: candidate, method: 'exact', confidence: 0.9 };
           }
         } catch {
           // If expansion fails, fall through
         }
       }
-      // If no candidate fully matched, still use best candidate (truncated match)
-      // but with lower confidence — fall through to pick best by position
     }
 
     // P0 #2: Position awareness — pick closest match when multiple results
@@ -1089,14 +1186,16 @@ async function scanDocument(): Promise<void> {
 
     const partySideSelect = document.getElementById('partySideSelect') as HTMLSelectElement;
     const selectedPartySide = partySideSelect?.value || 'buyer';
-    const aiResult = await api.analyzeWithAI(documentText, docName, selectedPlaybookId, selectedPartySide);
+    const jurisdictionSelect = document.getElementById('jurisdictionSelect') as HTMLSelectElement;
+    const selectedJurisdiction = jurisdictionSelect?.value || 'IN';
+    const aiResult = await api.analyzeWithAI(documentText, docName, selectedPlaybookId, selectedPartySide, selectedJurisdiction);
 
     currentAIAnalysis = aiResult;
     fixedRisks.clear();
 
     // Store document fingerprint for identity check on restore
     const docFingerprint = simpleHash(documentText);
-    localStorage.setItem('contrared_doc_hash', docFingerprint);
+    sessionStorage.setItem('contrared_doc_hash', docFingerprint);
 
     // Step 3: Display AI results (executive summary + redlines)
     displayAIResults(aiResult);
@@ -1390,7 +1489,7 @@ function onSelectionChanged(): void {
 
 function saveNegotiationSession(): void {
   try {
-    if (negotiationSession) localStorage.setItem('contrared_negotiation_session', JSON.stringify(negotiationSession));
+    if (negotiationSession) sessionStorage.setItem('contrared_negotiation_session', JSON.stringify(negotiationSession));
   } catch (e) {
     log.warn('Failed to save negotiation session:', e);
   }
@@ -1398,7 +1497,7 @@ function saveNegotiationSession(): void {
 
 function loadNegotiationSession(): NegotiationSession | null {
   try {
-    const stored = localStorage.getItem('contrared_negotiation_session');
+    const stored = sessionStorage.getItem('contrared_negotiation_session') || localStorage.getItem('contrared_negotiation_session');
     if (stored) return JSON.parse(stored);
   } catch { /* ignore */ }
   return null;
@@ -1866,7 +1965,15 @@ function renderRedlineList(): void {
 
   if (filtered.length === 0) {
     const empty = emptyState();
-    if (empty) empty.style.display = 'block';
+    if (empty) {
+      empty.style.display = 'block';
+      // Show timestamp when scan completes with 0 risks
+      const titleEl = document.getElementById('emptyStateTitle');
+      const subtitleEl = document.getElementById('emptyStateSubtitle');
+      const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      if (titleEl) titleEl.textContent = 'No risks detected';
+      if (subtitleEl) subtitleEl.textContent = `\u2713 Scan complete at ${timeStr} \u2014 no risks found`;
+    }
     if (riskCount()) riskCount()!.textContent = '0';
     return;
   }
@@ -2019,9 +2126,9 @@ function createAIRedlineCard(redline: RedlineItem, _documentId: string): HTMLEle
   const truncatedClause = redline.clause_text.length > 100
     ? redline.clause_text.slice(0, 100) + '...'
     : redline.clause_text;
-  const truncatedRec = redline.recommendation
-    ? (redline.recommendation.length > 150 ? redline.recommendation.slice(0, 150) + '...' : redline.recommendation)
-    : '';
+  const fullRec = redline.recommendation || '';
+  const isRecLong = fullRec.length > 150;
+  const truncatedRec = isRecLong ? fullRec.slice(0, 150) + '...' : fullRec;
   const clauseLabel = isMissing ? 'Insert after: ' : '';
   const typeBadge = isMissing
     ? '<span class="redline-type-badge type-missing">Missing</span>'
@@ -2032,8 +2139,8 @@ function createAIRedlineCard(redline: RedlineItem, _documentId: string): HTMLEle
   const confScore = redline.confidence != null ? Math.round(redline.confidence * 100) : null;
   let confidenceBadge = '';
   if (confScore != null && confLevel) {
-    const confColor = confLevel === 'HIGH' ? '#166534' : confLevel === 'MEDIUM' ? '#92400E' : '#991B1B';
-    const confBg = confLevel === 'HIGH' ? '#DCFCE7' : confLevel === 'MEDIUM' ? '#FEF3C7' : '#FEE2E2';
+    const confColor = confLevel === 'HIGH' ? 'var(--risk-low)' : confLevel === 'MEDIUM' ? 'var(--risk-medium)' : 'var(--risk-critical)';
+    const confBg = confLevel === 'HIGH' ? 'var(--risk-low-bg)' : confLevel === 'MEDIUM' ? 'var(--risk-medium-bg)' : 'var(--risk-critical-bg)';
     const verStatus = redline.verification_status ? ` (${escapeHtml(redline.verification_status)})` : '';
     confidenceBadge = `<span class="confidence-badge" style="font-size:10px;padding:1px 6px;border-radius:8px;background:${confBg};color:${confColor};margin-left:auto;" title="Confidence: ${confScore}%${verStatus}">${escapeHtml(confLevel)} ${confScore}%</span>`;
   }
@@ -2045,8 +2152,17 @@ function createAIRedlineCard(redline: RedlineItem, _documentId: string): HTMLEle
     lowConfWarning = '<div class="low-conf-warning" style="background:#FEF3C7;color:#92400E;font-size:10px;padding:4px 8px;margin-top:4px;border-radius:4px;border-left:3px solid #F59E0B;" role="alert">Low confidence — verify this risk manually</div>';
   }
 
+  // Risk level icon SVGs
+  const riskIconMap: Record<string, string> = {
+    red: '<svg class="risk-level-icon" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M7 1L1 13h12L7 1z" fill="var(--risk-critical)" opacity="0.15"/><path d="M7 1L1 13h12L7 1z" stroke="var(--risk-critical)" stroke-width="1.2" stroke-linejoin="round"/><path d="M7 5.5v3" stroke="var(--risk-critical)" stroke-width="1.2" stroke-linecap="round"/><circle cx="7" cy="10.5" r="0.6" fill="var(--risk-critical)"/></svg>',
+    yellow: '<svg class="risk-level-icon" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M7 1L1 13h12L7 1z" fill="var(--risk-medium)" opacity="0.15"/><path d="M7 1L1 13h12L7 1z" stroke="var(--risk-medium)" stroke-width="1.2" stroke-linejoin="round"/><path d="M7 5.5v3" stroke="var(--risk-medium)" stroke-width="1.2" stroke-linecap="round"/><circle cx="7" cy="10.5" r="0.6" fill="var(--risk-medium)"/></svg>',
+    green: '<svg class="risk-level-icon" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><circle cx="7" cy="7" r="6" fill="var(--risk-low)" opacity="0.15" stroke="var(--risk-low)" stroke-width="1.2"/><path d="M4.5 7l2 2 3-3.5" stroke="var(--risk-low)" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  };
+  const riskIcon = riskIconMap[riskLevel] || riskIconMap['yellow'];
+
   card.innerHTML = `
     <div class="risk-card-header">
+      ${riskIcon}
       <h3 class="risk-title"></h3>
       ${typeBadge}
       ${confidenceBadge}
@@ -2056,7 +2172,7 @@ function createAIRedlineCard(redline: RedlineItem, _documentId: string): HTMLEle
     <div class="risk-explanation"></div>
     ${redline.recommendation ? `
       <div class="suggested-fix">
-        <strong>Recommendation:</strong> <span class="suggested-fix-text"></span>
+        <strong style="color: var(--accent-red, #ef4444);">RECOMMENDATION:</strong> <span class="suggested-fix-text"></span>${isRecLong ? ' <a href="#" class="expand-rec-link" style="color:var(--accent-primary);font-size:11px;cursor:pointer;">Show more</a>' : ''}
       </div>
     ` : ''}
     <div class="risk-actions">
@@ -2103,6 +2219,16 @@ function createAIRedlineCard(redline: RedlineItem, _documentId: string): HTMLEle
   if (explanationEl) explanationEl.textContent = redline.explanation;
   const suggestedFixEl = card.querySelector('.suggested-fix-text');
   if (suggestedFixEl) suggestedFixEl.textContent = truncatedRec;
+  const expandLink = card.querySelector('.expand-rec-link');
+  if (expandLink && suggestedFixEl) {
+    let expanded = false;
+    expandLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      expanded = !expanded;
+      suggestedFixEl.textContent = expanded ? fullRec : truncatedRec;
+      (expandLink as HTMLElement).textContent = expanded ? 'Show less' : 'Show more';
+    });
+  }
 
   // ARIA labels for screen readers
   card.querySelector('.highlight-btn')?.setAttribute('aria-label', `Highlight in document: ${redline.rule_name}`);
@@ -2198,8 +2324,16 @@ function createAIRedlineCard(redline: RedlineItem, _documentId: string): HTMLEle
       const diffView = document.createElement('div');
       diffView.className = 'diff-view';
       diffView.style.cssText = 'font-family:Georgia,serif;font-size:13px;line-height:1.6;padding:8px;border:1px solid var(--border,#E8E5E0);border-radius:6px;margin-bottom:8px;';
-      diffView.innerHTML = wordDiff(redline.clause_text, result.fix_text);
+      // Prefer edit-based diff (precise strikes/insertions) over LCS word-diff
+      diffView.innerHTML = result.fix_edits?.length
+        ? editsDiff(redline.clause_text, result.fix_edits)
+        : wordDiff(redline.clause_text, result.fix_text);
       wrapper.appendChild(diffView);
+
+      // Store edits on card for precise application
+      if (result.fix_edits?.length) {
+        card.dataset.fixEdits = JSON.stringify(result.fix_edits);
+      }
 
       const reasoning = document.createElement('div');
       reasoning.className = 'generate-reasoning';
@@ -2664,9 +2798,15 @@ async function applyAIRedline(redline: RedlineItem, cardElement: HTMLElement, fi
   try {
     let surgicalSuccess = false;
 
-    // PRIMARY APPROACH: Surgical word-level search+replace (P0 #1 + #5)
-    // This avoids OOXML paragraph destruction and double-tracked revisions
+    // PRIMARY APPROACH: Edit-based surgical replacement
+    // When fix_edits are available, apply each find/replace individually in the document.
+    // This is more precise than replacing the entire clause range.
+    // Falls back to full-range replacement when edits aren't available.
     if (redline.redline_type !== 'missing') {
+      // Check for stored edits
+      const editsJson = cardElement.dataset.fixEdits;
+      const fixEdits: Array<{find: string; replace: string}> = editsJson ? JSON.parse(editsJson) : [];
+
       try {
         await Word.run(async (context) => {
           // Enable tracked changes before applying edits (requires WordApi 1.4+)
@@ -2677,86 +2817,65 @@ async function applyAIRedline(redline: RedlineItem, cardElement: HTMLElement, fi
             log.warn('Could not enable ChangeTrackingMode:', trackErr);
           }
 
-          const result = await findTextInDocument(redline.clause_text, context);
+          if (fixEdits.length > 0) {
+            // EDIT-BASED APPLY: Apply each find/replace pair individually
+            const body = context.document.body;
+            let appliedCount = 0;
 
-          if (!result.range) {
-            // Will fall through to OOXML fallback
-            throw new Error('SURGICAL_NO_RANGE');
-          }
-
-          // Compute word-level diffs between original and replacement
-          const diffs = computeWordDiffs(redline.clause_text, textToApply);
-
-          // Check if there are actual changes to apply
-          const hasChanges = diffs.some(d => d.type !== 'keep');
-          if (!hasChanges) {
-            log.warn('No differences found between original and fix text');
-            throw new Error('SURGICAL_NO_DIFFS');
-          }
-
-          // Collect non-whitespace-only change operations for surgical replacement
-          const changeOps = diffs.filter(d => d.type !== 'keep' && d.oldText.trim() !== '' || (d.type === 'insert' && d.newText.trim() !== ''));
-
-          // For each replacement/deletion, search within the found range and apply
-          // Process in REVERSE order to avoid position shifting
-          const reversedOps = [...changeOps].reverse();
-
-          for (const op of reversedOps) {
-            if (op.type === 'replace' && op.oldText.trim()) {
-              // Search for the old word within the clause range
-              const searchResults = result.range.search(op.oldText, { matchCase: true, matchWholeWord: false });
+            for (const edit of fixEdits) {
+              if (!edit.find) continue;
+              // Search for the exact 'find' text (up to Word's 255 char limit)
+              const searchText = edit.find.length <= 255
+                ? edit.find
+                : edit.find.slice(0, 255);
+              const searchResults = body.search(searchText, { matchCase: true, matchWholeWord: false });
               searchResults.load('items');
               await context.sync();
 
               if (searchResults.items.length > 0) {
-                // Replace with new text — Word natively tracks this change
-                searchResults.items[searchResults.items.length - 1].insertText(op.newText, Word.InsertLocation.replace);
+                // Replace the first match
+                searchResults.items[0].insertText(edit.replace, Word.InsertLocation.replace);
                 await context.sync();
-              }
-            } else if (op.type === 'delete' && op.oldText.trim()) {
-              // Search for the word to delete within the clause range
-              const searchResults = result.range.search(op.oldText, { matchCase: true, matchWholeWord: false });
-              searchResults.load('items');
-              await context.sync();
-
-              if (searchResults.items.length > 0) {
-                searchResults.items[searchResults.items.length - 1].delete();
-                await context.sync();
-              }
-            } else if (op.type === 'insert' && op.newText.trim()) {
-              // For insertions, find preceding context and insert after it
-              // Look backwards in diffs for the nearest 'keep' or 'replace' to use as anchor
-              const opIdx = diffs.indexOf(op);
-              let anchorText = '';
-              for (let ai = opIdx - 1; ai >= 0; ai--) {
-                const prev = diffs[ai];
-                if ((prev.type === 'keep' || prev.type === 'replace') && prev.oldText.trim()) {
-                  anchorText = prev.type === 'keep' ? prev.oldText : prev.newText;
-                  break;
-                }
-              }
-              if (anchorText.trim()) {
-                const anchorResults = result.range.search(anchorText, { matchCase: true, matchWholeWord: false });
-                anchorResults.load('items');
-                await context.sync();
-                if (anchorResults.items.length > 0) {
-                  anchorResults.items[anchorResults.items.length - 1].insertText(op.newText, Word.InsertLocation.after);
-                  await context.sync();
-                }
+                appliedCount++;
+                log.info(`Edit applied: "${edit.find.slice(0, 40)}..." → "${edit.replace.slice(0, 40)}..."`);
+              } else {
+                log.warn(`Edit find text not found in document: "${edit.find.slice(0, 60)}..."`);
               }
             }
-          }
 
-          // Add a comment explaining the redline
-          try {
-            result.range.insertComment(`ContraRed: ${redline.explanation || redline.rule_name || 'AI-suggested revision'}`);
+            if (appliedCount > 0) {
+              surgicalSuccess = true;
+              log.info(`Edit-based apply: ${appliedCount}/${fixEdits.length} edits applied`);
+            } else {
+              throw new Error('SURGICAL_NO_RANGE');
+            }
+          } else {
+            // FALLBACK: Full-range replacement (legacy path)
+            const result = await findTextInDocument(redline.clause_text, context);
+
+            if (!result.range) {
+              throw new Error('SURGICAL_NO_RANGE');
+            }
+
+            if (textToApply === redline.clause_text) {
+              log.warn('No differences found between original and fix text');
+              throw new Error('SURGICAL_NO_DIFFS');
+            }
+
+            result.range.insertText(textToApply, Word.InsertLocation.replace);
             await context.sync();
-          } catch (commentErr) {
-            log.warn('Could not insert comment:', commentErr);
-          }
 
-          surgicalSuccess = true;
-          log.info(`Surgical replace succeeded for: ${redline.rule_name}`);
+            // Add a comment explaining the redline
+            try {
+              result.range.insertComment(`ContraRed: ${redline.explanation || redline.rule_name || 'AI-suggested revision'}`);
+              await context.sync();
+            } catch (commentErr) {
+              log.warn('Could not insert comment:', commentErr);
+            }
+
+            surgicalSuccess = true;
+            log.info(`Surgical replace succeeded for: ${redline.rule_name}`);
+          }
         });
       } catch (surgicalErr) {
         const errMsg = surgicalErr instanceof Error ? surgicalErr.message : String(surgicalErr);
@@ -2973,12 +3092,40 @@ async function applyAllRedlines(): Promise<void> {
           const diffView = document.createElement('div');
           diffView.className = 'diff-view';
           diffView.style.cssText = 'font-family:Georgia,serif;font-size:13px;line-height:1.6;padding:8px;border:1px solid var(--border,#E8E5E0);border-radius:6px;margin-bottom:8px;';
-          diffView.innerHTML = wordDiff(redline.clause_text, result.fix_text);
+          diffView.innerHTML = result.fix_edits?.length
+            ? editsDiff(redline.clause_text, result.fix_edits)
+            : wordDiff(redline.clause_text, result.fix_text);
           wrapper.appendChild(diffView);
+          if (result.fix_edits?.length) {
+            card.dataset.fixEdits = JSON.stringify(result.fix_edits);
+          }
           const reasoning = document.createElement('div');
           reasoning.className = 'generate-reasoning';
           reasoning.textContent = result.reasoning;
           wrapper.appendChild(reasoning);
+
+          // Add Apply + Regenerate buttons (same as individual generate)
+          const actions = document.createElement('div');
+          actions.className = 'generate-actions';
+          const applyBtn = document.createElement('button');
+          applyBtn.className = 'btn btn-primary btn-sm apply-btn';
+          applyBtn.textContent = 'Apply to Document';
+          applyBtn.addEventListener('click', async () => {
+            applyBtn.disabled = true;
+            applyBtn.textContent = 'Applying...';
+            try {
+              await applyAIRedline(redline, card, result.fix_text);
+              genPanel.style.display = 'none';
+            } catch (err) {
+              showToastOnCard(card, 'Apply failed: ' + (err instanceof Error ? err.message : String(err) || 'Unknown error'));
+            } finally {
+              applyBtn.disabled = false;
+              applyBtn.textContent = 'Apply to Document';
+            }
+          });
+          actions.appendChild(applyBtn);
+          wrapper.appendChild(actions);
+
           genPanel.appendChild(wrapper);
         }
         generated++;
