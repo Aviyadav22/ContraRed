@@ -48,6 +48,26 @@ def test_should_include_clause():
     req.nda_details.non_solicitation = True
     assert agent._should_include({"is_required": False, "conditional_on": "nda_details.non_solicitation == true"}, req) is True
 
+def test_select_tier_global_balanced():
+    from app.services.drafting.agents.draft_agent import DraftAgent
+    tier = DraftAgent._select_tier("balanced", "balanced", clause_category=None, risk_profile={})
+    assert tier == "acceptable"
+
+def test_select_tier_per_clause_override():
+    from app.services.drafting.agents.draft_agent import DraftAgent
+    tier = DraftAgent._select_tier("balanced", "balanced", clause_category="indemnification", risk_profile={"indemnification": "protective"})
+    assert tier == "preferred"
+
+def test_select_tier_per_clause_commercial():
+    from app.services.drafting.agents.draft_agent import DraftAgent
+    tier = DraftAgent._select_tier("party_1", "protective", clause_category="boilerplate", risk_profile={"boilerplate": "commercial"})
+    assert tier == "fallback"
+
+def test_select_tier_unknown_category_falls_back_to_global():
+    from app.services.drafting.agents.draft_agent import DraftAgent
+    tier = DraftAgent._select_tier("party_1", "protective", clause_category="unknown", risk_profile={"indemnification": "protective"})
+    assert tier == "preferred"
+
 @pytest.mark.asyncio
 async def test_generate_draft_structure():
     from app.services.drafting.agents.draft_agent import DraftAgent

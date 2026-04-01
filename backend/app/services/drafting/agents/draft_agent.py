@@ -15,6 +15,9 @@ import time
 from datetime import date
 from typing import Any, Dict, List, Optional
 
+from app.core.config import settings
+from app.services.prompt_sanitizer import sanitize_for_prompt
+
 from app.services.drafting.models import (
     DraftMetadata,
     DraftRequest,
@@ -56,13 +59,29 @@ class DraftAgent:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _select_tier(perspective: str, risk_appetite: str) -> str:
+    def _select_tier(
+        perspective: str,
+        risk_appetite: str,
+        clause_category: str | None = None,
+        risk_profile: dict[str, str] | None = None,
+    ) -> str:
         """Map (perspective, risk_appetite) to a playbook tier name.
 
-        Rules:
-        - balanced perspective always returns "acceptable"
-        - Otherwise look up (perspective, risk_appetite) in the matrix
+        Per-clause override via *risk_profile* takes priority when the
+        clause_category is present in the profile.  Otherwise falls back
+        to the global perspective/risk_appetite matrix.
         """
+        # Per-clause override takes priority
+        if risk_profile and clause_category and clause_category in risk_profile:
+            override = risk_profile[clause_category].lower()
+            return {
+                "protective": "preferred",
+                "balanced": "acceptable",
+                "commercial": "fallback",
+                "aggressive": "fallback",
+            }.get(override, "acceptable")
+
+        # Global fallback (existing logic)
         if perspective == "balanced":
             return "acceptable"
         return _TIER_MATRIX.get((perspective, risk_appetite), "acceptable")
@@ -228,7 +247,8 @@ class DraftAgent:
             if not is_available():
                 return text
 
-            model = get_generative_model("gemini-2.5-flash")
+            from app.core.config import settings
+            model = get_generative_model(settings.GEMINI_MODEL)
 
             prompt = (
                 "You are a contract drafting assistant. Refine the following "
@@ -238,10 +258,10 @@ class DraftAgent:
                 "clause text, nothing else.\n\n"
             )
             if guidance:
-                prompt += f"Drafting guidance: {guidance}\n\n"
+                prompt += f"Drafting guidance: {sanitize_for_prompt(guidance, max_length=2000)}\n\n"
             if jurisdiction_variant:
-                prompt += f"Jurisdiction note: {jurisdiction_variant}\n\n"
-            prompt += f"Clause:\n{text}"
+                prompt += f"Jurisdiction note: {sanitize_for_prompt(jurisdiction_variant, max_length=500)}\n\n"
+            prompt += f"Clause:\n{sanitize_for_prompt(text, max_length=10000)}"
 
             response = await model.generate_content_async(
                 prompt,
@@ -266,7 +286,7 @@ class DraftAgent:
         """Build a full RawDraft from *req* using *playbook* clause templates."""
         start = time.monotonic()
 
-        tier_name = self._select_tier(req.drafting_perspective, req.risk_appetite)
+        global_tier = self._select_tier(req.drafting_perspective, req.risk_appetite)
         placeholders = self._build_placeholders(req)
 
         sections: List[DraftSection] = []
@@ -284,6 +304,15 @@ class DraftAgent:
         for idx, clause in enumerate(sorted_clauses):
             if not self._should_include(clause, req):
                 continue
+
+            # Per-clause risk calibration
+            clause_category = clause.get("category", clause.get("clause_type"))
+            tier_name = self._select_tier(
+                req.drafting_perspective,
+                req.risk_appetite,
+                clause_category=clause_category,
+                risk_profile=req.risk_profile or None,
+            )
 
             # Select tier content
             tier_data = clause.get(tier_name, clause.get("acceptable", {}))
@@ -335,7 +364,7 @@ class DraftAgent:
             defined_terms=defined_terms,
             metadata=DraftMetadata(
                 playbook_id=playbook.get("contract_type", req.contract_type),
-                model="gemini-2.5-flash",
+                model=settings.GEMINI_MODEL,
                 generation_seconds=round(elapsed, 3),
                 tokens_used=tokens_used,
             ),

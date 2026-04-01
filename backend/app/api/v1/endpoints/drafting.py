@@ -32,16 +32,40 @@ router = APIRouter()
 # Auth dependency — gracefully degrade in test environments
 # ---------------------------------------------------------------------------
 
-try:
-    from app.api.v1.endpoints.auth import get_current_user  # type: ignore
-except ImportError:
-    get_current_user = None  # type: ignore
+from app.api.v1.endpoints.auth import get_current_user
 
 # ---------------------------------------------------------------------------
 # In-memory draft store (replace with DB persistence when ready)
 # ---------------------------------------------------------------------------
 
+import re as _re
+import time as _time
+
 _draft_store: Dict[str, Any] = {}
+_draft_timestamps: Dict[str, float] = {}
+_DRAFT_TTL_SECONDS = 3600  # 1 hour
+_DRAFT_MAX_ENTRIES = 200
+
+
+def _store_draft(draft_id: str, result: Any) -> None:
+    """Store a draft with TTL tracking and size limits."""
+    _cleanup_drafts()
+    _draft_store[draft_id] = result
+    _draft_timestamps[draft_id] = _time.time()
+
+
+def _cleanup_drafts() -> None:
+    """Remove expired drafts and enforce max entries."""
+    now = _time.time()
+    expired = [k for k, ts in _draft_timestamps.items() if now - ts > _DRAFT_TTL_SECONDS]
+    for k in expired:
+        _draft_store.pop(k, None)
+        _draft_timestamps.pop(k, None)
+    # If still over limit, remove oldest
+    while len(_draft_store) > _DRAFT_MAX_ENTRIES:
+        oldest = min(_draft_timestamps, key=_draft_timestamps.get)
+        _draft_store.pop(oldest, None)
+        _draft_timestamps.pop(oldest, None)
 
 # ---------------------------------------------------------------------------
 # Request / Response schemas
@@ -89,6 +113,8 @@ class GenerateRequest(BaseModel):
     governing_law: str = "Delaware"
     nda_details: Optional[NDADetailsInput] = None
     saas_details: Optional[SaaSDetailsInput] = None
+    risk_profile: Dict[str, str] = Field(default_factory=dict)
+    negotiation_context: str = ""
 
 
 class GenerateResponse(BaseModel):
@@ -200,7 +226,7 @@ async def get_intake_schema(contract_type: str = Query("nda_mutual")):
 
 
 @router.post("/generate", response_model=GenerateResponse)
-async def generate_draft(req: GenerateRequest):
+async def generate_draft(req: GenerateRequest, current_user = Depends(get_current_user)):
     """Generate a contract draft using the multi-agent pipeline."""
     # Build the raw input dict expected by the orchestrator
     raw_input: Dict[str, Any] = {
@@ -217,6 +243,10 @@ async def generate_draft(req: GenerateRequest):
         raw_input["nda_details"] = req.nda_details.model_dump()
     if req.saas_details:
         raw_input["saas_details"] = req.saas_details.model_dump()
+    if req.risk_profile:
+        raw_input["risk_profile"] = req.risk_profile
+    if req.negotiation_context:
+        raw_input["negotiation_context"] = req.negotiation_context
 
     try:
         result = await drafting_orchestrator.run(raw_input)
@@ -227,7 +257,7 @@ async def generate_draft(req: GenerateRequest):
         raise HTTPException(status_code=500, detail="Internal error during draft generation")
 
     draft_id = str(uuid.uuid4())
-    _draft_store[draft_id] = result
+    _store_draft(draft_id, result)
 
     qr = result.quality_report
     return GenerateResponse(
@@ -243,14 +273,16 @@ async def generate_draft(req: GenerateRequest):
 
 
 @router.get("/download/{draft_id}")
-async def download_draft(draft_id: str):
+async def download_draft(draft_id: str, current_user = Depends(get_current_user)):
     """Download the generated contract as a .docx file."""
     result = _draft_store.get(draft_id)
     if not result:
         raise HTTPException(status_code=404, detail="Draft not found")
 
     docx_bytes = render_docx(result)
-    filename = f"{result.draft.contract_type}_{draft_id[:8]}.docx"
+    safe_type = _re.sub(r'[^\w\-.]', '_', result.draft.contract_type)
+    safe_id = _re.sub(r'[^\w\-]', '', draft_id[:8])
+    filename = f"{safe_type}_{safe_id}.docx"
     return StreamingResponse(
         io.BytesIO(docx_bytes),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -259,7 +291,7 @@ async def download_draft(draft_id: str):
 
 
 @router.get("/addin-payload/{draft_id}")
-async def get_addin_payload(draft_id: str):
+async def get_addin_payload(draft_id: str, current_user = Depends(get_current_user)):
     """Return the draft as a JSON payload for the Word add-in."""
     result = _draft_store.get(draft_id)
     if not result:
@@ -269,7 +301,7 @@ async def get_addin_payload(draft_id: str):
 
 
 @router.get("/playbooks", response_model=List[PlaybookInfo])
-async def list_playbooks():
+async def list_playbooks(current_user = Depends(get_current_user)):
     """List available drafting playbooks."""
     items: List[PlaybookInfo] = []
     for ct, pb in PLAYBOOK_REGISTRY.items():

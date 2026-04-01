@@ -89,3 +89,34 @@ def test_final_draft():
                         annotations_applied=0, conflicts_flagged=0, open_annotations=[])
     fd = FinalDraft(draft=rd, quality_report=qr)
     assert fd.draft.title == "NDA"
+
+
+def test_draft_request_with_risk_profile():
+    from app.services.drafting.models import DraftRequest, PartyInfo
+    req = DraftRequest(
+        contract_type="saas",
+        drafting_perspective="party_1",
+        risk_appetite="balanced",
+        jurisdiction="US-DE",
+        party_1=PartyInfo(name="Acme", entity_type="Inc", jurisdiction="US-DE"),
+        party_2=PartyInfo(name="Beta", entity_type="LLC", jurisdiction="US-CA"),
+        term_months=12,
+        governing_law="Delaware",
+        risk_profile={"indemnification": "protective", "limitation_of_liability": "balanced"},
+    )
+    assert req.risk_profile["indemnification"] == "protective"
+
+
+def test_draft_request_risk_profile_defaults_empty():
+    from app.services.drafting.models import DraftRequest, PartyInfo
+    req = DraftRequest(
+        contract_type="nda_mutual",
+        drafting_perspective="balanced",
+        risk_appetite="balanced",
+        jurisdiction="US-DE",
+        party_1=PartyInfo(name="A", entity_type="Inc", jurisdiction="US-DE"),
+        party_2=PartyInfo(name="B", entity_type="LLC", jurisdiction="US-CA"),
+        term_months=12,
+        governing_law="Delaware",
+    )
+    assert req.risk_profile == {}

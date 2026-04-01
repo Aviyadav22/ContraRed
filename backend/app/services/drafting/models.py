@@ -50,6 +50,8 @@ class DraftRequest(BaseModel):
     venue: Optional[str] = None
     nda_details: Optional[NDADetails] = None
     saas_details: Optional[SaaSDetails] = None
+    risk_profile: dict[str, str] = Field(default_factory=dict)
+    negotiation_context: str = ""
 
 
 class DraftSection(BaseModel):
