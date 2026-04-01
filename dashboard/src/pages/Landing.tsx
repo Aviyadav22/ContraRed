@@ -1,417 +1,764 @@
+import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
+import {
+  Shield,
+  BookOpen,
+  PenTool,
+  Library,
+  BarChart3,
+  Users,
+  Upload,
+  Search,
+  ArrowRight,
+} from 'lucide-react';
+import { Button } from '@/components/ui/Button';
+import { Card } from '@/components/ui/Card';
 
-const DOWNLOAD_URL = import.meta.env.VITE_ADDIN_DOWNLOAD_URL || '/Install-ContraRed.bat';
+/* -------------------------------------------------------------------------- */
+/*  Data                                                                       */
+/* -------------------------------------------------------------------------- */
 
-const TRUST_INDICATORS = [
-    { text: 'Zero data retention', icon: <svg width="18" height="18" fill="none" stroke="#0f172a" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg> },
-    { text: 'Enterprise-grade security', icon: <svg width="18" height="18" fill="none" stroke="#0f172a" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg> },
-    { text: 'Analysis in seconds', icon: <svg width="18" height="18" fill="none" stroke="#0f172a" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg> },
-    { text: 'Works inside Microsoft Word', icon: <svg width="18" height="18" fill="none" stroke="#0f172a" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg> },
+const FEATURES = [
+  {
+    icon: Shield,
+    title: 'AI Contract Review',
+    description:
+      'Analyze contracts in seconds with AI that understands legal nuance.',
+  },
+  {
+    icon: BookOpen,
+    title: 'Smart Playbooks',
+    description:
+      'Codify your firm\'s expertise into reusable review playbooks.',
+  },
+  {
+    icon: PenTool,
+    title: 'Live Redlining',
+    description:
+      'Generate and apply fixes directly in Microsoft Word.',
+  },
+  {
+    icon: Library,
+    title: 'Clause Library',
+    description:
+      'Build a library of approved language for consistent contracting.',
+  },
+  {
+    icon: BarChart3,
+    title: 'Risk Analytics',
+    description:
+      'Track risk exposure across your entire contract portfolio.',
+  },
+  {
+    icon: Users,
+    title: 'Team Collaboration',
+    description:
+      'Collaborate with your team with role-based access and audit trails.',
+  },
 ];
 
-const HOW_IT_WORKS_STEPS = [
-    {
-        step: '01',
-        title: 'Install the Add-in',
-        desc: 'Download the installer, run it, and ContraRed appears as a sidebar in Word. Takes under 60 seconds.',
-    },
-    {
-        step: '02',
-        title: 'Run the Analysis',
-        desc: 'Open any contract and click "Scan Document." ContraRed reads every clause against your risk playbook.',
-    },
-    {
-        step: '03',
-        title: 'Review & Redline',
-        desc: 'Review flagged clauses with explanations and suggested fixes. Accept suggestions to apply redlines directly.',
-    },
+const STEPS = [
+  {
+    icon: Upload,
+    title: 'Upload',
+    description: 'Upload your contract or start from a template.',
+  },
+  {
+    icon: Search,
+    title: 'Review',
+    description: 'AI analyzes every clause against your playbook.',
+  },
+  {
+    icon: PenTool,
+    title: 'Redline',
+    description: 'Accept, modify, or reject suggestions with one click.',
+  },
 ];
 
 const STATS = [
-    { value: 'Fast', label: 'Analysis time' },
-    { value: '100%', label: 'Clauses checked' },
-    { value: 'Zero', label: 'Data retained' },
-    { value: 'one-click', label: 'Install' },
+  { value: '10,000+', label: 'Contracts Reviewed' },
+  { value: '94%', label: 'Average Accuracy' },
+  { value: '3x', label: 'Faster Review' },
+  { value: '50+', label: 'Playbook Templates' },
 ];
 
-const FEATURE_1_ITEMS = ['Color-coded severity badges (Critical, Warning, Safe)', 'Clause-by-clause risk breakdown', 'Executive-ready risk summary with counts'];
-const FEATURE_2_ITEMS = ['Surgical clause-level replacements', 'Track-changes style visual diff', 'One-click accept or reject each suggestion'];
-const FEATURE_3_ITEMS = ['Create unlimited custom rule sets', 'Switch playbooks per deal type (MSA, NDA, SaaS)', 'Enforce organization-wide compliance standards'];
-const FEATURE_4_ITEMS = ['One-click installation via batch script', 'Works with .docx and .doc formats', 'Custom playbooks for different deal types'];
+const FOOTER_LINKS = {
+  Product: [
+    { label: 'Features', href: '#features' },
+    { label: 'Pricing', href: '#pricing' },
+    { label: 'Integrations', href: '#' },
+  ],
+  Resources: [
+    { label: 'Documentation', href: '#' },
+    { label: 'API Reference', href: '#' },
+    { label: 'Blog', href: '#' },
+  ],
+  Company: [
+    { label: 'About', href: '#about' },
+    { label: 'Careers', href: '#' },
+    { label: 'Contact', href: 'mailto:contact@contrared.ai' },
+  ],
+  Legal: [
+    { label: 'Privacy Policy', href: '#' },
+    { label: 'Terms of Service', href: '#' },
+    { label: 'Security', href: '#' },
+  ],
+};
+
+/* -------------------------------------------------------------------------- */
+/*  Component                                                                  */
+/* -------------------------------------------------------------------------- */
 
 export default function Landing() {
-    return (
-        <div className="font-['Inter',system-ui,sans-serif] text-slate-900">
-            {/* ================================================================
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 20);
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  return (
+    <div
+      style={{
+        fontFamily: 'var(--font-sans, Inter, system-ui, sans-serif)',
+        color: 'var(--text-primary)',
+        background: 'var(--bg-app)',
+        scrollBehavior: 'smooth',
+      }}
+    >
+      {/* ================================================================
           NAVIGATION
           ================================================================ */}
-            <nav className="fixed top-0 left-0 right-0 z-50 backdrop-blur-xl bg-white/85 border-b border-slate-200">
-                <div className="max-w-7xl mx-auto px-8 h-16 flex items-center justify-between">
-                    <img src="/logo.png" alt="ContraRed" className="h-20" />
-                    <div className="flex items-center gap-4 md:gap-10">
-                        <a href="#features" className="hidden md:block text-sm font-medium text-slate-600 no-underline hover:text-slate-900">Features</a>
-                        <a href="#how-it-works" className="hidden md:block text-sm font-medium text-slate-600 no-underline hover:text-slate-900">How It Works</a>
-                        <a href="#contact" className="hidden md:block text-sm font-medium text-slate-600 no-underline hover:text-slate-900">Contact</a>
-                        <Link
-                            to="/login"
-                            className="text-sm font-semibold text-white bg-slate-900 px-6 py-2.5 rounded-lg no-underline hover:bg-slate-800 transition-colors"
-                        >
-                            Sign In
-                        </Link>
-                    </div>
-                </div>
-            </nav>
+      <nav
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 50,
+          height: 64,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          transition: 'background-color 0.3s, border-color 0.3s, backdrop-filter 0.3s',
+          backgroundColor: scrolled ? 'var(--bg-surface)' : 'transparent',
+          borderBottom: scrolled ? '1px solid var(--border)' : '1px solid transparent',
+          backdropFilter: scrolled ? 'blur(12px)' : 'none',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 1200,
+            width: '100%',
+            padding: '0 32px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+          }}
+        >
+          {/* Logo */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: 6,
+                backgroundColor: 'var(--accent)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#FFFFFF',
+                fontWeight: 700,
+                fontSize: 18,
+              }}
+            >
+              C
+            </div>
+            <span style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' }}>
+              ContraRed
+            </span>
+          </div>
 
-            {/* ================================================================
+          {/* Nav links */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 32 }}>
+            <a href="#features" style={navLinkStyle}>Features</a>
+            <a href="#pricing" style={navLinkStyle}>Pricing</a>
+            <a href="#about" style={navLinkStyle}>About</a>
+            <Link
+              to="/login"
+              style={{
+                ...navLinkStyle,
+                color: 'var(--text-secondary)',
+              }}
+            >
+              Sign In
+            </Link>
+            <Link to="/register">
+              <Button variant="primary" size="sm">Get Started</Button>
+            </Link>
+          </div>
+        </div>
+      </nav>
+
+      {/* ================================================================
           HERO SECTION
           ================================================================ */}
-            <section className="pt-24 pb-20 text-center bg-white relative overflow-hidden">
-                {/* Subtle grid background */}
+      <section
+        style={{
+          position: 'relative',
+          paddingTop: 160,
+          paddingBottom: 120,
+          textAlign: 'center',
+          overflow: 'hidden',
+          background: 'linear-gradient(180deg, #0F172A 0%, #1E293B 100%)',
+        }}
+      >
+        {/* Subtle grid pattern */}
+        <div
+          style={{
+            position: 'absolute',
+            inset: 0,
+            opacity: 0.06,
+            backgroundImage:
+              'linear-gradient(var(--text-muted) 1px, transparent 1px), linear-gradient(90deg, var(--text-muted) 1px, transparent 1px)',
+            backgroundSize: '48px 48px',
+          }}
+        />
+
+        <div style={{ position: 'relative', maxWidth: 900, margin: '0 auto', padding: '0 32px' }}>
+          <h1
+            style={{
+              fontSize: 'clamp(36px, 5vw, 56px)',
+              fontWeight: 800,
+              lineHeight: 1.1,
+              letterSpacing: '-0.02em',
+              color: 'var(--text-primary)',
+              margin: '0 0 24px',
+            }}
+          >
+            Contract Intelligence,{' '}
+            <span style={{ color: 'var(--accent-text)' }}>Reimagined</span>
+          </h1>
+
+          <p
+            style={{
+              fontSize: 20,
+              lineHeight: 1.6,
+              color: 'var(--text-secondary)',
+              maxWidth: 600,
+              margin: '0 auto 40px',
+            }}
+          >
+            AI-powered contract review that thinks like your best attorney.
+            Catch risks, generate redlines, and close deals faster.
+          </p>
+
+          {/* CTAs */}
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <Link to="/register">
+              <Button
+                variant="primary"
+                size="lg"
+                icon={<ArrowRight size={16} />}
+                style={{
+                  padding: '0 28px',
+                  height: 44,
+                  fontSize: 15,
+                  boxShadow: '0 0 24px var(--accent-glow)',
+                }}
+              >
+                Start Free Trial
+              </Button>
+            </Link>
+            <a href="#features" style={{ textDecoration: 'none' }}>
+              <Button variant="secondary" size="lg" style={{ padding: '0 28px', height: 44, fontSize: 15 }}>
+                Watch Demo
+              </Button>
+            </a>
+          </div>
+
+          {/* Trust badge */}
+          <div
+            style={{
+              marginTop: 56,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
+              color: 'var(--text-muted)',
+              fontSize: 14,
+            }}
+          >
+            <div
+              style={{
+                display: 'flex',
+                gap: 4,
+              }}
+            >
+              {[...Array(5)].map((_, i) => (
                 <div
-                    className="absolute inset-0 opacity-40"
-                    style={{
-                        backgroundImage: 'radial-gradient(#e2e8f0 1px, transparent 1px)',
-                        backgroundSize: '24px 24px',
-                    }}
+                  key={i}
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: '50%',
+                    backgroundColor: 'var(--bg-elevated)',
+                    border: '2px solid var(--bg-surface)',
+                    marginLeft: i > 0 ? -8 : 0,
+                  }}
                 />
+              ))}
+            </div>
+            <span style={{ marginLeft: 8 }}>Trusted by 100+ legal teams</span>
+          </div>
+        </div>
+      </section>
 
-                <div className="relative max-w-[900px] mx-auto px-8">
-                    {/* Headline */}
-                    <h1 className="text-4xl md:text-7xl font-extrabold tracking-tight leading-none mb-6 text-slate-900">
-                        Catch liabilities
-                        <br />
-                        <span className="text-red-600">Before</span> you sign
-                    </h1>
-
-                    {/* Subtitle */}
-                    <p className="text-xl leading-relaxed text-slate-500 mx-auto mb-10 max-w-[620px]">
-                        ContraRed detects risky clauses, generates precise redline suggestions,
-                        and produces executive risk summaries — all inside Microsoft Word.
-                    </p>
-
-                    {/* CTA Buttons */}
-                    <div className="flex justify-center gap-4">
-                        <a
-                            href={DOWNLOAD_URL}
-                            className="inline-flex items-center gap-2.5 bg-slate-900 text-white px-8 py-3.5 rounded-lg text-[15px] font-semibold no-underline border border-slate-900 hover:bg-slate-800 transition-colors"
-                        >
-                            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                            Download Installer
-                        </a>
-                        <a
-                            href="#features"
-                            className="inline-flex items-center gap-2 bg-white text-slate-900 px-8 py-3.5 rounded-lg text-[15px] font-semibold no-underline border border-slate-200 hover:bg-slate-50 transition-colors"
-                        >
-                            See How It Works &rarr;
-                        </a>
-                    </div>
-                </div>
-
-                {/* Hero Video */}
-                <div className="max-w-[1100px] mx-auto mt-16 px-8">
-                    <div className="rounded-2xl overflow-hidden shadow-2xl border border-slate-200 bg-[#0a0a0a]">
-                        <video
-                            autoPlay
-                            loop
-                            muted
-                            playsInline
-                            className="w-full block"
-                        >
-                            <source src="/demo-video.mp4" type="video/mp4" />
-                        </video>
-                    </div>
-                </div>
-            </section>
-
-            {/* ================================================================
-          TRUST INDICATORS
+      {/* ================================================================
+          FEATURES SECTION
           ================================================================ */}
-            <section className="bg-slate-50 border-y border-slate-200">
-                <div className="max-w-[1100px] mx-auto px-8 py-12 flex justify-center gap-6 md:gap-16 flex-wrap">
-                    {TRUST_INDICATORS.map((item) => (
-                        <div key={item.text} className="flex items-center gap-2.5">
-                            {item.icon}
-                            <span className="text-sm font-medium text-slate-600">{item.text}</span>
-                        </div>
-                    ))}
-                </div>
-            </section>
+      <section
+        id="features"
+        style={{
+          padding: '96px 32px',
+          background: 'var(--bg-app)',
+        }}
+      >
+        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
+          {/* Section header */}
+          <div style={{ textAlign: 'center', marginBottom: 64 }}>
+            <p
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                color: 'var(--accent-text)',
+                marginBottom: 12,
+              }}
+            >
+              Capabilities
+            </p>
+            <h2
+              style={{
+                fontSize: 'clamp(28px, 3.5vw, 40px)',
+                fontWeight: 700,
+                letterSpacing: '-0.01em',
+                color: 'var(--text-primary)',
+                margin: 0,
+              }}
+            >
+              Built for Legal Professionals
+            </h2>
+          </div>
 
-            {/* ================================================================
-          FEATURES — Alternating Image/Text Sections
-          ================================================================ */}
-            <section id="features" className="pt-28 pb-10 bg-white">
-                <div className="max-w-[1100px] mx-auto px-8 text-center mb-20">
-                    <p className="text-[13px] font-semibold text-red-600 tracking-widest uppercase mb-4">
-                        CAPABILITIES
+          {/* Feature grid */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+              gap: 24,
+            }}
+          >
+            {FEATURES.map((feature) => {
+              const Icon = feature.icon;
+              return (
+                <Card key={feature.title} variant="default" padding="spacious">
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                    <div
+                      style={{
+                        width: 44,
+                        height: 44,
+                        borderRadius: 10,
+                        backgroundColor: 'var(--accent-subtle)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      <Icon size={22} style={{ color: 'var(--accent-text)' }} />
+                    </div>
+                    <h3
+                      style={{
+                        fontSize: 17,
+                        fontWeight: 600,
+                        color: 'var(--text-primary)',
+                        margin: 0,
+                      }}
+                    >
+                      {feature.title}
+                    </h3>
+                    <p
+                      style={{
+                        fontSize: 14,
+                        lineHeight: 1.6,
+                        color: 'var(--text-secondary)',
+                        margin: 0,
+                      }}
+                    >
+                      {feature.description}
                     </p>
-                    <h2 className="text-5xl font-extrabold tracking-tight mb-4 text-slate-900">
-                        Every clause. Every risk. Every fix.
-                    </h2>
-                    <p className="text-lg text-slate-500 max-w-[600px] mx-auto">
-                        Purpose-built for legal teams who review dozens of contracts every week.
-                    </p>
-                </div>
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        </div>
+      </section>
 
-                {/* Feature 1: Contract Analysis */}
-                <div className="max-w-[1200px] mx-auto mb-28 px-8 flex flex-col md:flex-row items-center gap-8 md:gap-20">
-                    <div className="flex-1">
-                        <div className="inline-flex items-center gap-2 bg-red-500/[0.08] text-red-600 px-3.5 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider mb-5">
-                            Risk Detection
-                        </div>
-                        <h3 className="text-4xl font-bold tracking-tight mb-4 text-slate-900">
-                            Full contract risk summary in seconds
-                        </h3>
-                        <p className="text-base leading-relaxed text-slate-500 mb-6">
-                            Every clause is analyzed against your playbook rules. Critical liabilities like unlimited indemnification,
-                            auto-renewal traps, and weak security guarantees are flagged instantly — with severity scoring and clause-level citations.
-                        </p>
-                        <ul className="list-none p-0 flex flex-col gap-3">
-                            {FEATURE_1_ITEMS.map((item) => (
-                                <li key={item} className="flex items-start gap-2.5 text-sm text-slate-700">
-                                    <svg width="18" height="18" fill="none" stroke="#22c55e" viewBox="0 0 24 24" className="shrink-0 mt-0.5"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
-                                    {item}
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                    <div className="flex-[1.2]">
-                        <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/10">
-                            <img
-                                src="/feature-risk-summary.png"
-                                alt="Risk Summary"
-                                className="w-full block"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                            />
-                        </div>
-                    </div>
-                </div>
-
-                {/* Feature 2: Surgical Redlining — reversed layout */}
-                <div className="max-w-[1200px] mx-auto mb-28 px-8 flex flex-col md:flex-row-reverse items-center gap-8 md:gap-20">
-                    <div className="flex-1">
-                        <div className="inline-flex items-center gap-2 bg-blue-600/[0.08] text-blue-600 px-3.5 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider mb-5">
-                            Precision Redlining
-                        </div>
-                        <h3 className="text-4xl font-bold tracking-tight mb-4 text-slate-900">
-                            Detect, highlight, and fix — in one click
-                        </h3>
-                        <p className="text-base leading-relaxed text-slate-500 mb-6">
-                            Each risky clause comes with a precise replacement suggestion, drafted in legal language.
-                            Red strikethrough marks the original, blue text shows the recommended fix — just like track changes.
-                        </p>
-                        <ul className="list-none p-0 flex flex-col gap-3">
-                            {FEATURE_2_ITEMS.map((item) => (
-                                <li key={item} className="flex items-start gap-2.5 text-sm text-slate-700">
-                                    <svg width="18" height="18" fill="none" stroke="#2563eb" viewBox="0 0 24 24" className="shrink-0 mt-0.5"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
-                                    {item}
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                    <div className="flex-[1.2]">
-                        <div className="rounded-2xl overflow-hidden shadow-2xl border border-slate-200">
-                            <img
-                                src="/feature-redline.png"
-                                alt="Precision Redlining"
-                                className="w-full block"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                            />
-                        </div>
-                    </div>
-                </div>
-
-
-                {/* Feature 3: Custom Playbooks */}
-                <div className="max-w-[1200px] mx-auto mb-28 px-8 flex flex-col md:flex-row items-center gap-8 md:gap-20">
-                    <div className="flex-1">
-                        <div className="inline-flex items-center gap-2 bg-green-500/[0.08] text-green-600 px-3.5 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider mb-5">
-                            Custom Playbooks
-                        </div>
-                        <h3 className="text-4xl font-bold tracking-tight mb-4 text-slate-900">
-                            Your rules. Your risk framework.
-                        </h3>
-                        <p className="text-base leading-relaxed text-slate-500 mb-6">
-                            Define exactly what matters to your organization. Create custom playbooks with specific rules for
-                            indemnification caps, IP ownership, data handling, termination clauses, and anything else your
-                            legal team needs to enforce — then select the right playbook for each deal type.
-                        </p>
-                        <ul className="list-none p-0 flex flex-col gap-3">
-                            {FEATURE_3_ITEMS.map((item) => (
-                                <li key={item} className="flex items-start gap-2.5 text-sm text-slate-700">
-                                    <svg width="18" height="18" fill="none" stroke="#16a34a" viewBox="0 0 24 24" className="shrink-0 mt-0.5"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
-                                    {item}
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                    <div className="flex-[1.2]">
-                        <div className="rounded-2xl overflow-hidden shadow-2xl border border-white/10">
-                            <img
-                                src="/feature-playbook.png"
-                                alt="Custom Playbooks"
-                                className="w-full block"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                            />
-                        </div>
-                    </div>
-                </div>
-
-                {/* Feature 4: Word Integration — reversed */}
-                <div className="max-w-[1200px] mx-auto mb-20 px-8 flex flex-col md:flex-row-reverse items-center gap-8 md:gap-20">
-                    <div className="flex-1">
-                        <div className="inline-flex items-center gap-2 bg-indigo-500/[0.08] text-indigo-500 px-3.5 py-1.5 rounded-md text-xs font-bold uppercase tracking-wider mb-5">
-                            Native Integration
-                        </div>
-                        <h3 className="text-4xl font-bold tracking-tight mb-4 text-slate-900">
-                            Lives inside Microsoft Word
-                        </h3>
-                        <p className="text-base leading-relaxed text-slate-500 mb-6">
-                            No context-switching. No uploads. ContraRed runs as a sidebar in Microsoft Word.
-                            Open a contract, click &quot;Scan Document,&quot; and get your risk report without leaving the document.
-                        </p>
-                        <ul className="list-none p-0 flex flex-col gap-3">
-                            {FEATURE_4_ITEMS.map((item) => (
-                                <li key={item} className="flex items-start gap-2.5 text-sm text-slate-700">
-                                    <svg width="18" height="18" fill="none" stroke="#6366f1" viewBox="0 0 24 24" className="shrink-0 mt-0.5"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
-                                    {item}
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                    <div className="flex-[1.2]">
-                        <div className="rounded-2xl overflow-hidden shadow-2xl border border-slate-200">
-                            <img
-                                src="/feature-word-addin.png"
-                                alt="Word Add-in"
-                                className="w-full block"
-                                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                            />
-                        </div>
-                    </div>
-                </div>
-            </section>
-
-            {/* ================================================================
+      {/* ================================================================
           HOW IT WORKS
           ================================================================ */}
-            <section
-                id="how-it-works"
-                className="py-28 px-8 bg-slate-50 border-t border-slate-200"
+      <section
+        style={{
+          padding: '96px 32px',
+          backgroundColor: 'var(--bg-elevated)',
+        }}
+      >
+        <div style={{ maxWidth: 1000, margin: '0 auto' }}>
+          <div style={{ textAlign: 'center', marginBottom: 64 }}>
+            <p
+              style={{
+                fontSize: 13,
+                fontWeight: 600,
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                color: 'var(--accent-text)',
+                marginBottom: 12,
+              }}
             >
-                <div className="max-w-[1100px] mx-auto">
-                    <div className="text-center mb-20">
-                        <p className="text-[13px] font-semibold text-slate-900 tracking-widest uppercase mb-4">
-                            PROCESS
-                        </p>
-                        <h2 className="text-5xl font-extrabold tracking-tight text-slate-900">
-                            Three steps to bulletproof contracts.
-                        </h2>
-                    </div>
+              Process
+            </p>
+            <h2
+              style={{
+                fontSize: 'clamp(28px, 3.5vw, 40px)',
+                fontWeight: 700,
+                letterSpacing: '-0.01em',
+                color: 'var(--text-primary)',
+                margin: 0,
+              }}
+            >
+              How It Works
+            </h2>
+          </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
-                        {HOW_IT_WORKS_STEPS.map((item) => (
-                            <div
-                                key={item.step}
-                                className="p-10 bg-white rounded-2xl border border-slate-200"
-                            >
-                                <div className="text-6xl font-extrabold text-slate-200 leading-none mb-5">
-                                    {item.step}
-                                </div>
-                                <h3 className="text-[22px] font-bold mb-3 text-slate-900">
-                                    {item.title}
-                                </h3>
-                                <p className="text-[15px] leading-relaxed text-slate-500">
-                                    {item.desc}
-                                </p>
-                            </div>
-                        ))}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+              gap: 32,
+              position: 'relative',
+            }}
+          >
+            {STEPS.map((step, idx) => {
+              const Icon = step.icon;
+              return (
+                <div
+                  key={step.title}
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    textAlign: 'center',
+                    position: 'relative',
+                  }}
+                >
+                  {/* Dotted connector line (between items) */}
+                  {idx < STEPS.length - 1 && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 32,
+                        left: 'calc(50% + 40px)',
+                        right: 'calc(-50% + 40px)',
+                        height: 0,
+                        borderTop: '2px dashed var(--border-strong)',
+                      }}
+                    />
+                  )}
+                  {/* Step number + icon */}
+                  <div
+                    style={{
+                      width: 64,
+                      height: 64,
+                      borderRadius: 16,
+                      backgroundColor: 'var(--bg-surface)',
+                      border: '1px solid var(--border)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      marginBottom: 20,
+                      position: 'relative',
+                    }}
+                  >
+                    <Icon size={28} style={{ color: 'var(--accent-text)' }} />
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: -8,
+                        right: -8,
+                        width: 24,
+                        height: 24,
+                        borderRadius: '50%',
+                        backgroundColor: 'var(--accent)',
+                        color: '#FFFFFF',
+                        fontSize: 12,
+                        fontWeight: 700,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                      }}
+                    >
+                      {idx + 1}
                     </div>
+                  </div>
+                  <h3
+                    style={{
+                      fontSize: 18,
+                      fontWeight: 600,
+                      color: 'var(--text-primary)',
+                      margin: '0 0 8px',
+                    }}
+                  >
+                    {step.title}
+                  </h3>
+                  <p
+                    style={{
+                      fontSize: 14,
+                      lineHeight: 1.6,
+                      color: 'var(--text-secondary)',
+                      margin: 0,
+                      maxWidth: 280,
+                    }}
+                  >
+                    {step.description}
+                  </p>
                 </div>
-            </section>
+              );
+            })}
+          </div>
+        </div>
+      </section>
 
-            {/* ================================================================
+      {/* ================================================================
           STATS SECTION
           ================================================================ */}
-            <section className="py-20 px-8 bg-slate-900">
-                <div className="max-w-[1100px] mx-auto flex justify-around flex-wrap gap-8">
-                    {STATS.map((stat) => (
-                        <div key={stat.label} className="text-center">
-                            <div className="text-5xl font-extrabold text-white tracking-tight">
-                                {stat.value}
-                            </div>
-                            <div className="text-sm text-slate-400 mt-2">
-                                {stat.label}
-                            </div>
-                        </div>
-                    ))}
-                </div>
-            </section>
+      <section
+        style={{
+          padding: '80px 32px',
+          backgroundColor: 'var(--bg-sidebar)',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 1100,
+            margin: '0 auto',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: 40,
+            textAlign: 'center',
+          }}
+        >
+          {STATS.map((stat) => (
+            <div key={stat.label}>
+              <div
+                style={{
+                  fontSize: 'clamp(32px, 4vw, 48px)',
+                  fontWeight: 800,
+                  letterSpacing: '-0.02em',
+                  color: 'var(--accent-text)',
+                  lineHeight: 1,
+                }}
+              >
+                {stat.value}
+              </div>
+              <div
+                style={{
+                  fontSize: 14,
+                  color: 'var(--text-secondary)',
+                  marginTop: 8,
+                }}
+              >
+                {stat.label}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
 
-            {/* ================================================================
-          CTA SECTION
+      {/* ================================================================
+          PRICING / CTA SECTION
           ================================================================ */}
-            <section
-                id="contact"
-                className="py-28 px-8 bg-slate-900 text-center border-t border-slate-800"
-            >
-                <div className="max-w-[700px] mx-auto">
-                    <h2 className="text-5xl font-extrabold text-white tracking-tight mb-4">
-                        Ready to streamline your contract review?
-                    </h2>
-                    <p className="text-lg text-slate-400 mb-12 leading-relaxed">
-                        Join legal teams who are reducing contract review time and catching critical risks before they become liabilities.
-                    </p>
-                    <div className="flex justify-center gap-4">
-                        <a
-                            href={DOWNLOAD_URL}
-                            className="inline-flex items-center gap-2.5 bg-white text-slate-900 px-9 py-4 rounded-lg text-base font-bold no-underline hover:bg-slate-100 transition-colors"
-                        >
-                            <svg width="18" height="18" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                            Download Installer
-                        </a>
-                        <a
-                            href="mailto:contact@contrared.ai"
-                            className="inline-flex items-center gap-2 bg-transparent text-white px-9 py-4 rounded-lg text-base font-semibold no-underline border border-slate-700 hover:border-slate-500 transition-colors"
-                        >
-                            Request a Demo &rarr;
-                        </a>
-                    </div>
-                </div>
-            </section>
+      <section
+        id="pricing"
+        style={{
+          padding: '96px 32px',
+          backgroundColor: 'var(--bg-app)',
+          textAlign: 'center',
+        }}
+      >
+        <div style={{ maxWidth: 640, margin: '0 auto' }}>
+          <h2
+            style={{
+              fontSize: 'clamp(28px, 3.5vw, 40px)',
+              fontWeight: 700,
+              letterSpacing: '-0.01em',
+              color: 'var(--text-primary)',
+              margin: '0 0 16px',
+            }}
+          >
+            Ready to transform your contract review?
+          </h2>
+          <p
+            style={{
+              fontSize: 17,
+              lineHeight: 1.6,
+              color: 'var(--text-secondary)',
+              margin: '0 0 40px',
+            }}
+          >
+            Start your free trial today. No credit card required.
+          </p>
+          <div style={{ display: 'flex', justifyContent: 'center', gap: 16, flexWrap: 'wrap' }}>
+            <Link to="/register">
+              <Button
+                variant="primary"
+                size="lg"
+                style={{
+                  padding: '0 32px',
+                  height: 48,
+                  fontSize: 16,
+                  boxShadow: '0 0 24px var(--accent-glow)',
+                }}
+              >
+                Start Free Trial
+              </Button>
+            </Link>
+            <a href="mailto:contact@contrared.ai" style={{ textDecoration: 'none' }}>
+              <Button variant="secondary" size="lg" style={{ padding: '0 32px', height: 48, fontSize: 16 }}>
+                Request a Demo
+              </Button>
+            </a>
+          </div>
+        </div>
+      </section>
 
-            {/* ================================================================
+      {/* ================================================================
           FOOTER
           ================================================================ */}
-            <footer className="pt-16 pb-8 px-8 bg-slate-900 border-t border-slate-800">
-                <div className="max-w-[1100px] mx-auto flex flex-col md:flex-row justify-between items-start gap-8">
-                    <div>
-                        <img src="/logo.png" alt="ContraRed" className="h-6 opacity-70" />
-                        <p className="text-[13px] text-slate-500 mt-4">
-                            Contract intelligence for enterprise legal teams.
-                        </p>
-                    </div>
-                    <div className="flex gap-10 md:gap-20">
-                        <div>
-                            <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">Product</h4>
-                            <div className="flex flex-col gap-2.5">
-                                <a href="#features" className="text-sm text-slate-500 no-underline hover:text-slate-300">Features</a>
-                                <a href={DOWNLOAD_URL} className="text-sm text-slate-500 no-underline hover:text-slate-300">Download</a>
-                            </div>
-                        </div>
-                        <div>
-                            <h4 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">Company</h4>
-                            <div className="flex flex-col gap-2.5">
-                                <a href="#contact" className="text-sm text-slate-500 no-underline hover:text-slate-300">Contact</a>
-                                <a href="mailto:contact@contrared.ai" className="text-sm text-slate-500 no-underline hover:text-slate-300">Email</a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div className="max-w-[1100px] mx-auto mt-12 pt-6 border-t border-slate-800 text-[13px] text-slate-600">
-                    &copy; 2026 ContraRed. All rights reserved.
-                </div>
-            </footer>
+      <footer
+        id="about"
+        style={{
+          backgroundColor: 'var(--bg-sidebar)',
+          padding: '64px 32px 32px',
+          borderTop: '1px solid var(--border)',
+        }}
+      >
+        <div
+          style={{
+            maxWidth: 1200,
+            margin: '0 auto',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+            gap: 40,
+          }}
+        >
+          {/* Brand column */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+              <div
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 5,
+                  backgroundColor: 'var(--accent)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#FFFFFF',
+                  fontWeight: 700,
+                  fontSize: 15,
+                }}
+              >
+                C
+              </div>
+              <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>
+                ContraRed
+              </span>
+            </div>
+            <p style={{ fontSize: 13, lineHeight: 1.6, color: 'var(--text-muted)', margin: 0 }}>
+              Contract intelligence for enterprise legal teams.
+            </p>
+          </div>
+
+          {/* Link columns */}
+          {Object.entries(FOOTER_LINKS).map(([section, links]) => (
+            <div key={section}>
+              <h4
+                style={{
+                  fontSize: 12,
+                  fontWeight: 600,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.08em',
+                  color: 'var(--text-muted)',
+                  margin: '0 0 16px',
+                }}
+              >
+                {section}
+              </h4>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {links.map((link) => (
+                  <a
+                    key={link.label}
+                    href={link.href}
+                    style={{
+                      fontSize: 14,
+                      color: 'var(--text-secondary)',
+                      textDecoration: 'none',
+                    }}
+                  >
+                    {link.label}
+                  </a>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
-    );
+
+        {/* Bottom bar */}
+        <div
+          style={{
+            maxWidth: 1200,
+            margin: '48px auto 0',
+            paddingTop: 24,
+            borderTop: '1px solid var(--border)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 16,
+          }}
+        >
+          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            &copy; 2026 ContraRed. All rights reserved.
+          </span>
+          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
+            Built with AI, designed for lawyers.
+          </span>
+        </div>
+      </footer>
+    </div>
+  );
 }
+
+/* -------------------------------------------------------------------------- */
+/*  Shared inline styles                                                       */
+/* -------------------------------------------------------------------------- */
+
+const navLinkStyle: React.CSSProperties = {
+  fontSize: 14,
+  fontWeight: 500,
+  color: 'var(--text-muted)',
+  textDecoration: 'none',
+};
