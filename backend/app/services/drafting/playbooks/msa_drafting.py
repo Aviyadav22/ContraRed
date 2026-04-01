@@ -106,6 +106,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             guidance="Client-first ordering; conflict resolution favors Client.",
         ),
         category="boilerplate",
+        required_defined_terms=["Service Provider", "Client"],
         position=1,
     ),
 
@@ -168,6 +169,11 @@ _CLAUSES: List[Dict[str, Any]] = [
             guidance="Broad Deliverables definition; narrow Pre-Existing IP carve-out.",
         ),
         category="boilerplate",
+        required_defined_terms=[
+            "Confidential Information", "Deliverables", "Intellectual Property",
+            "Pre-Existing IP", "Services", "Statement of Work",
+            "Service Provider Materials",
+        ],
         position=2,
     ),
 
@@ -388,6 +394,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             key_terms={"ip_ownership": "work_for_hire"},
         ),
         category="ip_ownership",
+        required_defined_terms=["Deliverables", "Pre-Existing IP", "Intellectual Property"],
         position=6,
     ),
 
@@ -447,6 +454,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             guidance="Heightened obligations on Provider; indefinite trade secret survival.",
         ),
         category="confidentiality",
+        required_defined_terms=["Confidential Information"],
         position=7,
     ),
 
@@ -716,6 +724,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             guidance="Termination for convenience; 15-day cure; transition assistance; refunds.",
         ),
         category="termination",
+        required_defined_terms=["Term", "Initial Term", "Renewal Term"],
         position=12,
     ),
 

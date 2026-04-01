@@ -34,8 +34,9 @@ class JurisdictionFinding:
 # ---------------------------------------------------------------------------
 
 _NON_COMPETE_RE = re.compile(
-    r"(non[- ]?compete|shall not compete|restrictive covenant|covenant not to compete|"
-    r"refrain from competing|agree not to compete)",
+    r"(non[- ]?compet\w*|shall not compete|restrictive covenant|covenant not to compete|"
+    r"refrain from competing|agree not to compete|shall not.{0,30}engage in.{0,50}competes?\s+with|"
+    r"shall not.{0,30}provide services to a.{0,30}compet|Restricted Period)",
     re.IGNORECASE,
 )
 
@@ -224,14 +225,28 @@ class JurisdictionRuleEngine:
     ) -> list[JurisdictionFinding]:
         findings: list[JurisdictionFinding] = []
 
-        section_rules = _JURISDICTION_SECTION_RULES.get(jurisdiction, [])
-        for section in draft.sections:
-            for rule_fn in section_rules:
-                findings.extend(rule_fn(section.number, section.content))
+        # Resolve jurisdiction keys: exact match first, then prefix (e.g. "IN-MH" -> "IN")
+        jur_prefix = jurisdiction.split("-")[0] if jurisdiction else ""
+        matched_jur_keys: list[str] = []
+        if jurisdiction in _JURISDICTION_SECTION_RULES:
+            matched_jur_keys.append(jurisdiction)
+        if jur_prefix and jur_prefix != jurisdiction and jur_prefix in _JURISDICTION_SECTION_RULES:
+            matched_jur_keys.append(jur_prefix)
 
-        # Global jurisdiction rules (e.g. stamp duty)
-        for global_fn in _JURISDICTION_GLOBAL_RULES.get(jurisdiction, []):
-            findings.extend(global_fn())
+        for jur_key in matched_jur_keys:
+            for section in draft.sections:
+                for rule_fn in _JURISDICTION_SECTION_RULES[jur_key]:
+                    findings.extend(rule_fn(section.number, section.content))
+
+        # Global jurisdiction rules (e.g. stamp duty) — same prefix matching
+        matched_global_keys: list[str] = []
+        if jurisdiction in _JURISDICTION_GLOBAL_RULES:
+            matched_global_keys.append(jurisdiction)
+        if jur_prefix and jur_prefix != jurisdiction and jur_prefix in _JURISDICTION_GLOBAL_RULES:
+            matched_global_keys.append(jur_prefix)
+        for gk in matched_global_keys:
+            for global_fn in _JURISDICTION_GLOBAL_RULES[gk]:
+                findings.extend(global_fn())
 
         # Contract-type rules
         sections_texts = [s.content for s in draft.sections]

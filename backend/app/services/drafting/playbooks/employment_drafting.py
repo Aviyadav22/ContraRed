@@ -12,7 +12,10 @@ Perspective: Employer side.
 Placeholders ({{mustache}} syntax):
   {{party_1_name}}, {{party_1_entity_type}}, {{party_1_jurisdiction}},
   {{party_1_address}}, {{party_2_name}}, {{effective_date}},
-  {{governing_law}}, {{venue}}
+  {{governing_law}}, {{venue}}, {{employee_title}}, {{reporting_manager}},
+  {{base_salary}}, {{bonus_target_pct}}, {{bonus_min_pct}}, {{pto_days}},
+  {{work_location}}, {{equity_grant}}, {{travel_days_per_month}},
+  {{professional_dev_budget}}
 """
 
 from __future__ import annotations
@@ -95,6 +98,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             guidance="Employee-first; binding obligation on Company.",
         ),
         category="boilerplate",
+        required_defined_terms=["Company", "Employee", "Agreement", "Effective Date"],
         position=1,
     ),
 
@@ -105,10 +109,10 @@ _CLAUSES: List[Dict[str, Any]] = [
         preferred=_tier(
             "employer-protective",
             (
-                "Employee shall serve in the position of [Title] and shall perform such duties "
+                "Employee shall serve in the position of {{employee_title}} and shall perform such duties "
                 "and responsibilities as may be assigned from time to time by the Company, "
                 "including duties reasonably related to Employee's position and experience. "
-                "Employee shall report to [Reporting Manager/Title] or such other person as the "
+                "Employee shall report to {{reporting_manager}} or such other person as the "
                 "Company may designate. Employee shall devote substantially all of Employee's "
                 "business time, attention, skill, and effort to the performance of duties under "
                 "this Agreement and shall not engage in any other business activity, whether or "
@@ -121,9 +125,9 @@ _CLAUSES: List[Dict[str, Any]] = [
         acceptable=_tier(
             "balanced",
             (
-                "Employee shall serve as [Title] and shall perform duties and responsibilities "
+                "Employee shall serve as {{employee_title}} and shall perform duties and responsibilities "
                 "consistent with such position as reasonably assigned by the Company. Employee "
-                "shall report to [Reporting Manager/Title]. Employee shall devote Employee's full "
+                "shall report to {{reporting_manager}}. Employee shall devote Employee's full "
                 "business time and best professional efforts to the Company during business hours. "
                 "Employee may engage in civic, charitable, and personal investment activities "
                 "provided they do not interfere with Employee's duties or create a conflict of "
@@ -135,11 +139,11 @@ _CLAUSES: List[Dict[str, Any]] = [
         fallback=_tier(
             "employee-protective",
             (
-                "Employee shall serve as [Title] with duties and responsibilities materially "
+                "Employee shall serve as {{employee_title}} with duties and responsibilities materially "
                 "consistent with such position as described in Exhibit A attached hereto. The "
                 "Company shall not materially diminish Employee's title, duties, authority, or "
                 "reporting relationships without Employee's written consent. Employee shall report "
-                "to [Reporting Manager/Title]. Employee shall devote reasonable business time and "
+                "to {{reporting_manager}}. Employee shall devote reasonable business time and "
                 "effort to the Company but may engage in outside business activities, board service, "
                 "teaching, and personal investments provided they do not materially interfere with "
                 "Employee's duties or create a direct competitive conflict. Any material change to "
@@ -159,7 +163,7 @@ _CLAUSES: List[Dict[str, Any]] = [
         preferred=_tier(
             "employer-protective",
             (
-                "Base Salary. The Company shall pay Employee an annual base salary of $[Amount] "
+                "Base Salary. The Company shall pay Employee an annual base salary of {{base_salary}} "
                 "(the \"Base Salary\"), payable in accordance with the Company's standard payroll "
                 "practices, less applicable withholdings. The Company may review the Base Salary "
                 "annually but is under no obligation to increase it. Bonus. Employee may be "
@@ -175,14 +179,14 @@ _CLAUSES: List[Dict[str, Any]] = [
         acceptable=_tier(
             "balanced",
             (
-                "Base Salary. The Company shall pay Employee an annual base salary of $[Amount] "
+                "Base Salary. The Company shall pay Employee an annual base salary of {{base_salary}} "
                 "(the \"Base Salary\"), payable in accordance with standard payroll practices. "
                 "The Base Salary shall be reviewed annually and may be increased (but not decreased "
                 "without Employee's consent) based on performance and market conditions. Bonus. "
-                "Employee shall be eligible for a target annual bonus of [X]% of Base Salary, "
+                "Employee shall be eligible for a target annual bonus of {{bonus_target_pct}}% of Base Salary, "
                 "based on achievement of mutually agreed performance objectives. Bonus payments "
                 "shall be made within ninety (90) days after the end of the applicable performance "
-                "period. Equity. Employee shall receive an initial equity grant of [shares/options] "
+                "period. Equity. Employee shall receive an initial equity grant of {{equity_grant}} "
                 "under the Company's equity incentive plan, vesting over four (4) years with a "
                 "one-year cliff, subject to the terms of the plan and award agreement."
             ),
@@ -192,12 +196,12 @@ _CLAUSES: List[Dict[str, Any]] = [
             "employee-protective",
             (
                 "Base Salary. The Company shall pay Employee an annual base salary of not less than "
-                "$[Amount] (the \"Base Salary\"), payable in accordance with the Company's standard "
+                "{{base_salary}} (the \"Base Salary\"), payable in accordance with the Company's standard "
                 "payroll practices. The Base Salary shall be reviewed annually and shall be increased "
                 "by no less than the greater of three percent (3%) or the consumer price index "
                 "adjustment. The Company shall not reduce the Base Salary without Employee's written "
-                "consent. Bonus. Employee shall receive a guaranteed minimum annual bonus of [X]% "
-                "of Base Salary, with a target bonus of [Y]% based on mutually agreed objectives. "
+                "consent. Bonus. Employee shall receive a guaranteed minimum annual bonus of {{bonus_min_pct}}% "
+                "of Base Salary, with a target bonus of {{bonus_target_pct}}% based on mutually agreed objectives. "
                 "Pro-rata bonus shall be paid upon termination without cause or resignation for "
                 "Good Reason. Equity. Employee shall receive an initial equity grant as specified "
                 "in the offer letter, with acceleration provisions as set forth in Section 10."
@@ -231,7 +235,7 @@ _CLAUSES: List[Dict[str, Any]] = [
                 "Employee shall be eligible to participate in all benefit plans generally available "
                 "to employees at Employee's level, including health insurance (medical, dental, and "
                 "vision), life insurance, disability insurance, and retirement plans (401(k) or "
-                "equivalent with Company matching). Employee shall receive not less than [X] days "
+                "equivalent with Company matching). Employee shall receive not less than {{pto_days}} days "
                 "of paid time off per year, accruing on a pro-rata basis. The Company shall provide "
                 "reasonable notice of material changes to benefit plans. Employee shall also be "
                 "eligible for the Company's professional development and education reimbursement "
@@ -247,11 +251,11 @@ _CLAUSES: List[Dict[str, Any]] = [
                 "health) for Employee and dependents, life insurance of not less than two times "
                 "Base Salary, short-term and long-term disability insurance, and the Company's "
                 "retirement plan with maximum employer matching. Employee shall receive not less "
-                "than [X] days of paid time off per year, with unused PTO carrying over to the "
+                "than {{pto_days}} days of paid time off per year, with unused PTO carrying over to the "
                 "following year. The Company shall not reduce the level of benefits provided to "
                 "Employee below the level in effect on the Effective Date without Employee's "
                 "written consent. The Company shall reimburse Employee for all reasonable "
-                "professional development expenses up to $[Amount] per year."
+                "professional development expenses up to {{professional_dev_budget}} per year."
             ),
             guidance="Comprehensive enumerated benefits; PTO carryover; no reduction without consent.",
         ),
@@ -281,7 +285,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             (
                 "Employee's regular work schedule shall be Monday through Friday during standard "
                 "business hours, with flexibility as mutually agreed. Employee's primary work "
-                "location shall be [Office Location / Remote / Hybrid]. Any material change to "
+                "location shall be {{work_location}}. Any material change to "
                 "Employee's work location shall require thirty (30) days' advance notice and "
                 "Employee's reasonable consent. The Company shall reimburse Employee for reasonable "
                 "and pre-approved business travel expenses in accordance with Company policy. "
@@ -294,11 +298,11 @@ _CLAUSES: List[Dict[str, Any]] = [
             "employee-protective",
             (
                 "Employee's regular work schedule shall not exceed forty (40) hours per week "
-                "absent mutual agreement. Employee's primary work location shall be [Office "
-                "Location / Remote / Hybrid] and shall not be changed without Employee's written "
+                "absent mutual agreement. Employee's primary work location shall be {{work_location}} "
+                "and shall not be changed without Employee's written "
                 "consent. If remote work is permitted, the Company shall provide or reimburse "
                 "Employee for necessary equipment, internet, and home office expenses. Business "
-                "travel shall be limited to [X] days per month unless Employee agrees otherwise. "
+                "travel shall be limited to {{travel_days_per_month}} days per month unless Employee agrees otherwise. "
                 "All travel shall be in business class for flights over four hours. The Company "
                 "shall comply with all applicable wage and hour laws and shall compensate overtime "
                 "as required by law regardless of exempt classification."
@@ -365,6 +369,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             guidance="Narrow definition; 2-year survival; protects whistleblower and NLRA rights.",
         ),
         category="confidentiality",
+        required_defined_terms=["Confidential Information"],
         position=6,
     ),
 
@@ -423,6 +428,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             guidance="Narrow scope; statutory carve-outs; own-time/resources exception explicit.",
         ),
         category="ip_ownership",
+        required_defined_terms=["Work Product"],
         position=7,
     ),
 
@@ -480,6 +486,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             guidance="6-month; narrow scope; garden leave payment required; state law savings clause.",
         ),
         category="restrictive_covenants",
+        required_defined_terms=["Restricted Period"],
         position=8,
     ),
 
@@ -596,6 +603,7 @@ _CLAUSES: List[Dict[str, Any]] = [
             guidance="12-month severance; lump sum; equity acceleration; double-trigger CoC.",
         ),
         category="termination",
+        required_defined_terms=["Cause", "Good Reason", "Base Salary"],
         position=10,
     ),
 

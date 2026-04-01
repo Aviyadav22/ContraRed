@@ -35,6 +35,23 @@ _COMMON_LEGAL_TERMS: set[str] = {
     "Third Party", "Good Faith", "Material Breach", "Force Majeure",
     "Indemnified Party", "Indemnifying Party", "Confidential Information",
     "Initial Term", "Renewal Term", "Term", "Notice",
+    # Jurisdictions and geographic names
+    "New York", "San Francisco", "Delaware", "California", "England", "India",
+    "Singapore", "Hong Kong", "United Kingdom", "European Union",
+    # Entity types
+    "Limited Liability Company", "Private Limited", "Public Limited",
+    # Common contract concepts
+    "Software", "Service", "Order Form", "Statement of Work",
+    "Intellectual Property Rights", "Service Level Agreement",
+    "Data Processing Agreement", "Effective Date", "Subscription Term",
+    # Employment-specific
+    "Base Salary", "Good Reason", "Restricted Period", "Garden Leave Payment",
+    "Work Product", "Competing Business",
+    # SaaS-specific
+    "Service Provider", "Customer Data", "Authorized Users",
+    "Professional Services", "Annual Value",
+    # MSA-specific
+    "Change Order", "Acceptance Period", "Delivery Schedule",
 }
 
 # Common synonym groups for party roles
@@ -113,8 +130,52 @@ class ConsistencyEngine:
     # ------------------------------------------------------------------
     # 2. Undefined defined-term detection
     # ------------------------------------------------------------------
+    @staticmethod
+    def _extract_party_short_names(draft: RawDraft) -> set[str]:
+        """Extract party short names from preamble sections to skip in undefined-term checks."""
+        short_names: set[str] = set()
+        # Look at first 2 sections (typically preamble/definitions)
+        for section in draft.sections[:2]:
+            # Match '(the "Role")' or '("Role")' patterns to find party names
+            for m in re.finditer(r'\("([^"]+)"\)', section.content):
+                short_names.add(m.group(1))
+            for m in re.finditer(r'\(the\s+"([^"]+)"\)', section.content):
+                short_names.add(m.group(1))
+            # Also extract actual company/person names from preamble
+            # e.g. "by and between Acme Corp, a ..." — grab multi-word capitalized names
+            for m in re.finditer(r'between\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)', section.content):
+                name = m.group(1)
+                short_names.add(name)
+                for word in name.split():
+                    if len(word) > 2:
+                        short_names.add(word)
+            for m in re.finditer(r'and\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\s*[,(]', section.content):
+                name = m.group(1)
+                short_names.add(name)
+                for word in name.split():
+                    if len(word) > 2:
+                        short_names.add(word)
+        return short_names
+
+    @staticmethod
+    def _extract_address_fragments(draft: RawDraft) -> set[str]:
+        """Extract address-like fragments from preamble to skip in undefined-term checks."""
+        fragments: set[str] = set()
+        for section in draft.sections[:2]:
+            # Match text after "at" up to parenthetical or period (likely addresses)
+            for m in re.finditer(r'(?:at|of)\s+([\d]+\s+[A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)', section.content):
+                addr = m.group(1)
+                # Add multi-word fragments from the address
+                for sub in re.findall(r'[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+', addr):
+                    fragments.add(sub)
+        return fragments
+
     def _check_undefined_terms(self, draft: RawDraft) -> List[Annotation]:
         known: set[str] = set(draft.defined_terms.keys()) | _COMMON_LEGAL_TERMS
+
+        # Extract party names and address fragments to skip
+        party_names = self._extract_party_short_names(draft)
+        address_fragments = self._extract_address_fragments(draft)
 
         issues: List[Annotation] = []
         for section in draft.sections:
@@ -124,17 +185,26 @@ class ConsistencyEngine:
                 normalized = re.sub(r"^The\s+", "", term)
                 if normalized != term and normalized in known:
                     continue
-                if term not in known:
-                    issues.append(Annotation(
-                        section_number=section.number,
-                        agent="consistency",
-                        severity="warning",
-                        issue=f"Possibly undefined term: \"{term}\"",
-                        suggested_fix=f"Add \"{term}\" to the Definitions section or replace with a defined term",
-                        reasoning=f"\"{term}\" appears as a capitalized multi-word phrase but is not in the defined terms list",
-                    ))
-                    # Once flagged, treat as known to avoid duplicate annotations
+                if term in known:
+                    continue
+                # Skip terms that contain words from party names
+                if any(pn in term or term in pn for pn in party_names):
                     known.add(term)
+                    continue
+                # Skip terms that look like address fragments
+                if any(af in term or term in af for af in address_fragments):
+                    known.add(term)
+                    continue
+                issues.append(Annotation(
+                    section_number=section.number,
+                    agent="consistency",
+                    severity="warning",
+                    issue=f"Possibly undefined term: \"{term}\"",
+                    suggested_fix=f"Add \"{term}\" to the Definitions section or replace with a defined term",
+                    reasoning=f"\"{term}\" appears as a capitalized multi-word phrase but is not in the defined terms list",
+                ))
+                # Once flagged, treat as known to avoid duplicate annotations
+                known.add(term)
         return issues
 
     # ------------------------------------------------------------------

@@ -126,11 +126,25 @@ class DraftAgent:
         p["receiving_party_name"] = req.party_2.name
         p["receiving_party_short_name"] = req.party_2.name.split()[0]
 
-        # SaaS aliases (party_1 = provider, party_2 = customer)
+        # SaaS-style aliases (party_1 = provider, party_2 = customer)
         p["provider_name"] = req.party_1.name
         p["provider_short_name"] = req.party_1.name.split()[0]
+        p["provider_entity_type"] = req.party_1.entity_type
+        p["provider_jurisdiction"] = req.party_1.jurisdiction
+        p["provider_address"] = req.party_1.address or "[Address]"
         p["customer_name"] = req.party_2.name
         p["customer_short_name"] = req.party_2.name.split()[0]
+        p["customer_entity_type"] = req.party_2.entity_type
+        p["customer_jurisdiction"] = req.party_2.jurisdiction
+        p["customer_address"] = req.party_2.address or "[Address]"
+
+        # MSA-style aliases (party_1 = service provider, party_2 = client)
+        p["service_provider_name"] = req.party_1.name
+        p["client_name"] = req.party_2.name
+
+        # Employment-style aliases (party_1 = company, party_2 = employee)
+        p["company_name"] = req.party_1.name
+        p["employee_name"] = req.party_2.name
 
         # NDA-specific
         if req.nda_details:
