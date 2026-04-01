@@ -11,7 +11,9 @@ import json
 import logging
 from typing import List
 
+from app.services.drafting.compliance_rules import ComplianceRuleEngine
 from app.services.drafting.models import Annotation, RawDraft
+from app.services.prompt_sanitizer import sanitize_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +21,57 @@ logger = logging.getLogger(__name__)
 class ComplianceAgent:
     """Reviews a draft contract for compliance issues."""
 
+    def __init__(self) -> None:
+        self._rule_engine = ComplianceRuleEngine()
+
     async def review(
         self, draft: RawDraft, jurisdiction: str = "US-DE"
     ) -> List[Annotation]:
-        """Return compliance-related annotations for *draft*."""
-        return await self._ai_review(draft, jurisdiction)
+        """Return compliance-related annotations for *draft*.
+
+        Hard rules run first (deterministic, zero-latency).
+        AI review runs second (best-effort, may be unavailable).
+        """
+        rule_annotations = self._run_hard_rules(draft)
+
+        try:
+            from app.core.vertex_client import is_available
+        except ImportError:
+            is_available = lambda: False  # noqa: E731
+
+        ai_annotations = (
+            await self._ai_review(draft, jurisdiction) if is_available() else []
+        )
+        return rule_annotations + ai_annotations
+
+    # ------------------------------------------------------------------ #
+    # Deterministic hard-rule checks
+    # ------------------------------------------------------------------ #
+
+    def _run_hard_rules(self, draft: RawDraft) -> List[Annotation]:
+        """Run deterministic compliance rules against the draft."""
+        annotations: List[Annotation] = []
+
+        # --- Efforts standard consistency across all sections ---
+        clause_texts = [s.content for s in draft.sections]
+        efforts_findings = self._rule_engine.check_efforts_consistency(clause_texts)
+        for finding in efforts_findings:
+            severity = "warning"
+            if finding.startswith("CRITICAL"):
+                severity = "critical"
+            elif finding.startswith("INFO"):
+                severity = "info"
+            annotations.append(
+                Annotation(
+                    section_number="ALL",
+                    agent="compliance",
+                    severity=severity,
+                    issue="Inconsistent efforts standards",
+                    reasoning=finding,
+                )
+            )
+
+        return annotations
 
     async def _ai_review(
         self, draft: RawDraft, jurisdiction: str
@@ -48,11 +96,15 @@ class ComplianceAgent:
             for s in draft.sections
         )
 
+        safe_contract_type = sanitize_for_prompt(draft.contract_type, max_length=200)
+        safe_jurisdiction = sanitize_for_prompt(jurisdiction, max_length=200)
+        safe_sections = sanitize_for_prompt(sections_text, max_length=20000)
+
         prompt = (
             "You are a regulatory compliance analyst. Review the following contract "
-            f"sections for a {draft.contract_type} agreement.\n\n"
-            f"Target jurisdiction: {jurisdiction}\n\n"
-            f"Sections:\n{sections_text}\n\n"
+            f"sections for a {safe_contract_type} agreement.\n\n"
+            f"Target jurisdiction: {safe_jurisdiction}\n\n"
+            f"Sections:\n{safe_sections}\n\n"
             "Check for:\n"
             "1. Jurisdiction-specific enforceability issues\n"
             "2. Data protection compliance (GDPR, CCPA, DPDP Act, etc.)\n"
@@ -66,7 +118,8 @@ class ComplianceAgent:
         )
 
         try:
-            model = get_generative_model("gemini-2.5-flash")
+            from app.core.config import settings
+            model = get_generative_model(settings.GEMINI_MODEL)
             response = await model.generate_content_async(
                 [{"role": "user", "parts": [{"text": prompt}]}],
                 generation_config=GenerateContentConfig(
