@@ -1,6 +1,9 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { register } from '@/api/client';
+import { AuthLayout } from '@/components/AuthLayout';
+import { TextInput } from '@/components/ui/Input';
+import { Button } from '@/components/ui/Button';
 
 export default function Register() {
     const [name, setName] = useState('');
@@ -45,137 +48,123 @@ export default function Register() {
         }
     };
 
-    const inputStyle = {
-        border: '1px solid #E8E5E0',
-        color: '#1A1A19',
-        background: '#FFFFFF',
-    };
-
-    const inputFocus = 'focus:ring-2 focus:border-transparent transition';
-
     return (
-        <div className="min-h-screen flex items-center justify-center" style={{ background: '#FAFAF9' }}>
-            <div className="w-full max-w-md">
-                <div
-                    className="rounded-2xl p-8"
-                    style={{ background: '#FFFFFF', border: '1px solid #E8E5E0', boxShadow: '0 2px 12px rgba(0,0,0,0.04)' }}
+        <AuthLayout>
+            <h1
+                style={{
+                    fontSize: 22,
+                    fontWeight: 600,
+                    color: 'var(--text-primary)',
+                    marginBottom: 4,
+                }}
+            >
+                Create your account
+            </h1>
+            <p style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 32 }}>
+                Start analyzing contracts in minutes
+            </p>
+
+            <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                <TextInput
+                    label="Full Name"
+                    id="name"
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="John Doe"
+                    required
+                    maxLength={100}
+                />
+
+                <TextInput
+                    label="Work Email"
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@company.com"
+                    required
+                    maxLength={255}
+                />
+
+                <TextInput
+                    label="Password"
+                    id="password"
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Min 8 chars, uppercase, number, symbol"
+                    required
+                    minLength={8}
+                />
+
+                <TextInput
+                    label="Confirm Password"
+                    id="confirmPassword"
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter your password"
+                    required
+                    minLength={8}
+                />
+
+                {error && (
+                    <div
+                        style={{
+                            padding: '10px 14px',
+                            borderRadius: 'var(--radius-sm)',
+                            fontSize: 14,
+                            backgroundColor: 'var(--risk-critical-bg)',
+                            color: 'var(--risk-critical)',
+                            border: '1px solid var(--risk-critical-border)',
+                        }}
+                    >
+                        {error}
+                    </div>
+                )}
+
+                <Button
+                    type="submit"
+                    variant="primary"
+                    size="lg"
+                    loading={loading}
+                    style={{ width: '100%' }}
                 >
-                    {/* Logo */}
-                    <div className="text-center mb-8">
-                        <Link to="/" className="inline-block mb-4">
-                            <img src="/logo.png" alt="ContraRed" className="h-7 mx-auto" />
-                        </Link>
-                        <p className="text-[13px]" style={{ color: '#8A8885' }}>Create your account</p>
-                    </div>
+                    Create Account
+                </Button>
+            </form>
 
-                    {/* Form */}
-                    <form onSubmit={handleSubmit} className="space-y-5">
-                        <div>
-                            <label htmlFor="name" className="block text-[13px] font-medium mb-1.5" style={{ color: '#6B6966' }}>
-                                Full Name
-                            </label>
-                            <input
-                                id="name"
-                                type="text"
-                                value={name}
-                                onChange={(e) => setName(e.target.value)}
-                                className={`w-full px-4 py-2.5 rounded-lg text-sm ${inputFocus}`}
-                                style={{ ...inputStyle, '--tw-ring-color': '#C0392B40' } as React.CSSProperties}
-                                placeholder="John Doe"
-                                required
-                                maxLength={100}
-                            />
-                        </div>
+            <p style={{ marginTop: 24, textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
+                Already have an account?{' '}
+                <Link
+                    to="/login"
+                    style={{ fontWeight: 500, color: 'var(--accent-text)', textDecoration: 'none' }}
+                >
+                    Sign In
+                </Link>
+            </p>
 
-                        <div>
-                            <label htmlFor="email" className="block text-[13px] font-medium mb-1.5" style={{ color: '#6B6966' }}>
-                                Work Email
-                            </label>
-                            <input
-                                id="email"
-                                type="email"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                className={`w-full px-4 py-2.5 rounded-lg text-sm ${inputFocus}`}
-                                style={{ ...inputStyle, '--tw-ring-color': '#C0392B40' } as React.CSSProperties}
-                                placeholder="you@company.com"
-                                required
-                                maxLength={255}
-                            />
-                        </div>
-
-                        <div>
-                            <label htmlFor="password" className="block text-[13px] font-medium mb-1.5" style={{ color: '#6B6966' }}>
-                                Password
-                            </label>
-                            <input
-                                id="password"
-                                type="password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                className={`w-full px-4 py-2.5 rounded-lg text-sm ${inputFocus}`}
-                                style={{ ...inputStyle, '--tw-ring-color': '#C0392B40' } as React.CSSProperties}
-                                placeholder="••••••••"
-                                required
-                                minLength={8}
-                            />
-                        </div>
-
-                        <div>
-                            <label htmlFor="confirmPassword" className="block text-[13px] font-medium mb-1.5" style={{ color: '#6B6966' }}>
-                                Confirm Password
-                            </label>
-                            <input
-                                id="confirmPassword"
-                                type="password"
-                                value={confirmPassword}
-                                onChange={(e) => setConfirmPassword(e.target.value)}
-                                className={`w-full px-4 py-2.5 rounded-lg text-sm ${inputFocus}`}
-                                style={{ ...inputStyle, '--tw-ring-color': '#C0392B40' } as React.CSSProperties}
-                                placeholder="••••••••"
-                                required
-                                minLength={8}
-                            />
-                        </div>
-
-                        {error && (
-                            <div className="p-3 rounded-lg text-sm" style={{ background: '#FDF2F1', color: '#C0392B' }}>
-                                {error}
-                            </div>
-                        )}
-
-                        <button
-                            type="submit"
-                            disabled={loading}
-                            className="w-full py-2.5 px-4 font-medium text-sm rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 bg-[#C0392B] text-white hover:bg-[#A93226]"
-                        >
-                            {loading ? (
-                                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                            ) : (
-                                'Create Account'
-                            )}
-                        </button>
-                    </form>
-
-                    {/* Sign In link */}
-                    <div className="mt-6 text-center">
-                        <p className="text-[13px]" style={{ color: '#8A8885' }}>
-                            Already have an account?{' '}
-                            <Link to="/login" className="font-medium" style={{ color: '#C0392B' }}>
-                                Sign In
-                            </Link>
-                        </p>
-                    </div>
-
-                    {/* Terms */}
-                    <p className="mt-4 text-xs text-center leading-relaxed" style={{ color: '#A09D98' }}>
-                        By creating an account, you agree to our{' '}
-                        <Link to="/terms" className="underline" style={{ color: '#8A8885' }}>Terms of Service</Link>{' '}
-                        and{' '}
-                        <Link to="/privacy" className="underline" style={{ color: '#8A8885' }}>Privacy Policy</Link>.
-                    </p>
-                </div>
-            </div>
-        </div>
+            <p style={{ marginTop: 16, textAlign: 'center', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.6 }}>
+                By creating an account, you agree to our{' '}
+                <a
+                    href="https://contrared-addin.netlify.app/terms.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: 'var(--text-secondary)', textDecoration: 'underline' }}
+                >
+                    Terms of Service
+                </a>{' '}
+                and{' '}
+                <a
+                    href="https://contrared-addin.netlify.app/privacy.html"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ color: 'var(--text-secondary)', textDecoration: 'underline' }}
+                >
+                    Privacy Policy
+                </a>.
+            </p>
+        </AuthLayout>
     );
 }

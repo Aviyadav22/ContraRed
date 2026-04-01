@@ -219,6 +219,16 @@
   animation: scaleIn 0.3s ease-out both;
 }
 
+/* Auth layout responsive */
+@media (max-width: 768px) {
+  .auth-brand-panel {
+    display: none !important;
+  }
+  .auth-form-panel {
+    width: 100% !important;
+  }
+}
+
 /* Reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *,

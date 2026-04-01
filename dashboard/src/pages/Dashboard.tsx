@@ -1,7 +1,21 @@
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { isAdmin, getDashboardStats, type DashboardStats } from '@/api/client';
-import AppHeader from '@/components/AppHeader';
+import { AppLayout } from '@/components/layout/AppLayout';
+import { Card } from '@/components/ui/Card';
+import { Badge } from '@/components/ui/Badge';
+import { Skeleton } from '@/components/ui/Skeleton';
+import {
+    FileText,
+    ShieldAlert,
+    Wrench,
+    BookOpen,
+    Library,
+    GitCompareArrows,
+    ClipboardList,
+    BarChart3,
+    FileBarChart,
+} from 'lucide-react';
 
 export default function Dashboard() {
     const { data: stats, isLoading: statsLoading } = useQuery<DashboardStats>({
@@ -15,33 +29,23 @@ export default function Dashboard() {
         {
             label: 'Documents Analyzed',
             value: stats?.documents_analyzed ?? 0,
-            icon: (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: '#6B6966' }} aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-            ),
-            accent: '#F0EDE8',
+            icon: <FileText size={20} />,
+            iconColor: 'var(--text-secondary)',
+            iconBg: 'var(--bg-elevated)',
         },
         {
             label: 'Risks Detected',
             value: stats?.total_risks_detected ?? 0,
-            icon: (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: '#C0392B' }} aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-            ),
-            accent: '#FDF2F1',
+            icon: <ShieldAlert size={20} />,
+            iconColor: 'var(--risk-critical)',
+            iconBg: 'var(--risk-critical-bg)',
             extra: stats && !statsLoading && (stats.red_risks > 0 || stats.yellow_risks > 0) ? (
-                <div className="flex gap-2 mt-1.5">
+                <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
                     {stats.red_risks > 0 && (
-                        <span className="text-xs font-medium px-1.5 py-0.5 rounded" style={{ color: '#C0392B', background: '#FDF2F1' }}>
-                            {stats.red_risks} critical
-                        </span>
+                        <Badge variant="critical" size="sm">{stats.red_risks} critical</Badge>
                     )}
                     {stats.yellow_risks > 0 && (
-                        <span className="text-xs font-medium px-1.5 py-0.5 rounded" style={{ color: '#B7770D', background: '#FEF9EC' }}>
-                            {stats.yellow_risks} warning
-                        </span>
+                        <Badge variant="high" size="sm">{stats.yellow_risks} warning</Badge>
                     )}
                 </div>
             ) : null,
@@ -49,12 +53,9 @@ export default function Dashboard() {
         {
             label: 'Fixes Applied',
             value: stats?.redlines_applied ?? 0,
-            icon: (
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ color: '#1A7A4A' }} aria-hidden="true">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 13l4 4L19 7" />
-                </svg>
-            ),
-            accent: '#F0F9F4',
+            icon: <Wrench size={20} />,
+            iconColor: 'var(--risk-low)',
+            iconBg: 'var(--risk-low-bg)',
         },
     ];
 
@@ -65,98 +66,155 @@ export default function Dashboard() {
             desc: admin
                 ? 'Create and edit clause detection rules for your contracts.'
                 : 'Browse available clause detection playbooks.',
+            icon: <BookOpen size={18} />,
         },
         {
             to: '/clause-library',
             title: 'Clause Library',
             desc: 'Save and manage pre-approved contract language.',
+            icon: <Library size={18} />,
         },
         {
             to: '/compare',
             title: 'Compare Contracts',
             desc: 'Upload two contract versions for side-by-side diff analysis.',
+            icon: <GitCompareArrows size={18} />,
         },
         {
             to: '/audit-logs',
             title: 'Audit Logs',
             desc: 'View activity history and compliance audit trail.',
+            icon: <ClipboardList size={18} />,
         },
         {
             to: '/executive',
             title: 'Executive Dashboard',
             desc: 'High-level metrics and ROI insights for leadership.',
+            icon: <BarChart3 size={18} />,
         },
         {
             to: '/reports',
             title: 'Reports',
             desc: 'Generate and download detailed contract analysis reports.',
+            icon: <FileBarChart size={18} />,
         },
     ];
 
     return (
-        <div className="min-h-screen" style={{ background: '#FAFAF9' }}>
-            <AppHeader />
+        <AppLayout>
+            <h1
+                style={{
+                    fontSize: 24,
+                    fontWeight: 600,
+                    color: 'var(--text-primary)',
+                    letterSpacing: '-0.02em',
+                    marginBottom: 32,
+                }}
+            >
+                Dashboard
+            </h1>
 
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                <h1 className="text-2xl font-semibold mb-8" style={{ color: '#1A1A19', letterSpacing: '-0.02em' }}>
-                    Dashboard
-                </h1>
+            {/* Onboarding Welcome */}
+            {stats?.documents_analyzed === 0 && (
+                <Card
+                    style={{
+                        backgroundColor: 'var(--accent-subtle)',
+                        border: '1px solid var(--accent-glow)',
+                        textAlign: 'center',
+                        marginBottom: 24,
+                    }}
+                    padding="spacious"
+                >
+                    <h3 style={{ fontSize: 18, fontWeight: 600, color: 'var(--accent-text)', marginBottom: 8 }}>
+                        Welcome to ContraRed!
+                    </h3>
+                    <p style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
+                        Get started by scanning your first contract in the Word Add-in, or explore the features below.
+                    </p>
+                </Card>
+            )}
 
-                {/* Onboarding Welcome */}
-                {stats?.documents_analyzed === 0 && (
-                    <div style={{ backgroundColor: '#FFF8F0', border: '1px solid #E8D5C0' }} className="p-6 rounded-lg text-center mb-6">
-                        <h3 className="text-lg font-semibold mb-2" style={{ color: '#8B4513' }}>Welcome to ContraRed!</h3>
-                        <p className="text-sm mb-4" style={{ color: '#6B5B4F' }}>Get started by scanning your first contract in the Word Add-in, or explore the features below.</p>
-                    </div>
-                )}
+            {/* Stats Cards */}
+            <div
+                style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+                    gap: 20,
+                    marginBottom: 40,
+                }}
+            >
+                {statCards.map(card => (
+                    <Card key={card.label} variant="default" padding="spacious">
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                            <div
+                                style={{
+                                    width: 40,
+                                    height: 40,
+                                    borderRadius: 'var(--radius-md)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    backgroundColor: card.iconBg,
+                                    color: card.iconColor,
+                                    flexShrink: 0,
+                                }}
+                            >
+                                {card.icon}
+                            </div>
+                            <div>
+                                <p style={{ fontSize: 24, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.2 }}>
+                                    {statsLoading ? (
+                                        <Skeleton variant="text" width={48} height={24} />
+                                    ) : card.value}
+                                </p>
+                                <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
+                                    {card.label}
+                                </p>
+                                {'extra' in card && card.extra}
+                            </div>
+                        </div>
+                    </Card>
+                ))}
+            </div>
 
-                {/* Stats Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
-                    {statCards.map(card => (
-                        <article
-                            key={card.label}
-                            className="rounded-xl p-5 transition-shadow hover:shadow"
-                            style={{ background: '#FFFFFF', border: '1px solid #E8E5E0' }}
-                        >
-                            <div className="flex items-center gap-4">
-                                <div
-                                    className="w-10 h-10 rounded-lg flex items-center justify-center"
-                                    style={{ background: card.accent }}
-                                >
-                                    {card.icon}
+            {/* Quick Actions */}
+            <h2
+                style={{
+                    fontSize: 16,
+                    fontWeight: 600,
+                    color: 'var(--text-primary)',
+                    marginBottom: 16,
+                }}
+            >
+                Quick Actions
+            </h2>
+            <div
+                style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+                    gap: 16,
+                }}
+            >
+                {quickActions.map(action => (
+                    <Link key={action.to} to={action.to} style={{ textDecoration: 'none' }}>
+                        <Card variant="interactive" padding="spacious">
+                            <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                                <div style={{ color: 'var(--accent-text)', marginTop: 2, flexShrink: 0 }}>
+                                    {action.icon}
                                 </div>
                                 <div>
-                                    <p className="text-2xl font-semibold" style={{ color: '#1A1A19' }}>
-                                        {statsLoading ? (
-                                            <span
-                                                className="inline-block w-8 h-6 rounded animate-pulse"
-                                                style={{ background: '#F0EDE8' }}
-                                            />
-                                        ) : card.value}
+                                    <h3 style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', marginBottom: 4 }}>
+                                        {action.title}
+                                    </h3>
+                                    <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                                        {action.desc}
                                     </p>
-                                    <p className="text-[13px]" style={{ color: '#8A8885' }}>{card.label}</p>
-                                    {card.extra}
                                 </div>
                             </div>
-                        </article>
-                    ))}
-                </div>
-
-                {/* Quick Actions */}
-                <h2 className="text-base font-semibold mb-4" style={{ color: '#1A1A19' }}>Quick Actions</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {quickActions.map(action => (
-                        <Link
-                            key={action.to}
-                            to={action.to}
-                            className="rounded-xl p-5 transition-all group bg-white border border-[#E8E5E0] hover:border-[#C0392B40] hover:shadow-[0_2px_8px_rgba(192,57,43,0.06)]"
-                        >
-                            <h3 className="font-medium mb-1" style={{ color: '#1A1A19' }}>{action.title}</h3>
-                            <p className="text-[13px]" style={{ color: '#8A8885' }}>{action.desc}</p>
-                        </Link>
-                    ))}
-                </div>
-            </main>
-        </div>
+                        </Card>
+                    </Link>
+                ))}
+            </div>
+        </AppLayout>
     );
 }
