@@ -26,7 +26,8 @@ def render_docx(final_draft: FinalDraft) -> bytes:
     doc.add_paragraph()  # spacer
     # Sections
     for ds in final_draft.draft.sections:
-        heading = doc.add_heading(f"{ds.number}. {ds.heading}", level=2)
+        heading_text = f"{ds.number}. {ds.heading}" if ds.number else ds.heading
+        heading = doc.add_heading(heading_text, level=2)
         for r in heading.runs:
             r.font.name = "Times New Roman"
             r.font.size = Pt(12)

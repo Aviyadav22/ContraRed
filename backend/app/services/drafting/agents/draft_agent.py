@@ -48,6 +48,8 @@ _TIER_MATRIX: Dict[tuple[str, str], str] = {
     ("party_2", "protective"): "preferred",
     ("party_2", "balanced"): "acceptable",
     ("party_2", "commercial"): "fallback",
+    ("party_1", "aggressive"): "fallback",
+    ("party_2", "aggressive"): "fallback",
 }
 
 
@@ -146,6 +148,22 @@ class DraftAgent:
         p["company_name"] = req.party_1.name
         p["employee_name"] = req.party_2.name
 
+        # Default for all contract types (NDA block may override below)
+        p["confidentiality_survival_years"] = "3"
+
+        # Employment-specific
+        if req.contract_type == "employment":
+            p["employee_title"] = req.employee_title or "[Title]"
+            p["base_salary"] = req.base_salary or "[Amount]"
+            p["reporting_manager"] = req.reporting_manager or "[Manager]"
+            p["work_location"] = req.work_location or "[Location]"
+            p["bonus_target_pct"] = "[X]"
+            p["bonus_min_pct"] = "[Y]"
+            p["pto_days"] = "20"
+            p["equity_grant"] = "[shares/options]"
+            p["travel_days_per_month"] = "5"
+            p["professional_dev_budget"] = "$5,000"
+
         # NDA-specific
         if req.nda_details:
             nda = req.nda_details
@@ -179,7 +197,10 @@ class DraftAgent:
                 if saas.auto_renewal
                 else "expire at the end of the Initial Term unless renewed in writing"
             )
-            p["annual_value"] = f"{saas.price_amount * 12:,.2f}"
+            freq_multiplier = {"monthly": 12, "quarterly": 4, "annual": 1}.get(
+                getattr(req.saas_details, 'billing_frequency', 'monthly') if req.saas_details else 'monthly', 12
+            )
+            p["annual_value"] = f"{saas.price_amount * freq_multiplier:,.2f}"
 
         return p
 
@@ -347,7 +368,7 @@ class DraftAgent:
             content = await self._ai_adapt_clause(filled, guidance, jur_variant)
 
             # Section numbering
-            section_num = str(idx + 1) if idx > 0 else ""
+            section_num = str(len(sections) + 1)
 
             sections.append(
                 DraftSection(

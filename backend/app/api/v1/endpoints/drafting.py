@@ -113,6 +113,7 @@ class GenerateRequest(BaseModel):
     governing_law: str = "Delaware"
     nda_details: Optional[NDADetailsInput] = None
     saas_details: Optional[SaaSDetailsInput] = None
+    dispute_resolution: str = "arbitration"
     risk_profile: Dict[str, str] = Field(default_factory=dict)
     negotiation_context: str = ""
 
@@ -239,6 +240,7 @@ async def generate_draft(req: GenerateRequest, current_user = Depends(get_curren
         "term_months": req.term,
         "governing_law": req.governing_law,
     }
+    raw_input["dispute_resolution"] = req.dispute_resolution
     if req.nda_details:
         raw_input["nda_details"] = req.nda_details.model_dump()
     if req.saas_details:

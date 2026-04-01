@@ -35,8 +35,9 @@ def normalize_shall_will(text: str, preference: str = "shall") -> str:
 
     def _replace(m: re.Match) -> str:
         verb = m.group(2).lower()
-        if source == "will" and verb in _FUTURE_TENSE_VERBS:
-            return m.group(0)  # keep original
+        # Check if the following verb is future-tense — protect in BOTH directions
+        if verb in _FUTURE_TENSE_VERBS:
+            return m.group(0)  # Don't replace
         # Preserve original capitalisation of the modal
         original = m.group(1)
         replacement = target.capitalize() if original[0].isupper() else target

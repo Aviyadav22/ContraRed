@@ -11,6 +11,7 @@ import logging
 from typing import List
 
 from app.services.drafting.models import Annotation, RawDraft
+from app.services.prompt_sanitizer import sanitize_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +23,16 @@ class RiskAgent:
         self, draft: RawDraft, risk_appetite: str = "balanced"
     ) -> List[Annotation]:
         """Return risk-related annotations for *draft*."""
-        return await self._ai_review(draft, risk_appetite)
+        annotations = await self._ai_review(draft, risk_appetite)
+        if not annotations:
+            annotations.append(Annotation(
+                section_number="*",
+                agent="risk",
+                severity="info",
+                issue="Risk review was not performed (AI unavailable). Manual risk review recommended.",
+                reasoning="Vertex AI was not available for automated risk assessment.",
+            ))
+        return annotations
 
     async def _ai_review(
         self, draft: RawDraft, risk_appetite: str
@@ -47,11 +57,15 @@ class RiskAgent:
             for s in draft.sections
         )
 
+        safe_contract_type = sanitize_for_prompt(draft.contract_type, max_length=200)
+        safe_risk_appetite = sanitize_for_prompt(risk_appetite, max_length=200)
+        safe_sections = sanitize_for_prompt(sections_text, max_length=20000)
+
         prompt = (
             "You are a contract risk analyst. Review the following contract sections "
-            f"for a {draft.contract_type} agreement.\n\n"
-            f"Risk appetite: {risk_appetite}\n\n"
-            f"Sections:\n{sections_text}\n\n"
+            f"for a {safe_contract_type} agreement.\n\n"
+            f"Risk appetite: {safe_risk_appetite}\n\n"
+            f"Sections:\n{safe_sections}\n\n"
             "For each risk issue found, return a JSON array of objects with keys:\n"
             '  "section_number" (string), "severity" ("critical"|"warning"|"info"),\n'
             '  "issue" (short description), "reasoning" (why this is a risk),\n'
@@ -60,7 +74,8 @@ class RiskAgent:
         )
 
         try:
-            model = get_generative_model("gemini-2.5-flash")
+            from app.core.config import settings
+            model = get_generative_model(settings.GEMINI_MODEL)
             response = await model.generate_content_async(
                 [{"role": "user", "parts": [{"text": prompt}]}],
                 generation_config=GenerateContentConfig(
