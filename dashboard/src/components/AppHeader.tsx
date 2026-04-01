@@ -9,6 +9,7 @@ interface AppHeaderProps {
 
 const NAV_ITEMS = [
     { key: 'dashboard', label: 'Dashboard', path: '/dashboard' },
+    { key: 'drafting', label: 'Draft', path: '/drafting' },
     { key: 'playbooks', label: 'Playbooks', path: '/playbooks' },
     { key: 'clauses', label: 'Clauses', path: '/clause-library' },
     { key: 'templates', label: 'Templates', path: '/templates' },
@@ -39,6 +40,7 @@ export default function AppHeader({ activePage }: AppHeaderProps) {
     const getActiveKey = (): string => {
         if (activePage) return activePage;
         const path = location.pathname;
+        if (path.startsWith('/drafting')) return 'drafting';
         if (path.startsWith('/playbooks')) return 'playbooks';
         if (path.startsWith('/clause-library')) return 'clauses';
         if (path.startsWith('/templates')) return 'templates';

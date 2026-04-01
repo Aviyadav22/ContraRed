@@ -23,6 +23,7 @@ const Executive = React.lazy(() => import('@/pages/Executive'));
 const Reports = React.lazy(() => import('@/pages/Reports'));
 const Marketplace = React.lazy(() => import('@/pages/Marketplace'));
 const ForgotPassword = React.lazy(() => import('@/pages/ForgotPassword'));
+const Drafting = React.lazy(() => import('@/pages/Drafting'));
 
 
 const queryClient = new QueryClient({
@@ -113,6 +114,7 @@ export default function App() {
 
             {/* Protected routes - all authenticated users */}
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/drafting" element={<ProtectedRoute><Drafting /></ProtectedRoute>} />
             <Route path="/playbooks" element={<ProtectedRoute><Playbooks /></ProtectedRoute>} />
             <Route path="/clause-library" element={<ProtectedRoute><ClauseLibrary /></ProtectedRoute>} />
             <Route path="/templates" element={<ProtectedRoute><Templates /></ProtectedRoute>} />
