@@ -4,6 +4,8 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { isAuthenticated, isAdmin, validateSession, clearAuth } from '@/api/client';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { ThemeProvider } from '@/contexts/ThemeContext';
+import { ToastProvider } from '@/contexts/ToastContext';
+import { ToastContainer } from '@/components/ui/Toast';
 
 const Landing = React.lazy(() => import('@/pages/Landing'));
 const Login = React.lazy(() => import('@/pages/Login'));
@@ -103,6 +105,7 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <ThemeProvider>
+    <ToastProvider>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Suspense fallback={<div className="flex flex-col items-center justify-center min-h-screen" style={{ backgroundColor: '#FAFAF9' }}><div className="text-2xl font-bold mb-4" style={{ color: '#C0392B' }}>ContraRed</div><div className="animate-spin rounded-full h-8 w-8 border-2 border-slate-300" style={{ borderTopColor: '#C0392B' }}></div></div>}>
@@ -140,6 +143,8 @@ export default function App() {
         </Suspense>
       </BrowserRouter>
     </QueryClientProvider>
+    <ToastContainer />
+    </ToastProvider>
     </ThemeProvider>
   );
 }
