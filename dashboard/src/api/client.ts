@@ -5,6 +5,11 @@
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
+// Guard against localhost in production (HTTPS context)
+if (typeof window !== 'undefined' && window.location.protocol === 'https:' && API_BASE_URL.includes('localhost')) {
+    throw new Error('FATAL: VITE_API_URL points to localhost in production. Set the environment variable to the production API URL.');
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -118,8 +123,16 @@ export function getStoredTokens(): AuthTokens | null {
 
 export function getStoredUser(): User | null {
     try {
-        const stored = localStorage.getItem(USER_KEY);
-        return stored ? JSON.parse(stored) : null;
+        // Try sessionStorage first, migrate from localStorage if needed
+        const stored = sessionStorage.getItem(USER_KEY) || localStorage.getItem(USER_KEY);
+        if (!stored) return null;
+        const user = JSON.parse(stored);
+        // Migrate from localStorage to sessionStorage
+        if (localStorage.getItem(USER_KEY)) {
+            sessionStorage.setItem(USER_KEY, stored);
+            localStorage.removeItem(USER_KEY);
+        }
+        return user;
     } catch {
         return null;
     }
@@ -127,12 +140,13 @@ export function getStoredUser(): User | null {
 
 export function saveAuth(_tokens: AuthTokens, user: User): void {
     // Tokens are stored in HttpOnly cookies by the server.
-    // Only store non-sensitive user profile in localStorage.
-    localStorage.setItem(USER_KEY, JSON.stringify(user));
+    // Only store non-sensitive user profile in sessionStorage (ephemeral).
+    sessionStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
 export function clearAuth(): void {
-    localStorage.removeItem(USER_KEY);
+    sessionStorage.removeItem(USER_KEY);
+    localStorage.removeItem(USER_KEY);  // Clean up any legacy data
 }
 
 export function isAuthenticated(): boolean {
@@ -1278,4 +1292,111 @@ export async function listFeedback(params?: {
 export async function getRuleEffectiveness(needsReviewOnly?: boolean): Promise<RuleEffectiveness[]> {
     const qs = needsReviewOnly ? '?needs_review_only=true' : '';
     return request(`/feedback/stats${qs}`);
+}
+
+// ============================================================================
+// Contract Drafting
+// ============================================================================
+
+export interface IntakeSchemaField {
+    name: string;
+    type: string;
+    required?: boolean;
+    default?: string;
+    options?: string[];
+    show_when?: string;
+    placeholder?: string;
+}
+
+export interface IntakeSchemaStage {
+    id: string;
+    title: string;
+    show_when?: string;
+    fields: IntakeSchemaField[];
+}
+
+export interface IntakeSchema {
+    stages: IntakeSchemaStage[];
+}
+
+export interface GenerateRequest {
+    contract_type: string;
+    drafting_perspective: string;
+    risk_appetite: string;
+    jurisdiction: string;
+    party_1: { name: string; entity_type: string; jurisdiction: string; address?: string };
+    party_2: { name: string; entity_type: string; jurisdiction: string; address?: string };
+    term_months?: number;
+    governing_law?: string;
+    dispute_resolution?: string;
+    venue?: string;
+    effective_date?: string;
+    nda_details?: {
+        purpose: string;
+        confidentiality_survival_years?: number;
+        ci_categories?: string[];
+        non_solicitation?: boolean;
+        non_solicitation_months?: number;
+        marking_requirement?: boolean;
+    };
+    saas_details?: {
+        service_description: string;
+        pricing_model: string;
+        price_amount: number;
+        billing_frequency: string;
+        auto_renewal?: boolean;
+        uptime_commitment?: number;
+        liability_cap_months?: number;
+        authorized_users?: number;
+        compliance_frameworks?: string[];
+    };
+}
+
+export interface GenerateResponse {
+    draft_id: string;
+    title: string;
+    contract_type: string;
+    overall_score: number;
+    risk_alignment: number;
+    compliance_score: number;
+    qa_score: number;
+    total_sections: number;
+    annotations_applied: number;
+    conflicts_flagged: number;
+    open_items: number;
+}
+
+export interface DraftingPlaybookSummary {
+    id: string;
+    name: string;
+    contract_type: string;
+    jurisdiction: string;
+    clause_count: number;
+}
+
+export async function getDraftingIntakeSchema(contractType: string): Promise<IntakeSchema> {
+    return request(`/drafting/intake-schema?contract_type=${encodeURIComponent(contractType)}`);
+}
+
+export async function generateContract(data: GenerateRequest): Promise<GenerateResponse> {
+    return request('/drafting/generate', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+}
+
+export async function downloadDraft(draftId: string): Promise<Blob> {
+    const res = await fetch(`${API_BASE_URL}/drafting/download/${draftId}`, {
+        credentials: 'include',
+    });
+    if (!res.ok) throw new Error('Download failed');
+    return res.blob();
+}
+
+export async function getDraftAddinPayload(draftId: string): Promise<Record<string, unknown>> {
+    return request(`/drafting/addin-payload/${draftId}`);
+}
+
+export async function listDraftingPlaybooks(): Promise<DraftingPlaybookSummary[]> {
+    return request('/drafting/playbooks');
 }
