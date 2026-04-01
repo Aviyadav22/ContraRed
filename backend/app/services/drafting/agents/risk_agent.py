@@ -69,7 +69,8 @@ class RiskAgent:
                     response_mime_type="application/json",
                 ),
             )
-            items = json.loads(response.text)
+            raw = response.text or "[]"
+            items = json.loads(raw)
             return [
                 Annotation(
                     section_number=item["section_number"],
