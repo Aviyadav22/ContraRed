@@ -6,6 +6,7 @@ import logging
 from app.services.drafting.models import FinalDraft, Annotation
 from app.services.drafting.style_rules import apply_all_style_rules
 from app.services.drafting.consistency_engine import ConsistencyEngine
+from app.services.drafting.jurisdiction_rules import JurisdictionRuleEngine
 from app.services.drafting.agents.intake_agent import IntakeAgent
 from app.services.drafting.agents.draft_agent import DraftAgent
 from app.services.drafting.agents.risk_agent import RiskAgent
@@ -29,6 +30,7 @@ class DraftingOrchestrator:
         self.qa_agent = QAAgent()
         self.assembler = Assembler()
         self._consistency = ConsistencyEngine()
+        self._jurisdiction = JurisdictionRuleEngine()
 
     async def run(self, raw_input: dict) -> FinalDraft:
         """Execute the full drafting pipeline and return the final draft."""
@@ -88,6 +90,16 @@ class DraftingOrchestrator:
             logger.error("Stage 3 failed: %s — continuing with empty annotations", exc, exc_info=True)
 
         all_annotations = risk_anns + compliance_anns + qa_anns
+
+        # Stage 3b: Deterministic jurisdiction rule checks
+        logger.info("Stage 3b: Jurisdiction rule checks (%s)", draft_request.jurisdiction)
+        jurisdiction_findings = self._jurisdiction.check(
+            raw_draft,
+            jurisdiction=draft_request.jurisdiction,
+            contract_type=draft_request.contract_type,
+        )
+        all_annotations.extend(self._jurisdiction.to_annotations(jurisdiction_findings))
+
         logger.info("Reviews complete: %d annotations total", len(all_annotations))
 
         # Stage 4: Assemble final draft with annotations applied
