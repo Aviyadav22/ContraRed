@@ -171,10 +171,40 @@ def _sg_rules(section_number: str, text: str) -> list[JurisdictionFinding]:
     return findings
 
 
+def _us_de_rules(section_number: str, text: str) -> list[JurisdictionFinding]:
+    findings: list[JurisdictionFinding] = []
+    # Always applicable for corporate contracts — no pattern match needed
+    findings.append(JurisdictionFinding(
+        section_number=section_number,
+        severity="info",
+        issue="Consider specifying Delaware Court of Chancery as exclusive venue for corporate disputes. It offers specialized judges familiar with business law.",
+        statute="Delaware Court of Chancery",
+        action="FLAG_FOR_REVIEW",
+        suggested_fix="Add venue clause specifying Court of Chancery of the State of Delaware for corporate/equity matters.",
+    ))
+    return findings
+
+
+def _us_tx_rules(section_number: str, text: str) -> list[JurisdictionFinding]:
+    findings: list[JurisdictionFinding] = []
+    if _NON_COMPETE_RE.search(text):
+        findings.append(JurisdictionFinding(
+            section_number=section_number,
+            severity="warning",
+            issue="Texas enforces non-competes if: (1) ancillary to an otherwise enforceable agreement, (2) reasonable in scope/time/geography, and (3) supported by consideration. Maximum recommended duration is 2 years.",
+            statute="Texas Business & Commerce Code Section 15.50",
+            action="FLAG_FOR_REVIEW",
+            suggested_fix="Ensure non-compete is ancillary to valid consideration, limited to 1-2 years, and geographically reasonable.",
+        ))
+    return findings
+
+
 # Registry: jurisdiction code -> list of per-section rule functions
 _JURISDICTION_SECTION_RULES: dict[str, list] = {
     "US-CA": [_us_ca_rules],
     "US-NY": [_us_ny_rules],
+    "US-DE": [_us_de_rules],
+    "US-TX": [_us_tx_rules],
     "IN":    [_in_rules],
     "GB":    [_gb_rules],
     "SG":    [_sg_rules],

@@ -35,6 +35,8 @@ _TITLE_MAP: Dict[str, str] = {
     "nda_mutual": "MUTUAL NON-DISCLOSURE AGREEMENT",
     "nda_unilateral": "NON-DISCLOSURE AGREEMENT",
     "saas": "SAAS SUBSCRIPTION AGREEMENT",
+    "msa": "MASTER SERVICE AGREEMENT",
+    "employment": "EMPLOYMENT AGREEMENT",
 }
 
 # ---------------------------------------------------------------------------
