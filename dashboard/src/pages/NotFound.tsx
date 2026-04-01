@@ -1,16 +1,21 @@
 import { Link } from 'react-router-dom';
+import { Button } from '@/components/ui';
+import { ArrowLeft } from 'lucide-react';
 
 export default function NotFound() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-slate-50">
-      <div className="text-center">
-        <h1 className="text-6xl font-bold text-slate-900 mb-4">404</h1>
-        <p className="text-lg text-slate-600 mb-8">Page not found</p>
-        <Link
-          to="/dashboard"
-          className="px-6 py-3 bg-slate-900 text-white rounded-lg hover:bg-slate-800 transition-colors text-sm font-medium"
-        >
-          Back to Dashboard
+    <div style={{
+      minHeight: '100vh',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: 'var(--bg-app)',
+    }}>
+      <div style={{ textAlign: 'center' }}>
+        <h1 style={{ fontSize: 64, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 16 }}>404</h1>
+        <p style={{ fontSize: 18, color: 'var(--text-secondary)', marginBottom: 32 }}>Page not found</p>
+        <Link to="/dashboard" style={{ textDecoration: 'none' }}>
+          <Button icon={<ArrowLeft size={16} />}>Back to Dashboard</Button>
         </Link>
       </div>
     </div>

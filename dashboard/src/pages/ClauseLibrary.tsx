@@ -1,7 +1,19 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState, useMemo } from 'react';
+import { useState, useMemo, type CSSProperties } from 'react';
 import { listClauses, createClause, updateClause, deleteClause, type ClauseLibraryItem } from '@/api/client';
-import AppHeader from '@/components/AppHeader';
+import { AppLayout } from '@/components/layout';
+import { Button, Card, Badge, TextInput, TextareaInput } from '@/components/ui';
+import { Plus, Pencil, Trash2 } from 'lucide-react';
+
+function InlineConfirm({ message, onConfirm, onCancel }: { message: string; onConfirm: () => void; onCancel: () => void }) {
+    return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{message}</span>
+            <button onClick={onConfirm} style={{ fontSize: 12, fontWeight: 600, color: 'var(--risk-critical)', background: 'var(--risk-critical-bg)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer' }}>Yes</button>
+            <button onClick={onCancel} style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', background: 'var(--bg-elevated)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer' }}>No</button>
+        </span>
+    );
+}
 
 export default function ClauseLibrary() {
     const queryClient = useQueryClient();
@@ -28,19 +40,12 @@ export default function ClauseLibrary() {
 
     const createMutation = useMutation({
         mutationFn: (data: { clause_type: string; name: string; approved_text: string }) => createClause(data),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['clauses'] });
-            resetForm();
-        },
+        onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['clauses'] }); resetForm(); },
     });
 
     const updateMutation = useMutation({
-        mutationFn: ({ id, data }: { id: string; data: { clause_type: string; name: string; approved_text: string } }) =>
-            updateClause(id, data),
-        onSuccess: () => {
-            queryClient.invalidateQueries({ queryKey: ['clauses'] });
-            resetForm();
-        },
+        mutationFn: ({ id, data }: { id: string; data: { clause_type: string; name: string; approved_text: string } }) => updateClause(id, data),
+        onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['clauses'] }); resetForm(); },
     });
 
     const deleteMutation = useMutation({
@@ -68,7 +73,6 @@ export default function ClauseLibrary() {
         setShowCreate(true);
     };
 
-    // Group clauses by type
     const grouped = useMemo(() => (clauses || []).reduce<Record<string, ClauseLibraryItem[]>>((acc, c) => {
         (acc[c.clause_type] = acc[c.clause_type] || []).push(c);
         return acc;
@@ -76,168 +80,103 @@ export default function ClauseLibrary() {
 
     const clauseTypes = useMemo(() => Object.keys(grouped).sort(), [grouped]);
 
+    const filterBtnStyle = (active: boolean): CSSProperties => ({
+        padding: '6px 12px', borderRadius: 'var(--radius-sm)', fontSize: 12, fontWeight: 500,
+        cursor: 'pointer', border: active ? 'none' : '1px solid var(--border)',
+        backgroundColor: active ? 'var(--accent)' : 'transparent',
+        color: active ? '#fff' : 'var(--text-secondary)',
+        transition: 'all var(--transition-fast)',
+    });
+
     return (
-        <div className="min-h-screen bg-slate-50">
-            <AppHeader activePage="clauses" />
-
-            <main className="max-w-5xl mx-auto px-6 py-8">
-                <div className="flex items-center justify-between mb-6">
-                    <div>
-                        <h1 className="text-2xl font-semibold text-slate-800">Clause Library</h1>
-                        <p className="text-sm text-slate-500 mt-1">Saved approved clause language for contract review</p>
-                    </div>
-                    <button
-                        onClick={() => { if (showCreate) { resetForm(); } else { setShowCreate(true); } }}
-                        className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors"
-                    >
-                        + New Clause
-                    </button>
+        <AppLayout>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+                <div>
+                    <h1 style={{ fontSize: 24, fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>Clause Library</h1>
+                    <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginTop: 4 }}>Saved approved clause language for contract review</p>
                 </div>
+                <Button onClick={() => { if (showCreate) { resetForm(); } else { setShowCreate(true); } }} icon={<Plus size={16} />}>
+                    New Clause
+                </Button>
+            </div>
 
-                {/* Create Form */}
-                {showCreate && (
-                    <form onSubmit={handleSubmit} className="bg-white border border-slate-200 rounded-xl p-6 mb-6 space-y-4">
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label htmlFor="clause-type" className="block text-sm font-medium text-slate-700 mb-1">Clause Type</label>
-                                <input
-                                    id="clause-type"
-                                    value={newType}
-                                    onChange={(e) => setNewType(e.target.value)}
-                                    placeholder="e.g. Indemnification"
-                                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
-                                    required
-                                />
-                            </div>
-                            <div>
-                                <label htmlFor="clause-name" className="block text-sm font-medium text-slate-700 mb-1">Name</label>
-                                <input
-                                    id="clause-name"
-                                    value={newName}
-                                    onChange={(e) => setNewName(e.target.value)}
-                                    placeholder="e.g. Standard Mutual Indemnification"
-                                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
-                                    required
-                                />
-                            </div>
+            {/* Create/Edit Form */}
+            {showCreate && (
+                <Card style={{ marginBottom: 24 }}>
+                    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                            <TextInput label="Clause Type" value={newType} onChange={(e) => setNewType(e.target.value)} placeholder="e.g. Indemnification" required />
+                            <TextInput label="Name" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="e.g. Standard Mutual Indemnification" required />
                         </div>
-                        <div>
-                            <label htmlFor="clause-text" className="block text-sm font-medium text-slate-700 mb-1">Approved Text</label>
-                            <textarea
-                                id="clause-text"
-                                value={newText}
-                                onChange={(e) => setNewText(e.target.value)}
-                                placeholder="Paste the approved clause language here..."
-                                rows={4}
-                                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-300"
-                                required
-                            />
-                        </div>
-                        <div className="flex gap-3">
-                            <button
-                                type="submit"
-                                disabled={createMutation.isPending || updateMutation.isPending}
-                                className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700 disabled:opacity-50"
-                            >
-                                {(createMutation.isPending || updateMutation.isPending)
-                                    ? 'Saving...'
-                                    : editingId ? 'Update Clause' : 'Save Clause'}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={resetForm}
-                                className="px-4 py-2 text-slate-600 border border-slate-200 rounded-lg text-sm hover:bg-slate-50"
-                            >
-                                Cancel
-                            </button>
+                        <TextareaInput label="Approved Text" value={newText} onChange={(e) => setNewText(e.target.value)} placeholder="Paste the approved clause language here..." style={{ minHeight: 100 }} required />
+                        <div style={{ display: 'flex', gap: 12 }}>
+                            <Button type="submit" loading={createMutation.isPending || updateMutation.isPending}>
+                                {(createMutation.isPending || updateMutation.isPending) ? 'Saving...' : editingId ? 'Update Clause' : 'Save Clause'}
+                            </Button>
+                            <Button variant="secondary" type="button" onClick={resetForm}>Cancel</Button>
                         </div>
                     </form>
-                )}
+                </Card>
+            )}
 
-                {/* Filter by type */}
-                {clauseTypes.length > 0 && (
-                    <div className="flex gap-2 mb-6 flex-wrap">
-                        <button
-                            onClick={() => setFilterType('')}
-                            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                                !filterType ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-                            }`}
-                        >
-                            All
-                        </button>
-                        {clauseTypes.map(type => (
-                            <button
-                                key={type}
-                                onClick={() => setFilterType(type)}
-                                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                                    filterType === type ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-50'
-                                }`}
-                            >
-                                {type}
-                            </button>
-                        ))}
-                    </div>
-                )}
+            {/* Filter by type */}
+            {clauseTypes.length > 0 && (
+                <div style={{ display: 'flex', gap: 8, marginBottom: 24, flexWrap: 'wrap' }}>
+                    <button onClick={() => setFilterType('')} style={filterBtnStyle(!filterType)}>All</button>
+                    {clauseTypes.map(type => (
+                        <button key={type} onClick={() => setFilterType(type)} style={filterBtnStyle(filterType === type)}>{type}</button>
+                    ))}
+                </div>
+            )}
 
-                {error && <div className="text-red-600 p-4">Failed to load data. Please try again.</div>}
+            {error && (
+                <div style={{ color: 'var(--risk-critical)', padding: 16, background: 'var(--risk-critical-bg)', borderRadius: 'var(--radius-md)', border: '1px solid var(--risk-critical-border)' }}>
+                    Failed to load data. Please try again.
+                </div>
+            )}
 
-                {/* Content */}
-                {isLoading ? (
-                    <div className="text-center py-12 text-slate-400">Loading clauses...</div>
-                ) : (clauses || []).length === 0 ? (
-                    <div className="text-center py-16 bg-white border border-slate-200 rounded-xl">
-                        <p className="text-slate-500 mb-2">No saved clauses yet</p>
-                        <p className="text-sm text-slate-400">Create your first clause to get started</p>
-                    </div>
-                ) : (
-                    <div className="space-y-3">
-                        {(clauses || []).map((clause) => (
-                            <div key={clause.id} className="bg-white border border-slate-200 rounded-xl p-5 hover:border-slate-300 transition-colors">
-                                <div className="flex items-start justify-between mb-2">
-                                    <div>
-                                        <h3 className="font-medium text-slate-800">{clause.name}</h3>
-                                        <span className="inline-block mt-1 px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-xs font-medium">
-                                            {clause.clause_type}
-                                        </span>
-                                        {clause.is_mandatory && (
-                                            <span className="inline-block ml-2 mt-1 px-2 py-0.5 bg-red-50 text-red-600 rounded text-xs font-medium">
-                                                Mandatory
-                                            </span>
-                                        )}
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                        <button
-                                            onClick={() => handleEdit(clause)}
-                                            className="text-slate-400 hover:text-slate-700 text-sm transition-colors"
-                                        >
-                                            Edit
-                                        </button>
-                                        {confirmDeleteId === clause.id ? (
-                                            <span className="inline-flex items-center gap-1.5">
-                                                <span className="text-[12px] text-slate-500">Delete?</span>
-                                                <button onClick={() => { deleteMutation.mutate(clause.id); setConfirmDeleteId(null); }} className="text-[12px] font-semibold text-red-600 bg-red-50 px-2 py-0.5 rounded hover:bg-red-100 transition-colors">Yes</button>
-                                                <button onClick={() => setConfirmDeleteId(null)} className="text-[12px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded hover:bg-slate-200 transition-colors">No</button>
-                                            </span>
-                                        ) : (
-                                            <button
-                                                onClick={() => setConfirmDeleteId(clause.id)}
-                                                className="text-slate-400 hover:text-red-500 text-sm transition-colors"
-                                            >
-                                                Delete
-                                            </button>
-                                        )}
+            {/* Content */}
+            {isLoading ? (
+                <div style={{ textAlign: 'center', padding: '48px 0', color: 'var(--text-muted)' }}>Loading clauses...</div>
+            ) : (clauses || []).length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '64px 32px', backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)' }}>
+                    <p style={{ color: 'var(--text-secondary)', marginBottom: 8 }}>No saved clauses yet</p>
+                    <p style={{ fontSize: 14, color: 'var(--text-muted)' }}>Create your first clause to get started</p>
+                </div>
+            ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    {(clauses || []).map((clause) => (
+                        <Card key={clause.id} variant="interactive">
+                            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 8 }}>
+                                <div>
+                                    <h3 style={{ fontWeight: 500, color: 'var(--text-primary)', margin: 0 }}>{clause.name}</h3>
+                                    <div style={{ marginTop: 6, display: 'flex', gap: 8 }}>
+                                        <Badge variant="neutral">{clause.clause_type}</Badge>
+                                        {clause.is_mandatory && <Badge variant="critical">Mandatory</Badge>}
                                     </div>
                                 </div>
-                                <p className="text-sm text-slate-600 leading-relaxed whitespace-pre-wrap">
-                                    {clause.approved_text.length > 300
-                                        ? clause.approved_text.slice(0, 300) + '...'
-                                        : clause.approved_text}
-                                </p>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                    <Button variant="ghost" size="sm" onClick={() => handleEdit(clause)} icon={<Pencil size={14} />}>Edit</Button>
+                                    {confirmDeleteId === clause.id ? (
+                                        <InlineConfirm
+                                            message="Delete?"
+                                            onConfirm={() => { deleteMutation.mutate(clause.id); setConfirmDeleteId(null); }}
+                                            onCancel={() => setConfirmDeleteId(null)}
+                                        />
+                                    ) : (
+                                        <Button variant="danger" size="sm" onClick={() => setConfirmDeleteId(clause.id)} icon={<Trash2 size={14} />}>Delete</Button>
+                                    )}
+                                </div>
                             </div>
-                        ))}
-                    </div>
-                )}
-            </main>
-        </div>
+                            <p style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>
+                                {clause.approved_text.length > 300
+                                    ? clause.approved_text.slice(0, 300) + '...'
+                                    : clause.approved_text}
+                            </p>
+                        </Card>
+                    ))}
+                </div>
+            )}
+        </AppLayout>
     );
 }

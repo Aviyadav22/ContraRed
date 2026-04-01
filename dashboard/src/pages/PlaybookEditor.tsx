@@ -11,7 +11,7 @@ import {
     type RuleTier, type PlaybookCondition,
     type RuleDependency, type PlaybookVersionSummary,
 } from '@/api/client';
-import AppHeader from '@/components/AppHeader';
+import { AppLayout } from '@/components/layout';
 
 const RISK_LEVELS = [
     { value: 'red', label: 'Critical', className: 'bg-red-50 text-red-600' },
@@ -568,18 +568,18 @@ export default function PlaybookEditor() {
 
     if (isLoading) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-slate-50">
-                <div className="w-8 h-8 border-2 border-slate-200 border-t-slate-900 rounded-full animate-spin" />
+            <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-app)' }}>
+                <div style={{ width: 32, height: 32, border: '2px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
             </div>
         );
     }
 
     if (error || !playbook) {
         return (
-            <div className="min-h-screen flex items-center justify-center bg-slate-50">
-                <div className="text-center">
-                    <p className="text-red-600 mb-4">Error loading playbook</p>
-                    <button onClick={() => navigate('/playbooks')} className="text-blue-600 bg-transparent border-none cursor-pointer underline">
+            <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-app)' }}>
+                <div style={{ textAlign: 'center' }}>
+                    <p style={{ color: 'var(--risk-critical)', marginBottom: 16 }}>Error loading playbook</p>
+                    <button onClick={() => navigate('/playbooks')} style={{ color: 'var(--info)', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
                         Back to Playbooks
                     </button>
                 </div>
@@ -841,7 +841,7 @@ export default function PlaybookEditor() {
                 </div>
             ) : (
                 <div className="text-center py-16 px-8 bg-white rounded-xl border border-slate-200">
-                    <svg width="48" height="48" fill="none" stroke="#cbd5e1" viewBox="0 0 24 24" className="mx-auto mb-4">
+                    <svg width="48" height="48" fill="none" stroke="var(--text-muted)" viewBox="0 0 24 24" className="mx-auto mb-4">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                     </svg>
                     <h3 className="text-lg font-semibold text-slate-900 mb-2">No rules yet</h3>
@@ -1109,7 +1109,7 @@ export default function PlaybookEditor() {
                 </div>
             ) : (
                 <div className="text-center py-16 px-8 bg-white rounded-xl border border-slate-200">
-                    <svg width="48" height="48" fill="none" stroke="#cbd5e1" viewBox="0 0 24 24" className="mx-auto mb-4">
+                    <svg width="48" height="48" fill="none" stroke="var(--text-muted)" viewBox="0 0 24 24" className="mx-auto mb-4">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
                     </svg>
                     <h3 className="text-lg font-semibold text-slate-900 mb-2">No conditions yet</h3>
@@ -1246,7 +1246,7 @@ export default function PlaybookEditor() {
                                         <span className="font-semibold text-sm text-slate-900">{getRuleName(dep.source_rule_id)}</span>
                                     </td>
                                     <td className="px-2 py-4 text-center">
-                                        <svg width="20" height="20" fill="none" stroke="#94a3b8" viewBox="0 0 24 24">
+                                        <svg width="20" height="20" fill="none" stroke="var(--text-muted)" viewBox="0 0 24 24">
                                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
                                         </svg>
                                     </td>
@@ -1278,7 +1278,7 @@ export default function PlaybookEditor() {
                 </div>
             ) : (
                 <div className="text-center py-16 px-8 bg-white rounded-xl border border-slate-200">
-                    <svg width="48" height="48" fill="none" stroke="#cbd5e1" viewBox="0 0 24 24" className="mx-auto mb-4">
+                    <svg width="48" height="48" fill="none" stroke="var(--text-muted)" viewBox="0 0 24 24" className="mx-auto mb-4">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
                     </svg>
                     <h3 className="text-lg font-semibold text-slate-900 mb-2">No dependencies yet</h3>
@@ -1395,7 +1395,7 @@ export default function PlaybookEditor() {
                 </div>
             ) : (
                 <div className="text-center py-16 px-8 bg-white rounded-xl border border-slate-200">
-                    <svg width="48" height="48" fill="none" stroke="#cbd5e1" viewBox="0 0 24 24" className="mx-auto mb-4">
+                    <svg width="48" height="48" fill="none" stroke="var(--text-muted)" viewBox="0 0 24 24" className="mx-auto mb-4">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     <h3 className="text-lg font-semibold text-slate-900 mb-2">No version history</h3>
@@ -1413,7 +1413,7 @@ export default function PlaybookEditor() {
 
     const renderAnalyticsTab = () => (
         <div className="text-center py-24 px-8 bg-white rounded-xl border border-slate-200">
-            <svg width="64" height="64" fill="none" stroke="#cbd5e1" viewBox="0 0 24 24" className="mx-auto mb-6">
+            <svg width="64" height="64" fill="none" stroke="var(--text-muted)" viewBox="0 0 24 24" className="mx-auto mb-6">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
             </svg>
             <h3 className="text-xl font-semibold text-slate-900 mb-3">Analytics dashboard coming in Phase 9</h3>
@@ -1428,8 +1428,7 @@ export default function PlaybookEditor() {
     // ══════════════════════════════════════════════════════════════════════
 
     return (
-        <div className="min-h-screen bg-slate-50">
-            <AppHeader activePage="playbooks" />
+        <AppLayout>
 
             {/* Breadcrumb */}
             <div className="bg-white border-b border-slate-200">
@@ -1478,7 +1477,7 @@ export default function PlaybookEditor() {
                 {activeTab === 'history' && renderHistoryTab()}
                 {activeTab === 'analytics' && renderAnalyticsTab()}
             </main>
-        </div>
+        </AppLayout>
     );
 }
 

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import AppHeader from '@/components/AppHeader';
+import { AppLayout } from '@/components/layout';
 import {
     getDraftingIntakeSchema,
     generateContract,
@@ -209,7 +209,7 @@ export default function Drafting() {
                             i < step ? 'text-white' : i === step ? 'text-white' : 'text-slate-400'
                         }`}
                         style={{
-                            backgroundColor: i < step ? '#1A7A4A' : i === step ? '#C0392B' : '#E8E5E0',
+                            backgroundColor: i < step ? 'var(--risk-low)' : i === step ? 'var(--accent)' : 'var(--border)',
                         }}
                     >
                         {i < step ? (
@@ -218,10 +218,10 @@ export default function Drafting() {
                             i + 1
                         )}
                     </div>
-                    <span className={`text-sm hidden sm:inline ${i === step ? 'font-semibold' : ''}`} style={{ color: i === step ? '#1A1A19' : '#6B6966' }}>
+                    <span className={`text-sm hidden sm:inline ${i === step ? 'font-semibold' : ''}`} style={{ color: i === step ? 'var(--text-primary)' : 'var(--text-secondary)' }}>
                         {label}
                     </span>
-                    {i < STEPS.length - 1 && <div className="w-6 h-px" style={{ backgroundColor: '#E8E5E0' }} />}
+                    {i < STEPS.length - 1 && <div className="w-6 h-px" style={{ backgroundColor: 'var(--border)' }} />}
                 </div>
             ))}
         </div>
@@ -230,7 +230,7 @@ export default function Drafting() {
     const renderStep0 = () => (
         <div className="animate-fade-in space-y-8">
             <div>
-                <h3 className="text-sm font-semibold mb-3" style={{ color: '#6B6966' }}>CONTRACT TYPE</h3>
+                <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-secondary)' }}>CONTRACT TYPE</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     {CONTRACT_TYPES.map(ct => (
                         <button
@@ -238,12 +238,12 @@ export default function Drafting() {
                             onClick={() => set('contract_type', ct.value)}
                             className="text-left p-5 rounded-xl border-2 transition-all hover:shadow-md"
                             style={{
-                                borderColor: form.contract_type === ct.value ? '#C0392B' : '#E8E5E0',
-                                backgroundColor: form.contract_type === ct.value ? '#FDF2F1' : '#FFFFFF',
+                                borderColor: form.contract_type === ct.value ? 'var(--accent)' : 'var(--border)',
+                                backgroundColor: form.contract_type === ct.value ? 'var(--accent-glow)' : 'var(--bg-surface)',
                             }}
                         >
-                            <div className="font-semibold text-sm" style={{ color: '#1A1A19' }}>{ct.label}</div>
-                            <div className="text-xs mt-1" style={{ color: '#6B6966' }}>{ct.desc}</div>
+                            <div className="font-semibold text-sm" style={{ color: 'var(--text-primary)' }}>{ct.label}</div>
+                            <div className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>{ct.desc}</div>
                         </button>
                     ))}
                 </div>
@@ -251,7 +251,7 @@ export default function Drafting() {
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                    <h3 className="text-sm font-semibold mb-3" style={{ color: '#6B6966' }}>PERSPECTIVE</h3>
+                    <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-secondary)' }}>PERSPECTIVE</h3>
                     <div className="space-y-2">
                         {PERSPECTIVES.map(p => (
                             <button
@@ -259,17 +259,17 @@ export default function Drafting() {
                                 onClick={() => set('drafting_perspective', p.value)}
                                 className="w-full text-left px-4 py-3 rounded-lg border transition-all"
                                 style={{
-                                    borderColor: form.drafting_perspective === p.value ? '#C0392B' : '#E8E5E0',
-                                    backgroundColor: form.drafting_perspective === p.value ? '#FDF2F1' : '#FFFFFF',
+                                    borderColor: form.drafting_perspective === p.value ? 'var(--accent)' : 'var(--border)',
+                                    backgroundColor: form.drafting_perspective === p.value ? 'var(--accent-glow)' : 'var(--bg-surface)',
                                 }}
                             >
-                                <span className="text-sm font-medium" style={{ color: '#1A1A19' }}>{p.label}</span>
+                                <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{p.label}</span>
                             </button>
                         ))}
                     </div>
                 </div>
                 <div>
-                    <h3 className="text-sm font-semibold mb-3" style={{ color: '#6B6966' }}>RISK APPETITE</h3>
+                    <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--text-secondary)' }}>RISK APPETITE</h3>
                     <div className="space-y-2">
                         {RISK_APPETITES.map(r => (
                             <button
@@ -277,12 +277,12 @@ export default function Drafting() {
                                 onClick={() => set('risk_appetite', r.value)}
                                 className="w-full text-left px-4 py-3 rounded-lg border transition-all"
                                 style={{
-                                    borderColor: form.risk_appetite === r.value ? '#C0392B' : '#E8E5E0',
-                                    backgroundColor: form.risk_appetite === r.value ? '#FDF2F1' : '#FFFFFF',
+                                    borderColor: form.risk_appetite === r.value ? 'var(--accent)' : 'var(--border)',
+                                    backgroundColor: form.risk_appetite === r.value ? 'var(--accent-glow)' : 'var(--bg-surface)',
                                 }}
                             >
-                                <div className="text-sm font-medium" style={{ color: '#1A1A19' }}>{r.label}</div>
-                                <div className="text-xs" style={{ color: '#6B6966' }}>{r.desc}</div>
+                                <div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{r.label}</div>
+                                <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>{r.desc}</div>
                             </button>
                         ))}
                     </div>
@@ -298,58 +298,58 @@ export default function Drafting() {
         <div className="animate-fade-in space-y-6">
             {/* Parties */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="p-5 rounded-xl border" style={{ borderColor: '#E8E5E0', backgroundColor: '#FFFFFF' }}>
-                    <h3 className="text-sm font-semibold mb-4" style={{ color: '#6B6966' }}>
+                <div className="p-5 rounded-xl border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+                    <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-secondary)' }}>
                         {form.contract_type === 'saas' ? 'PROVIDER' : 'PARTY 1'}
                     </h3>
                     <div className="space-y-3">
                         <div>
-                            <label className={labelClass} style={{ color: '#6B6966' }}>Legal Name *</label>
-                            <input className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.party_1_name} onChange={e => set('party_1_name', e.target.value)} placeholder="e.g., Acme Inc." />
+                            <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Legal Name *</label>
+                            <input className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.party_1_name} onChange={e => set('party_1_name', e.target.value)} placeholder="e.g., Acme Inc." />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className={labelClass} style={{ color: '#6B6966' }}>Entity Type</label>
-                                <select className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.party_1_entity_type} onChange={e => set('party_1_entity_type', e.target.value)}>
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Entity Type</label>
+                                <select className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.party_1_entity_type} onChange={e => set('party_1_entity_type', e.target.value)}>
                                     {['Inc.', 'LLC', 'Corp.', 'Ltd.', 'LP', 'LLP', 'Pvt. Ltd.', 'Individual'].map(t => <option key={t} value={t}>{t}</option>)}
                                 </select>
                             </div>
                             <div>
-                                <label className={labelClass} style={{ color: '#6B6966' }}>Jurisdiction</label>
-                                <input className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.party_1_jurisdiction} onChange={e => set('party_1_jurisdiction', e.target.value)} placeholder="US-DE" />
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Jurisdiction</label>
+                                <input className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.party_1_jurisdiction} onChange={e => set('party_1_jurisdiction', e.target.value)} placeholder="US-DE" />
                             </div>
                         </div>
                         <div>
-                            <label className={labelClass} style={{ color: '#6B6966' }}>Address</label>
-                            <input className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.party_1_address} onChange={e => set('party_1_address', e.target.value)} placeholder="Optional" />
+                            <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Address</label>
+                            <input className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.party_1_address} onChange={e => set('party_1_address', e.target.value)} placeholder="Optional" />
                         </div>
                     </div>
                 </div>
 
-                <div className="p-5 rounded-xl border" style={{ borderColor: '#E8E5E0', backgroundColor: '#FFFFFF' }}>
-                    <h3 className="text-sm font-semibold mb-4" style={{ color: '#6B6966' }}>
+                <div className="p-5 rounded-xl border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+                    <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-secondary)' }}>
                         {form.contract_type === 'saas' ? 'CUSTOMER' : 'PARTY 2'}
                     </h3>
                     <div className="space-y-3">
                         <div>
-                            <label className={labelClass} style={{ color: '#6B6966' }}>Legal Name *</label>
-                            <input className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.party_2_name} onChange={e => set('party_2_name', e.target.value)} placeholder="e.g., Beta LLC" />
+                            <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Legal Name *</label>
+                            <input className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.party_2_name} onChange={e => set('party_2_name', e.target.value)} placeholder="e.g., Beta LLC" />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                             <div>
-                                <label className={labelClass} style={{ color: '#6B6966' }}>Entity Type</label>
-                                <select className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.party_2_entity_type} onChange={e => set('party_2_entity_type', e.target.value)}>
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Entity Type</label>
+                                <select className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.party_2_entity_type} onChange={e => set('party_2_entity_type', e.target.value)}>
                                     {['Inc.', 'LLC', 'Corp.', 'Ltd.', 'LP', 'LLP', 'Pvt. Ltd.', 'Individual'].map(t => <option key={t} value={t}>{t}</option>)}
                                 </select>
                             </div>
                             <div>
-                                <label className={labelClass} style={{ color: '#6B6966' }}>Jurisdiction</label>
-                                <input className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.party_2_jurisdiction} onChange={e => set('party_2_jurisdiction', e.target.value)} placeholder="US-CA" />
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Jurisdiction</label>
+                                <input className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.party_2_jurisdiction} onChange={e => set('party_2_jurisdiction', e.target.value)} placeholder="US-CA" />
                             </div>
                         </div>
                         <div>
-                            <label className={labelClass} style={{ color: '#6B6966' }}>Address</label>
-                            <input className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.party_2_address} onChange={e => set('party_2_address', e.target.value)} placeholder="Optional" />
+                            <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Address</label>
+                            <input className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.party_2_address} onChange={e => set('party_2_address', e.target.value)} placeholder="Optional" />
                         </div>
                     </div>
                 </div>
@@ -357,41 +357,41 @@ export default function Drafting() {
 
             {/* NDA-specific fields */}
             {form.contract_type.startsWith('nda') && (
-                <div className="p-5 rounded-xl border" style={{ borderColor: '#E8E5E0', backgroundColor: '#FFFFFF' }}>
-                    <h3 className="text-sm font-semibold mb-4" style={{ color: '#6B6966' }}>NDA DETAILS</h3>
+                <div className="p-5 rounded-xl border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+                    <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-secondary)' }}>NDA DETAILS</h3>
                     <div className="space-y-3">
                         <div>
-                            <label className={labelClass} style={{ color: '#6B6966' }}>Purpose of Disclosure *</label>
-                            <textarea className={inputClass} style={{ borderColor: '#E8E5E0' }} rows={2} value={form.nda_purpose} onChange={e => set('nda_purpose', e.target.value)} placeholder="e.g., Evaluate a potential technology partnership" />
+                            <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Purpose of Disclosure *</label>
+                            <textarea className={inputClass} style={{ borderColor: 'var(--border)' }} rows={2} value={form.nda_purpose} onChange={e => set('nda_purpose', e.target.value)} placeholder="e.g., Evaluate a potential technology partnership" />
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                             <div>
-                                <label className={labelClass} style={{ color: '#6B6966' }}>Term (months)</label>
-                                <input type="number" className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.term_months} onChange={e => set('term_months', +e.target.value)} />
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Term (months)</label>
+                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.term_months} onChange={e => set('term_months', +e.target.value)} />
                             </div>
                             <div>
-                                <label className={labelClass} style={{ color: '#6B6966' }}>Survival (years)</label>
-                                <input type="number" className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.nda_survival_years} onChange={e => set('nda_survival_years', +e.target.value)} />
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Survival (years)</label>
+                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.nda_survival_years} onChange={e => set('nda_survival_years', +e.target.value)} />
                             </div>
                             <div className="col-span-2">
-                                <label className={labelClass} style={{ color: '#6B6966' }}>CI Categories (comma-separated)</label>
-                                <input className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.nda_ci_categories} onChange={e => set('nda_ci_categories', e.target.value)} placeholder="source code, financial data, customer lists" />
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>CI Categories (comma-separated)</label>
+                                <input className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.nda_ci_categories} onChange={e => set('nda_ci_categories', e.target.value)} placeholder="source code, financial data, customer lists" />
                             </div>
                         </div>
                         <div className="flex items-center gap-6 pt-1">
                             <label className="flex items-center gap-2 cursor-pointer">
                                 <input type="checkbox" checked={form.nda_non_solicitation} onChange={e => set('nda_non_solicitation', e.target.checked)} className="rounded" />
-                                <span className="text-sm" style={{ color: '#1A1A19' }}>Non-Solicitation</span>
+                                <span className="text-sm" style={{ color: 'var(--text-primary)' }}>Non-Solicitation</span>
                             </label>
                             {form.nda_non_solicitation && (
                                 <div className="flex items-center gap-2">
-                                    <input type="number" className="w-16 px-2 py-1 rounded border text-sm" style={{ borderColor: '#E8E5E0' }} value={form.nda_non_solicitation_months} onChange={e => set('nda_non_solicitation_months', +e.target.value)} />
-                                    <span className="text-xs" style={{ color: '#6B6966' }}>months</span>
+                                    <input type="number" className="w-16 px-2 py-1 rounded border text-sm" style={{ borderColor: 'var(--border)' }} value={form.nda_non_solicitation_months} onChange={e => set('nda_non_solicitation_months', +e.target.value)} />
+                                    <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>months</span>
                                 </div>
                             )}
                             <label className="flex items-center gap-2 cursor-pointer">
                                 <input type="checkbox" checked={form.nda_marking_requirement} onChange={e => set('nda_marking_requirement', e.target.checked)} className="rounded" />
-                                <span className="text-sm" style={{ color: '#1A1A19' }}>Marking Requirement</span>
+                                <span className="text-sm" style={{ color: 'var(--text-primary)' }}>Marking Requirement</span>
                             </label>
                         </div>
                     </div>
@@ -400,57 +400,57 @@ export default function Drafting() {
 
             {/* SaaS-specific fields */}
             {form.contract_type === 'saas' && (
-                <div className="p-5 rounded-xl border" style={{ borderColor: '#E8E5E0', backgroundColor: '#FFFFFF' }}>
-                    <h3 className="text-sm font-semibold mb-4" style={{ color: '#6B6966' }}>SAAS DETAILS</h3>
+                <div className="p-5 rounded-xl border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+                    <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-secondary)' }}>SAAS DETAILS</h3>
                     <div className="space-y-3">
                         <div>
-                            <label className={labelClass} style={{ color: '#6B6966' }}>Service Description *</label>
-                            <textarea className={inputClass} style={{ borderColor: '#E8E5E0' }} rows={2} value={form.saas_service_description} onChange={e => set('saas_service_description', e.target.value)} placeholder="e.g., Cloud-based CRM platform with AI analytics" />
+                            <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Service Description *</label>
+                            <textarea className={inputClass} style={{ borderColor: 'var(--border)' }} rows={2} value={form.saas_service_description} onChange={e => set('saas_service_description', e.target.value)} placeholder="e.g., Cloud-based CRM platform with AI analytics" />
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                             <div>
-                                <label className={labelClass} style={{ color: '#6B6966' }}>Pricing Model</label>
-                                <select className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.saas_pricing_model} onChange={e => set('saas_pricing_model', e.target.value)}>
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Pricing Model</label>
+                                <select className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.saas_pricing_model} onChange={e => set('saas_pricing_model', e.target.value)}>
                                     {['per_user_monthly', 'per_user_annual', 'flat_monthly', 'flat_annual', 'usage_based', 'tiered'].map(m => <option key={m} value={m}>{m.replace(/_/g, ' ')}</option>)}
                                 </select>
                             </div>
                             <div>
-                                <label className={labelClass} style={{ color: '#6B6966' }}>Price ($) *</label>
-                                <input type="number" className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.saas_price_amount || ''} onChange={e => set('saas_price_amount', +e.target.value)} placeholder="99.00" />
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Price ($) *</label>
+                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.saas_price_amount || ''} onChange={e => set('saas_price_amount', +e.target.value)} placeholder="99.00" />
                             </div>
                             <div>
-                                <label className={labelClass} style={{ color: '#6B6966' }}>Billing</label>
-                                <select className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.saas_billing_frequency} onChange={e => set('saas_billing_frequency', e.target.value)}>
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Billing</label>
+                                <select className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.saas_billing_frequency} onChange={e => set('saas_billing_frequency', e.target.value)}>
                                     {['monthly', 'quarterly', 'annually'].map(f => <option key={f} value={f}>{f}</option>)}
                                 </select>
                             </div>
                             <div>
-                                <label className={labelClass} style={{ color: '#6B6966' }}>Term (months)</label>
-                                <input type="number" className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.term_months} onChange={e => set('term_months', +e.target.value)} />
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Term (months)</label>
+                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.term_months} onChange={e => set('term_months', +e.target.value)} />
                             </div>
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                             <div>
-                                <label className={labelClass} style={{ color: '#6B6966' }}>Uptime (%)</label>
-                                <input type="number" step="0.1" className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.saas_uptime} onChange={e => set('saas_uptime', +e.target.value)} />
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Uptime (%)</label>
+                                <input type="number" step="0.1" className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.saas_uptime} onChange={e => set('saas_uptime', +e.target.value)} />
                             </div>
                             <div>
-                                <label className={labelClass} style={{ color: '#6B6966' }}>Liability Cap (months)</label>
-                                <input type="number" className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.saas_liability_cap_months} onChange={e => set('saas_liability_cap_months', +e.target.value)} />
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Liability Cap (months)</label>
+                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.saas_liability_cap_months} onChange={e => set('saas_liability_cap_months', +e.target.value)} />
                             </div>
                             <div>
-                                <label className={labelClass} style={{ color: '#6B6966' }}>Authorized Users</label>
-                                <input type="number" className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.saas_authorized_users} onChange={e => set('saas_authorized_users', +e.target.value)} />
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Authorized Users</label>
+                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.saas_authorized_users} onChange={e => set('saas_authorized_users', +e.target.value)} />
                             </div>
                             <div className="flex items-end pb-1">
                                 <label className="flex items-center gap-2 cursor-pointer">
                                     <input type="checkbox" checked={form.saas_auto_renewal} onChange={e => set('saas_auto_renewal', e.target.checked)} className="rounded" />
-                                    <span className="text-sm" style={{ color: '#1A1A19' }}>Auto-Renewal</span>
+                                    <span className="text-sm" style={{ color: 'var(--text-primary)' }}>Auto-Renewal</span>
                                 </label>
                             </div>
                         </div>
                         <div>
-                            <label className={labelClass} style={{ color: '#6B6966' }}>Compliance Frameworks</label>
+                            <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Compliance Frameworks</label>
                             <div className="flex flex-wrap gap-2 mt-1">
                                 {['SOC2', 'ISO27001', 'GDPR', 'HIPAA', 'CCPA', 'DPDP'].map(fw => (
                                     <button
@@ -462,9 +462,9 @@ export default function Drafting() {
                                         )}
                                         className="px-3 py-1 rounded-full text-xs font-medium border transition-colors"
                                         style={{
-                                            borderColor: form.saas_compliance_frameworks.includes(fw) ? '#C0392B' : '#E8E5E0',
-                                            backgroundColor: form.saas_compliance_frameworks.includes(fw) ? '#FDF2F1' : '#FFFFFF',
-                                            color: form.saas_compliance_frameworks.includes(fw) ? '#C0392B' : '#6B6966',
+                                            borderColor: form.saas_compliance_frameworks.includes(fw) ? 'var(--accent)' : 'var(--border)',
+                                            backgroundColor: form.saas_compliance_frameworks.includes(fw) ? 'var(--accent-glow)' : 'var(--bg-surface)',
+                                            color: form.saas_compliance_frameworks.includes(fw) ? 'var(--accent)' : 'var(--text-secondary)',
                                         }}
                                     >
                                         {fw}
@@ -477,22 +477,22 @@ export default function Drafting() {
             )}
 
             {/* Legal preferences */}
-            <div className="p-5 rounded-xl border" style={{ borderColor: '#E8E5E0', backgroundColor: '#FFFFFF' }}>
-                <h3 className="text-sm font-semibold mb-4" style={{ color: '#6B6966' }}>LEGAL PREFERENCES</h3>
+            <div className="p-5 rounded-xl border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+                <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-secondary)' }}>LEGAL PREFERENCES</h3>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div>
-                        <label className={labelClass} style={{ color: '#6B6966' }}>Governing Law *</label>
-                        <input className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.governing_law} onChange={e => set('governing_law', e.target.value)} placeholder="e.g., Delaware" />
+                        <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Governing Law *</label>
+                        <input className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.governing_law} onChange={e => set('governing_law', e.target.value)} placeholder="e.g., Delaware" />
                     </div>
                     <div>
-                        <label className={labelClass} style={{ color: '#6B6966' }}>Dispute Resolution</label>
-                        <select className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.dispute_resolution} onChange={e => set('dispute_resolution', e.target.value)}>
+                        <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Dispute Resolution</label>
+                        <select className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.dispute_resolution} onChange={e => set('dispute_resolution', e.target.value)}>
                             {['arbitration', 'litigation', 'mediation'].map(d => <option key={d} value={d}>{d}</option>)}
                         </select>
                     </div>
                     <div>
-                        <label className={labelClass} style={{ color: '#6B6966' }}>Venue</label>
-                        <input className={inputClass} style={{ borderColor: '#E8E5E0' }} value={form.venue} onChange={e => set('venue', e.target.value)} placeholder="e.g., Wilmington, DE" />
+                        <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Venue</label>
+                        <input className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.venue} onChange={e => set('venue', e.target.value)} placeholder="e.g., Wilmington, DE" />
                     </div>
                 </div>
             </div>
@@ -505,22 +505,22 @@ export default function Drafting() {
         const risk = RISK_APPETITES.find(r => r.value === form.risk_appetite);
 
         const Section = ({ title, children }: { title: string; children: React.ReactNode }) => (
-            <div className="p-4 rounded-lg border" style={{ borderColor: '#E8E5E0' }}>
-                <h4 className="text-xs font-semibold mb-2" style={{ color: '#6B6966' }}>{title}</h4>
+            <div className="p-4 rounded-lg border" style={{ borderColor: 'var(--border)' }}>
+                <h4 className="text-xs font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>{title}</h4>
                 <div className="space-y-1">{children}</div>
             </div>
         );
         const Row = ({ label, value }: { label: string; value: string }) => (
             <div className="flex justify-between text-sm">
-                <span style={{ color: '#6B6966' }}>{label}</span>
-                <span className="font-medium" style={{ color: '#1A1A19' }}>{value || '—'}</span>
+                <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
+                <span className="font-medium" style={{ color: 'var(--text-primary)' }}>{value || '—'}</span>
             </div>
         );
 
         return (
             <div className="animate-fade-in space-y-4">
                 {error && (
-                    <div className="p-3 rounded-lg text-sm" style={{ backgroundColor: '#FDF2F1', color: '#C0392B' }}>
+                    <div className="p-3 rounded-lg text-sm" style={{ backgroundColor: 'var(--accent-glow)', color: 'var(--accent)' }}>
                         {error}
                     </div>
                 )}
@@ -569,19 +569,19 @@ export default function Drafting() {
     const renderStep3 = () => (
         <div className="animate-fade-in flex flex-col items-center justify-center py-16">
             <div className="relative mb-8">
-                <div className="w-20 h-20 rounded-full border-4 animate-spin" style={{ borderColor: '#E8E5E0', borderTopColor: '#C0392B' }} />
+                <div className="w-20 h-20 rounded-full border-4 animate-spin" style={{ borderColor: 'var(--border)', borderTopColor: 'var(--accent)' }} />
             </div>
-            <h3 className="text-lg font-semibold mb-2" style={{ color: '#1A1A19' }}>Generating Your Contract</h3>
-            <p className="text-sm mb-8" style={{ color: '#6B6966' }}>Our AI agents are drafting, reviewing, and polishing your document...</p>
+            <h3 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>Generating Your Contract</h3>
+            <p className="text-sm mb-8" style={{ color: 'var(--text-secondary)' }}>Our AI agents are drafting, reviewing, and polishing your document...</p>
             <div className="space-y-3 w-full max-w-sm">
                 {['Validating inputs', 'Drafting clauses', 'Risk review', 'Compliance check', 'Quality assurance', 'Final assembly'].map((label, i) => (
                     <div key={label} className="flex items-center gap-3 text-sm">
-                        <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: '#F0F9F4' }}>
-                            <svg className="w-3 h-3 animate-pulse" style={{ color: '#1A7A4A' }} fill="currentColor" viewBox="0 0 24 24">
+                        <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ backgroundColor: 'var(--risk-low-bg)' }}>
+                            <svg className="w-3 h-3 animate-pulse" style={{ color: 'var(--risk-low)' }} fill="currentColor" viewBox="0 0 24 24">
                                 <circle cx="12" cy="12" r="4" />
                             </svg>
                         </div>
-                        <span style={{ color: '#6B6966' }}>{label}</span>
+                        <span style={{ color: 'var(--text-secondary)' }}>{label}</span>
                     </div>
                 ))}
             </div>
@@ -590,18 +590,18 @@ export default function Drafting() {
 
     const renderStep4 = () => {
         if (!result) return null;
-        const scoreColor = (s: number) => s >= 80 ? '#1A7A4A' : s >= 60 ? '#B7770D' : '#C0392B';
-        const scoreBg = (s: number) => s >= 80 ? '#F0F9F4' : s >= 60 ? '#FEF9EC' : '#FDF2F1';
+        const scoreColor = (s: number) => s >= 80 ? 'var(--risk-low)' : s >= 60 ? 'var(--risk-high)' : 'var(--accent)';
+        const scoreBg = (s: number) => s >= 80 ? 'var(--risk-low-bg)' : s >= 60 ? 'var(--risk-high-bg)' : 'var(--accent-glow)';
         return (
             <div className="animate-fade-in space-y-6">
                 <div className="text-center mb-6">
-                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full mb-3" style={{ backgroundColor: '#F0F9F4' }}>
-                        <svg className="w-8 h-8" style={{ color: '#1A7A4A' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <div className="inline-flex items-center justify-center w-16 h-16 rounded-full mb-3" style={{ backgroundColor: 'var(--risk-low-bg)' }}>
+                        <svg className="w-8 h-8" style={{ color: 'var(--risk-low)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                         </svg>
                     </div>
-                    <h3 className="text-xl font-bold" style={{ color: '#1A1A19' }}>{result.title}</h3>
-                    <p className="text-sm mt-1" style={{ color: '#6B6966' }}>{result.total_sections} sections generated</p>
+                    <h3 className="text-xl font-bold" style={{ color: 'var(--text-primary)' }}>{result.title}</h3>
+                    <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>{result.total_sections} sections generated</p>
                 </div>
 
                 {/* Quality Scores */}
@@ -614,13 +614,13 @@ export default function Drafting() {
                     ].map(({ label, score }) => (
                         <div key={label} className="p-4 rounded-xl text-center" style={{ backgroundColor: scoreBg(score) }}>
                             <div className="text-2xl font-bold" style={{ color: scoreColor(score) }}>{Math.round(score)}</div>
-                            <div className="text-xs mt-1" style={{ color: '#6B6966' }}>{label}</div>
+                            <div className="text-xs mt-1" style={{ color: 'var(--text-secondary)' }}>{label}</div>
                         </div>
                     ))}
                 </div>
 
                 {/* Stats */}
-                <div className="flex justify-center gap-6 text-sm" style={{ color: '#6B6966' }}>
+                <div className="flex justify-center gap-6 text-sm" style={{ color: 'var(--text-secondary)' }}>
                     <span>{result.annotations_applied} fixes applied</span>
                     <span>{result.conflicts_flagged} conflicts</span>
                     <span>{result.open_items} items for review</span>
@@ -631,14 +631,14 @@ export default function Drafting() {
                     <button
                         onClick={handleDownload}
                         className="px-6 py-3 rounded-xl text-sm font-semibold text-white transition-transform active:scale-[0.98]"
-                        style={{ backgroundColor: '#C0392B' }}
+                        style={{ backgroundColor: 'var(--accent)' }}
                     >
                         Download .docx
                     </button>
                     <button
                         onClick={() => { setStep(0); setForm({ ...DEFAULT_FORM }); setResult(null); }}
                         className="px-6 py-3 rounded-xl text-sm font-medium border transition-colors"
-                        style={{ borderColor: '#E8E5E0', color: '#6B6966' }}
+                        style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
                     >
                         Draft Another
                     </button>
@@ -648,17 +648,16 @@ export default function Drafting() {
     };
 
     return (
-        <div className="min-h-screen" style={{ backgroundColor: '#FAFAF9' }}>
-            <AppHeader activePage="drafting" />
-            <main className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <AppLayout>
+            <div>
                 <div className="mb-6">
-                    <h1 className="text-2xl font-bold" style={{ color: '#1A1A19' }}>Draft Contract</h1>
-                    <p className="text-sm mt-1" style={{ color: '#6B6966' }}>Generate a professional contract using AI-powered drafting agents</p>
+                    <h1 className="text-2xl font-bold" style={{ color: 'var(--text-primary)' }}>Draft Contract</h1>
+                    <p className="text-sm mt-1" style={{ color: 'var(--text-secondary)' }}>Generate a professional contract using AI-powered drafting agents</p>
                 </div>
 
                 {renderStepBar()}
 
-                <div className="rounded-xl border p-6 md:p-8" style={{ borderColor: '#E8E5E0', backgroundColor: '#FFFFFF' }}>
+                <div className="rounded-xl border p-6 md:p-8" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
                     {step === 0 && renderStep0()}
                     {step === 1 && renderStep1()}
                     {step === 2 && renderStep2()}
@@ -673,7 +672,7 @@ export default function Drafting() {
                             onClick={() => setStep(s => s - 1)}
                             disabled={step === 0}
                             className="px-5 py-2.5 rounded-lg text-sm font-medium border transition-colors disabled:opacity-30"
-                            style={{ borderColor: '#E8E5E0', color: '#6B6966' }}
+                            style={{ borderColor: 'var(--border)', color: 'var(--text-secondary)' }}
                         >
                             Back
                         </button>
@@ -682,7 +681,7 @@ export default function Drafting() {
                                 onClick={() => setStep(s => s + 1)}
                                 disabled={!canProceed()}
                                 className="px-5 py-2.5 rounded-lg text-sm font-semibold text-white transition-transform active:scale-[0.98] disabled:opacity-40"
-                                style={{ backgroundColor: '#C0392B' }}
+                                style={{ backgroundColor: 'var(--accent)' }}
                             >
                                 Next
                             </button>
@@ -691,14 +690,14 @@ export default function Drafting() {
                                 onClick={handleGenerate}
                                 disabled={!canProceed() || generateMutation.isPending}
                                 className="px-6 py-2.5 rounded-lg text-sm font-semibold text-white transition-transform active:scale-[0.98] disabled:opacity-40"
-                                style={{ backgroundColor: '#C0392B' }}
+                                style={{ backgroundColor: 'var(--accent)' }}
                             >
                                 Generate Contract
                             </button>
                         )}
                     </div>
                 )}
-            </main>
-        </div>
+            </div>
+        </AppLayout>
     );
 }

@@ -1,6 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type CSSProperties } from 'react';
 import { getStoredUser, getSubscription, getUsageStats, listInvoices, createSubscription, type SubscriptionInfo, type UsageStats, type InvoiceItem } from '@/api/client';
-import AppHeader from '@/components/AppHeader';
+import { AppLayout } from '@/components/layout';
+import { Button, Card, Badge } from '@/components/ui';
+import { Check, AlertTriangle } from 'lucide-react';
 
 type Currency = 'INR' | 'USD';
 
@@ -25,6 +27,12 @@ function isAllowedPaymentUrl(url: string): boolean {
     }
 }
 
+const thStyle: CSSProperties = {
+    textAlign: 'left', padding: '8px 12px', fontWeight: 500, fontSize: 12,
+    color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em',
+};
+const tdStyle: CSSProperties = { padding: '8px 12px' };
+
 export default function Billing() {
     const user = getStoredUser();
     const [currency, setCurrency] = useState<Currency>('INR');
@@ -47,8 +55,6 @@ export default function Billing() {
                 if (inv.status === 'fulfilled') setInvoices(inv.value);
             } catch {
                 // silently degrade
-            } finally {
-                // data loaded
             }
         }
         fetchData();
@@ -84,229 +90,195 @@ export default function Billing() {
     };
 
     const plans = [
-        {
-            name: 'Free',
-            features: ['Basic clause detection', '5 scans/month', 'Default playbook', 'Community support'],
-            current: (subscription?.plan || user?.subscription_tier) === 'free',
-            popular: false,
-        },
-        {
-            name: 'Starter',
-            features: ['All clause detection', '50 scans/month', 'Custom playbooks', 'Email support'],
-            current: (subscription?.plan || user?.subscription_tier) === 'starter',
-            popular: false,
-        },
-        {
-            name: 'Pro',
-            features: ['Everything in Starter', '200 scans/month', 'Batch processing', 'Priority support'],
-            current: (subscription?.plan || user?.subscription_tier) === 'pro',
-            popular: true,
-        },
-        {
-            name: 'Business',
-            features: ['Everything in Pro', '1,000 scans/month', 'Team analytics', 'SSO integration', 'Dedicated support'],
-            current: (subscription?.plan || user?.subscription_tier) === 'business',
-            popular: false,
-        },
-        {
-            name: 'Enterprise',
-            features: ['Everything in Business', 'Unlimited scans', 'Custom integrations', 'SLA guarantee', 'Dedicated account manager'],
-            current: (subscription?.plan || user?.subscription_tier) === 'enterprise',
-            popular: false,
-        },
+        { name: 'Free', features: ['Basic clause detection', '5 scans/month', 'Default playbook', 'Community support'], current: (subscription?.plan || user?.subscription_tier) === 'free', popular: false },
+        { name: 'Starter', features: ['All clause detection', '50 scans/month', 'Custom playbooks', 'Email support'], current: (subscription?.plan || user?.subscription_tier) === 'starter', popular: false },
+        { name: 'Pro', features: ['Everything in Starter', '200 scans/month', 'Batch processing', 'Priority support'], current: (subscription?.plan || user?.subscription_tier) === 'pro', popular: true },
+        { name: 'Business', features: ['Everything in Pro', '1,000 scans/month', 'Team analytics', 'SSO integration', 'Dedicated support'], current: (subscription?.plan || user?.subscription_tier) === 'business', popular: false },
+        { name: 'Enterprise', features: ['Everything in Business', 'Unlimited scans', 'Custom integrations', 'SLA guarantee', 'Dedicated account manager'], current: (subscription?.plan || user?.subscription_tier) === 'enterprise', popular: false },
     ];
 
     const usagePercent = usage ? Math.min(100, Math.round((usage.scans_used / Math.max(usage.scans_limit, 1)) * 100)) : 0;
 
-    return (
-        <div className="min-h-screen bg-slate-50">
-            <AppHeader />
+    const currencyBtnStyle = (active: boolean): CSSProperties => ({
+        padding: '6px 12px', fontSize: 12, fontWeight: 600, borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer',
+        backgroundColor: active ? 'var(--accent)' : 'transparent',
+        color: active ? '#fff' : 'var(--text-muted)',
+        transition: 'all var(--transition-fast)',
+    });
 
+    return (
+        <AppLayout>
             {/* Toast notification */}
             {toast && (
-                <div className="fixed top-20 right-6 z-50 bg-amber-50 border border-amber-200 text-amber-800 px-5 py-3 rounded-lg shadow-lg text-sm font-medium animate-[fadeIn_0.2s_ease-out]">
+                <div style={{
+                    position: 'fixed', top: 80, right: 24, zIndex: 50,
+                    background: 'var(--risk-high-bg)', border: '1px solid var(--risk-high-border)',
+                    color: 'var(--risk-high)', padding: '12px 20px', borderRadius: 'var(--radius-md)',
+                    boxShadow: 'var(--shadow-lg)', fontSize: 14, fontWeight: 500,
+                }}>
                     {toast}
                 </div>
             )}
 
-            <main className="max-w-7xl mx-auto px-8 py-10">
-                <div className="flex justify-between items-start mb-10">
-                    <div>
-                        <h1 className="text-2xl font-bold text-slate-900">Billing & Subscription</h1>
-                        <p className="text-sm text-slate-500 mt-1.5">
-                            Current plan: <strong className="text-slate-900">{(subscription?.plan || user?.subscription_tier || 'free').toUpperCase()}</strong>
-                            {subscription?.current_period_end && (
-                                <span className="ml-2 text-slate-400">
-                                    (renews {new Date(subscription.current_period_end).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })})
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 40 }}>
+                <div>
+                    <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Billing & Subscription</h1>
+                    <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginTop: 6 }}>
+                        Current plan: <strong style={{ color: 'var(--text-primary)' }}>{(subscription?.plan || user?.subscription_tier || 'free').toUpperCase()}</strong>
+                        {subscription?.current_period_end && (
+                            <span style={{ marginLeft: 8, color: 'var(--text-muted)' }}>
+                                (renews {new Date(subscription.current_period_end).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })})
+                            </span>
+                        )}
+                    </p>
+                </div>
+                {/* Currency Toggle */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: 4 }}>
+                    <button onClick={() => setCurrency('INR')} style={currencyBtnStyle(currency === 'INR')}>INR</button>
+                    <button onClick={() => setCurrency('USD')} style={currencyBtnStyle(currency === 'USD')}>USD</button>
+                </div>
+            </div>
+
+            {/* Usage Meter */}
+            {usage && (
+                <Card style={{ marginBottom: 32 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+                        <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>Usage This Period</h2>
+                        <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
+                            {usage.scans_used} / {usage.scans_limit} scans
+                        </span>
+                    </div>
+                    <div style={{ width: '100%', height: 12, backgroundColor: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
+                        <div
+                            style={{
+                                height: '100%', borderRadius: 'var(--radius-sm)', transition: 'width 0.4s ease',
+                                width: `${usagePercent}%`,
+                                background: usagePercent >= 90 ? 'var(--risk-critical)' : usagePercent >= 70 ? 'var(--risk-high)' : 'var(--risk-low)',
+                            }}
+                        />
+                    </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+                        <span>{usage.scans_remaining} scans remaining</span>
+                        {usage.overage_count > 0 && (
+                            <span style={{ color: 'var(--risk-high)', fontWeight: 500 }}>{usage.overage_count} overage scans</span>
+                        )}
+                    </div>
+                </Card>
+            )}
+
+            {/* Plans Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 24, marginBottom: 40 }}>
+                {plans.map((plan) => {
+                    const price = PLAN_PRICES[plan.name]?.[currency === 'INR' ? 'inr' : 'usd'] || 'Custom';
+                    const borderColor = plan.popular ? 'var(--accent)' : plan.current ? 'var(--risk-low)' : 'var(--border)';
+                    return (
+                        <div
+                            key={plan.name}
+                            style={{
+                                backgroundColor: 'var(--bg-surface)', borderRadius: 'var(--radius-lg)',
+                                padding: 28, position: 'relative',
+                                border: `2px solid ${borderColor}`,
+                                boxShadow: plan.popular ? '0 0 16px var(--accent-glow)' : plan.current ? '0 0 12px rgba(34,197,94,0.15)' : 'none',
+                            }}
+                        >
+                            {plan.popular && (
+                                <span style={{
+                                    position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
+                                    background: 'var(--accent)', color: '#fff', fontSize: 11, fontWeight: 700,
+                                    padding: '4px 14px', borderRadius: 'var(--radius-sm)', letterSpacing: '0.04em',
+                                }}>
+                                    MOST POPULAR
                                 </span>
                             )}
-                        </p>
-                    </div>
-
-                    {/* Currency Toggle */}
-                    <div className="flex items-center gap-2 bg-white border border-slate-200 rounded-lg p-1">
-                        <button
-                            onClick={() => setCurrency('INR')}
-                            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-                                currency === 'INR' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-700'
-                            }`}
-                        >
-                            INR
-                        </button>
-                        <button
-                            onClick={() => setCurrency('USD')}
-                            className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors ${
-                                currency === 'USD' ? 'bg-slate-900 text-white' : 'text-slate-500 hover:text-slate-700'
-                            }`}
-                        >
-                            USD
-                        </button>
-                    </div>
-                </div>
-
-                {/* Usage Meter */}
-                {usage && (
-                    <div className="bg-white rounded-xl border border-slate-200 p-6 mb-8">
-                        <div className="flex items-center justify-between mb-3">
-                            <h2 className="text-base font-semibold text-slate-900">Usage This Period</h2>
-                            <span className="text-sm text-slate-500">
-                                {usage.scans_used} / {usage.scans_limit} scans
-                            </span>
-                        </div>
-                        <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
-                            <div
-                                className={`h-full rounded-full transition-all ${usagePercent >= 90 ? 'bg-red-500' : usagePercent >= 70 ? 'bg-amber-400' : 'bg-green-500'}`}
-                                style={{ width: `${usagePercent}%` }}
-                            />
-                        </div>
-                        <div className="flex justify-between mt-2 text-xs text-slate-400">
-                            <span>{usage.scans_remaining} scans remaining</span>
-                            {usage.overage_count > 0 && (
-                                <span className="text-amber-600 font-medium">{usage.overage_count} overage scans</span>
+                            {plan.current && (
+                                <span style={{
+                                    position: 'absolute', top: -12, left: '50%', transform: 'translateX(-50%)',
+                                    background: 'var(--risk-low)', color: '#fff', fontSize: 11, fontWeight: 700,
+                                    padding: '4px 14px', borderRadius: 'var(--radius-sm)',
+                                }}>
+                                    CURRENT PLAN
+                                </span>
                             )}
-                        </div>
-                    </div>
-                )}
-
-                {/* Plans Grid */}
-                <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-6 mb-10">
-                    {plans.map((plan) => {
-                        const price = PLAN_PRICES[plan.name]?.[currency === 'INR' ? 'inr' : 'usd'] || 'Custom';
-                        return (
-                            <div
-                                key={plan.name}
-                                className={`bg-white rounded-xl p-7 relative border-2 ${
-                                    plan.popular
-                                        ? 'border-slate-900'
-                                        : plan.current
-                                            ? 'border-green-600'
-                                            : 'border-slate-200'
-                                }`}
-                            >
-                                {plan.popular && (
-                                    <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-slate-900 text-white text-[11px] font-bold px-3.5 py-1 rounded-full tracking-wide">
-                                        MOST POPULAR
-                                    </span>
-                                )}
-                                {plan.current && (
-                                    <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-600 text-white text-[11px] font-bold px-3.5 py-1 rounded-full">
-                                        CURRENT PLAN
-                                    </span>
-                                )}
-                                <h3 className="text-lg font-bold text-slate-900 mb-2">{plan.name}</h3>
-                                <div className="mb-5">
-                                    <span className="text-3xl font-extrabold text-slate-900">{price}</span>
-                                    {plan.name !== 'Enterprise' && <span className="text-sm text-slate-500">/month</span>}
-                                </div>
-                                <ul className="list-none p-0 mb-6 flex flex-col gap-2.5">
-                                    {plan.features.map((feature, idx) => (
-                                        <li key={idx} className="flex items-center gap-2.5 text-sm text-slate-600">
-                                            <svg width="16" height="16" fill="none" stroke="#16a34a" viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                                            </svg>
-                                            {feature}
-                                        </li>
-                                    ))}
-                                </ul>
-                                <button
-                                    disabled={plan.current || upgrading !== null}
-                                    onClick={() => handleUpgrade(plan.name)}
-                                    className={`w-full py-3 text-sm font-semibold rounded-lg transition-colors ${
-                                        plan.current
-                                            ? 'bg-slate-100 text-slate-400 cursor-default'
-                                            : plan.popular
-                                                ? 'bg-slate-900 text-white hover:bg-slate-800 cursor-pointer'
-                                                : 'bg-slate-100 text-slate-900 hover:bg-slate-200 cursor-pointer'
-                                    } disabled:opacity-50`}
-                                >
-                                    {plan.current
-                                        ? 'Current Plan'
-                                        : upgrading === plan.name
-                                            ? 'Processing...'
-                                            : plan.name === 'Enterprise'
-                                                ? 'Contact Sales'
-                                                : `Upgrade to ${plan.name}`}
-                                </button>
+                            <h3 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 8 }}>{plan.name}</h3>
+                            <div style={{ marginBottom: 20 }}>
+                                <span style={{ fontSize: 28, fontWeight: 800, color: 'var(--text-primary)' }}>{price}</span>
+                                {plan.name !== 'Enterprise' && <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>/month</span>}
                             </div>
-                        );
-                    })}
-                </div>
-
-                {/* Invoice History */}
-                {invoices.length > 0 && (
-                    <div className="bg-white rounded-xl border border-slate-200 p-6 mb-8">
-                        <h2 className="text-lg font-semibold text-slate-900 mb-4">Invoice History</h2>
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-sm">
-                                <thead>
-                                    <tr className="border-b border-slate-200">
-                                        <th scope="col" className="text-left py-2 px-3 font-medium text-slate-500">Date</th>
-                                        <th scope="col" className="text-left py-2 px-3 font-medium text-slate-500">Plan</th>
-                                        <th scope="col" className="text-left py-2 px-3 font-medium text-slate-500">Description</th>
-                                        <th scope="col" className="text-right py-2 px-3 font-medium text-slate-500">Amount</th>
-                                        <th scope="col" className="text-left py-2 px-3 font-medium text-slate-500">Status</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {invoices.map((inv) => (
-                                        <tr key={inv.id} className="border-b border-slate-100">
-                                            <td className="py-2 px-3 text-slate-600">
-                                                {new Date(inv.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-                                            </td>
-                                            <td className="py-2 px-3 text-slate-700 font-medium">{inv.plan}</td>
-                                            <td className="py-2 px-3 text-slate-500">{inv.description}</td>
-                                            <td className="py-2 px-3 text-right text-slate-900 font-medium">
-                                                {inv.currency === 'INR' ? '\u20b9' : '$'}{inv.amount}
-                                            </td>
-                                            <td className="py-2 px-3">
-                                                <span className={`text-xs font-medium px-2 py-0.5 rounded ${
-                                                    inv.status === 'paid' ? 'bg-green-50 text-green-700' : 'bg-amber-50 text-amber-700'
-                                                }`}>
-                                                    {inv.status}
-                                                </span>
-                                            </td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
+                            <ul style={{ listStyle: 'none', padding: 0, margin: '0 0 24px 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                                {plan.features.map((feature, idx) => (
+                                    <li key={idx} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 14, color: 'var(--text-secondary)' }}>
+                                        <Check size={16} style={{ color: 'var(--risk-low)', flexShrink: 0 }} />
+                                        {feature}
+                                    </li>
+                                ))}
+                            </ul>
+                            <Button
+                                variant={plan.current ? 'ghost' : plan.popular ? 'primary' : 'secondary'}
+                                disabled={plan.current || upgrading !== null}
+                                onClick={() => handleUpgrade(plan.name)}
+                                style={{ width: '100%' }}
+                            >
+                                {plan.current ? 'Current Plan'
+                                    : upgrading === plan.name ? 'Processing...'
+                                    : plan.name === 'Enterprise' ? 'Contact Sales'
+                                    : `Upgrade to ${plan.name}`}
+                            </Button>
                         </div>
-                    </div>
-                )}
+                    );
+                })}
+            </div>
 
-                {/* Notice */}
-                <div className="bg-amber-50 border border-amber-200 rounded-xl p-6 flex gap-4">
-                    <svg width="22" height="22" fill="none" stroke="#d97706" viewBox="0 0 24 24" className="shrink-0 mt-0.5">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                    </svg>
-                    <div>
-                        <h4 className="text-sm font-bold text-amber-800 mb-1">Payment Integration Pending</h4>
-                        <p className="text-sm text-amber-700">
-                            Billing via Razorpay will be enabled soon. To upgrade now, contact us at{' '}
-                            <a href="mailto:support@contrared.ai" className="text-amber-800 font-semibold hover:underline">support@contrared.ai</a>
-                        </p>
+            {/* Invoice History */}
+            {invoices.length > 0 && (
+                <Card style={{ marginBottom: 32 }}>
+                    <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 16 }}>Invoice History</h2>
+                    <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
+                            <thead>
+                                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                                    <th scope="col" style={thStyle}>Date</th>
+                                    <th scope="col" style={thStyle}>Plan</th>
+                                    <th scope="col" style={thStyle}>Description</th>
+                                    <th scope="col" style={{ ...thStyle, textAlign: 'right' }}>Amount</th>
+                                    <th scope="col" style={thStyle}>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {invoices.map((inv) => (
+                                    <tr key={inv.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                                        <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>
+                                            {new Date(inv.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                        </td>
+                                        <td style={{ ...tdStyle, color: 'var(--text-primary)', fontWeight: 500 }}>{inv.plan}</td>
+                                        <td style={{ ...tdStyle, color: 'var(--text-muted)' }}>{inv.description}</td>
+                                        <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>
+                                            {inv.currency === 'INR' ? '\u20b9' : '$'}{inv.amount}
+                                        </td>
+                                        <td style={tdStyle}>
+                                            <Badge variant={inv.status === 'paid' ? 'low' : 'high'}>{inv.status}</Badge>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
                     </div>
+                </Card>
+            )}
+
+            {/* Notice */}
+            <div style={{
+                background: 'var(--risk-high-bg)', border: '1px solid var(--risk-high-border)',
+                borderRadius: 'var(--radius-lg)', padding: 24, display: 'flex', gap: 16,
+            }}>
+                <AlertTriangle size={22} style={{ color: 'var(--risk-high)', flexShrink: 0, marginTop: 2 }} />
+                <div>
+                    <h4 style={{ fontSize: 14, fontWeight: 700, color: 'var(--risk-high)', marginBottom: 4 }}>Payment Integration Pending</h4>
+                    <p style={{ fontSize: 14, color: 'var(--risk-high)' }}>
+                        Billing via Razorpay will be enabled soon. To upgrade now, contact us at{' '}
+                        <a href="mailto:support@contrared.ai" style={{ color: 'var(--risk-high)', fontWeight: 600, textDecoration: 'underline' }}>support@contrared.ai</a>
+                    </p>
                 </div>
-            </main>
-        </div>
+            </div>
+        </AppLayout>
     );
 }

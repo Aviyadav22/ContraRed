@@ -1,7 +1,27 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { getStoredUser, getTeamMembers, changeTeamMemberRole, removeTeamMember, type TeamMember } from '@/api/client';
-import AppHeader from '@/components/AppHeader';
+import { AppLayout } from '@/components/layout';
+import { Button, Card, TextInput, SelectInput, Badge } from '@/components/ui';
+import { Send, UserMinus } from 'lucide-react';
+
+function InlineConfirm({ message, onConfirm, onCancel }: { message: string; onConfirm: () => void; onCancel: () => void }) {
+    return (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{message}</span>
+            <button onClick={onConfirm} style={{ fontSize: 12, fontWeight: 600, color: 'var(--risk-critical)', background: 'var(--risk-critical-bg)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer' }}>Yes</button>
+            <button onClick={onCancel} style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)', background: 'var(--bg-elevated)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', border: 'none', cursor: 'pointer' }}>No</button>
+        </span>
+    );
+}
+
+const thStyle: CSSProperties = {
+    textAlign: 'left', padding: '10px 16px', fontWeight: 500,
+    fontSize: 12, color: 'var(--text-muted)', textTransform: 'uppercase',
+    letterSpacing: '0.05em',
+};
+
+const tdStyle: CSSProperties = { padding: '10px 16px' };
 
 export default function Team() {
     const user = getStoredUser();
@@ -36,140 +56,136 @@ export default function Team() {
     };
 
     return (
-        <div className="min-h-screen bg-slate-50">
-            <AppHeader />
+        <AppLayout>
+            <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', margin: 0, marginBottom: 24 }}>Team Management</h1>
 
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                <h1 className="text-2xl font-bold text-slate-900 mb-6">Team Management</h1>
-
-                {/* Invite Member */}
-                <div className="bg-white border border-slate-200 rounded-lg p-5 mb-6">
-                    <h2 className="text-sm font-semibold text-slate-800 mb-3">Invite Member</h2>
-                    <form
-                        onSubmit={(e) => {
-                            e.preventDefault();
-                            setInviteMessage('Team invitation feature coming soon');
-                            setTimeout(() => setInviteMessage(null), 4000);
-                        }}
-                        className="flex items-end gap-3"
-                    >
-                        <div className="flex-1 max-w-xs">
-                            <label htmlFor="invite-email" className="block text-xs font-medium text-slate-500 mb-1">Email</label>
-                            <input
-                                id="invite-email"
-                                type="email"
-                                required
-                                value={inviteEmail}
-                                onChange={(e) => setInviteEmail(e.target.value)}
-                                placeholder="colleague@company.com"
-                                className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-slate-300"
-                            />
-                        </div>
-                        <div>
-                            <label htmlFor="invite-role" className="block text-xs font-medium text-slate-500 mb-1">Role</label>
-                            <select
-                                id="invite-role"
-                                value={inviteRole}
-                                onChange={(e) => setInviteRole(e.target.value)}
-                                className="px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white"
-                            >
-                                <option value="analyst">Analyst</option>
-                                <option value="admin">Admin</option>
-                            </select>
-                        </div>
-                        <button
-                            type="submit"
-                            className="px-4 py-2 bg-slate-800 text-white rounded-lg text-sm font-medium hover:bg-slate-700 transition-colors"
-                        >
-                            Send Invite
-                        </button>
-                    </form>
-                    {inviteMessage && (
-                        <div className="mt-3 text-sm text-amber-700 bg-amber-50 border border-amber-200 px-3 py-2 rounded-lg">
-                            {inviteMessage}
-                        </div>
-                    )}
-                </div>
-
-                {error && <div className="text-red-600 p-4">Failed to load data. Please try again.</div>}
-
-                {(roleMutation.isError || removeMutation.isError) && (
-                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-                        {(roleMutation.error as Error)?.message || (removeMutation.error as Error)?.message}
+            {/* Invite Member */}
+            <Card style={{ marginBottom: 24 }}>
+                <h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>Invite Member</h2>
+                <form
+                    onSubmit={(e) => {
+                        e.preventDefault();
+                        setInviteMessage('Team invitation feature coming soon');
+                        setTimeout(() => setInviteMessage(null), 4000);
+                    }}
+                    style={{ display: 'flex', alignItems: 'flex-end', gap: 12 }}
+                >
+                    <div style={{ flex: 1, maxWidth: 280 }}>
+                        <TextInput
+                            label="Email"
+                            type="email"
+                            required
+                            value={inviteEmail}
+                            onChange={(e) => setInviteEmail(e.target.value)}
+                            placeholder="colleague@company.com"
+                        />
+                    </div>
+                    <div style={{ minWidth: 120 }}>
+                        <SelectInput label="Role" value={inviteRole} onChange={(e) => setInviteRole(e.target.value)}>
+                            <option value="analyst">Analyst</option>
+                            <option value="admin">Admin</option>
+                        </SelectInput>
+                    </div>
+                    <Button type="submit" icon={<Send size={14} />}>Send Invite</Button>
+                </form>
+                {inviteMessage && (
+                    <div style={{
+                        marginTop: 12, fontSize: 14, color: 'var(--risk-high)',
+                        background: 'var(--risk-high-bg)', border: '1px solid var(--risk-high-border)',
+                        padding: '8px 12px', borderRadius: 'var(--radius-sm)',
+                    }}>
+                        {inviteMessage}
                     </div>
                 )}
+            </Card>
 
-                <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-                    <table className="w-full text-sm">
-                        <thead className="bg-slate-50 border-b border-slate-200">
-                            <tr>
-                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">Name</th>
-                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">Email</th>
-                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">Role</th>
-                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">Last Login</th>
-                                <th scope="col" className="text-left px-4 py-3 font-medium text-slate-600">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {isLoading ? (
-                                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">Loading...</td></tr>
-                            ) : members?.length === 0 ? (
-                                <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400">No team members found. Users need to be assigned to your organization.</td></tr>
-                            ) : (
-                                members?.map((member) => (
-                                    <tr key={member.id} className="border-b border-slate-100 hover:bg-slate-50">
-                                        <td className="px-4 py-3 text-slate-900 font-medium">{member.name}</td>
-                                        <td className="px-4 py-3 text-slate-600">{member.email}</td>
-                                        <td className="px-4 py-3">
-                                            {member.id === user?.id ? (
-                                                <span className="text-xs bg-slate-100 text-slate-600 px-2 py-1 rounded">{member.role} (you)</span>
-                                            ) : confirmRoleChange?.id === member.id ? (
-                                                <span className="inline-flex items-center gap-1.5">
-                                                    <span className="text-[12px] text-slate-500">Change to {confirmRoleChange.role}?</span>
-                                                    <button onClick={() => { roleMutation.mutate({ userId: confirmRoleChange.id, role: confirmRoleChange.role }); setConfirmRoleChange(null); }} className="text-[12px] font-semibold text-red-600 bg-red-50 px-2 py-0.5 rounded hover:bg-red-100">Yes</button>
-                                                    <button onClick={() => setConfirmRoleChange(null)} className="text-[12px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded hover:bg-slate-200">No</button>
-                                                </span>
-                                            ) : (
-                                                <select
-                                                    value={member.role === 'user' ? 'analyst' : member.role}
-                                                    onChange={(e) => handleRoleChange(member.id, e.target.value)}
-                                                    className="text-xs border border-slate-200 rounded px-2 py-1 bg-white"
-                                                    disabled={roleMutation.isPending}
-                                                >
-                                                    <option value="analyst">Analyst</option>
-                                                    <option value="admin">Admin</option>
-                                                </select>
-                                            )}
-                                        </td>
-                                        <td className="px-4 py-3 text-slate-400 text-xs">
-                                            {member.last_login ? new Date(member.last_login).toLocaleString() : 'Never'}
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            {member.id !== user?.id && (
-                                                confirmRemoveId === member.id ? (
-                                                    <span className="inline-flex items-center gap-1.5">
-                                                        <span className="text-[12px] text-slate-500">Remove?</span>
-                                                        <button onClick={() => { removeMutation.mutate(member.id); setConfirmRemoveId(null); }} className="text-[12px] font-semibold text-red-600 bg-red-50 px-2 py-0.5 rounded hover:bg-red-100">Yes</button>
-                                                        <button onClick={() => setConfirmRemoveId(null)} className="text-[12px] font-semibold text-slate-500 bg-slate-100 px-2 py-0.5 rounded hover:bg-slate-200">No</button>
-                                                    </span>
-                                                ) : (
-                                                    <button
-                                                        onClick={() => handleRemove(member)}
-                                                        disabled={removeMutation.isPending}
-                                                        className="text-xs text-red-600 hover:text-red-800 font-medium"
-                                                    >
-                                                        Remove
-                                                    </button>
-                                                )
-                                            )}
-                                        </td>
-                                    </tr>
-                                ))
-                            )}
-                        </tbody>
-                    </table>
+            {error && (
+                <div style={{ color: 'var(--risk-critical)', padding: 16, background: 'var(--risk-critical-bg)', borderRadius: 'var(--radius-md)', marginBottom: 16, border: '1px solid var(--risk-critical-border)' }}>
+                    Failed to load data. Please try again.
                 </div>
-            </main>
-        </div>
+            )}
+
+            {(roleMutation.isError || removeMutation.isError) && (
+                <div style={{ marginBottom: 16, padding: 12, background: 'var(--risk-critical-bg)', border: '1px solid var(--risk-critical-border)', borderRadius: 'var(--radius-md)', fontSize: 14, color: 'var(--risk-critical)' }}>
+                    {(roleMutation.error as Error)?.message || (removeMutation.error as Error)?.message}
+                </div>
+            )}
+
+            <div style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius-lg)', overflow: 'hidden' }}>
+                <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
+                    <thead style={{ backgroundColor: 'var(--bg-elevated)', borderBottom: '1px solid var(--border)' }}>
+                        <tr>
+                            <th scope="col" style={thStyle}>Name</th>
+                            <th scope="col" style={thStyle}>Email</th>
+                            <th scope="col" style={thStyle}>Role</th>
+                            <th scope="col" style={thStyle}>Last Login</th>
+                            <th scope="col" style={thStyle}>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {isLoading ? (
+                            <tr><td colSpan={5} style={{ ...tdStyle, textAlign: 'center', padding: '32px 16px', color: 'var(--text-muted)' }}>Loading...</td></tr>
+                        ) : members?.length === 0 ? (
+                            <tr><td colSpan={5} style={{ ...tdStyle, textAlign: 'center', padding: '32px 16px', color: 'var(--text-muted)' }}>No team members found. Users need to be assigned to your organization.</td></tr>
+                        ) : (
+                            members?.map((member) => (
+                                <tr
+                                    key={member.id}
+                                    style={{ borderBottom: '1px solid var(--border)' }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = ''; }}
+                                >
+                                    <td style={{ ...tdStyle, color: 'var(--text-primary)', fontWeight: 500 }}>{member.name}</td>
+                                    <td style={{ ...tdStyle, color: 'var(--text-secondary)' }}>{member.email}</td>
+                                    <td style={tdStyle}>
+                                        {member.id === user?.id ? (
+                                            <Badge variant="neutral">{member.role} (you)</Badge>
+                                        ) : confirmRoleChange?.id === member.id ? (
+                                            <InlineConfirm
+                                                message={`Change to ${confirmRoleChange.role}?`}
+                                                onConfirm={() => { roleMutation.mutate({ userId: confirmRoleChange.id, role: confirmRoleChange.role }); setConfirmRoleChange(null); }}
+                                                onCancel={() => setConfirmRoleChange(null)}
+                                            />
+                                        ) : (
+                                            <select
+                                                value={member.role === 'user' ? 'analyst' : member.role}
+                                                onChange={(e) => handleRoleChange(member.id, e.target.value)}
+                                                disabled={roleMutation.isPending}
+                                                style={{
+                                                    fontSize: 12, border: '1px solid var(--border)',
+                                                    borderRadius: 'var(--radius-sm)', padding: '4px 8px',
+                                                    backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)',
+                                                }}
+                                            >
+                                                <option value="analyst">Analyst</option>
+                                                <option value="admin">Admin</option>
+                                            </select>
+                                        )}
+                                    </td>
+                                    <td style={{ ...tdStyle, color: 'var(--text-muted)', fontSize: 12 }}>
+                                        {member.last_login ? new Date(member.last_login).toLocaleString() : 'Never'}
+                                    </td>
+                                    <td style={tdStyle}>
+                                        {member.id !== user?.id && (
+                                            confirmRemoveId === member.id ? (
+                                                <InlineConfirm
+                                                    message="Remove?"
+                                                    onConfirm={() => { removeMutation.mutate(member.id); setConfirmRemoveId(null); }}
+                                                    onCancel={() => setConfirmRemoveId(null)}
+                                                />
+                                            ) : (
+                                                <Button variant="danger" size="sm" onClick={() => handleRemove(member)} disabled={removeMutation.isPending} icon={<UserMinus size={14} />}>
+                                                    Remove
+                                                </Button>
+                                            )
+                                        )}
+                                    </td>
+                                </tr>
+                            ))
+                        )}
+                    </tbody>
+                </table>
+            </div>
+        </AppLayout>
     );
 }

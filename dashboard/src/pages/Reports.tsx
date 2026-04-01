@@ -1,12 +1,14 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import {
     generateAnalyticsReport,
     listAnalyticsReports,
     getAnalyticsReport,
     type GeneratedReport,
 } from '@/api/client';
-import AppHeader from '@/components/AppHeader';
+import { AppLayout } from '@/components/layout';
+import { Button, Card, Badge, SelectInput } from '@/components/ui';
+import { Download } from 'lucide-react';
 
 const REPORT_TYPES = [
     { id: 'executive_summary', label: 'Executive Summary', desc: 'Board-ready 6 key metrics on one page', icon: 'E' },
@@ -15,42 +17,36 @@ const REPORT_TYPES = [
     { id: 'risk_audit', label: 'Risk Audit', desc: 'Detailed risk analysis across contract portfolio', icon: 'R' },
 ];
 
-const SEVERITY_COLORS: Record<string, string> = {
-    red: 'bg-red-50 text-red-700',
-    RED: 'bg-red-50 text-red-700',
-    critical: 'bg-red-50 text-red-700',
-    high: 'bg-red-50 text-red-700',
-    yellow: 'bg-amber-50 text-amber-700',
-    YELLOW: 'bg-amber-50 text-amber-700',
-    medium: 'bg-amber-50 text-amber-700',
-    warning: 'bg-amber-50 text-amber-700',
-    green: 'bg-green-50 text-green-700',
-    GREEN: 'bg-green-50 text-green-700',
-    low: 'bg-green-50 text-green-700',
-    safe: 'bg-green-50 text-green-700',
+const SEVERITY_MAP: Record<string, 'critical' | 'high' | 'low' | 'neutral'> = {
+    red: 'critical', RED: 'critical', critical: 'critical', high: 'critical',
+    yellow: 'high', YELLOW: 'high', medium: 'high', warning: 'high',
+    green: 'low', GREEN: 'low', low: 'low', safe: 'low',
 };
+
+const thStyle: CSSProperties = {
+    textAlign: 'left', padding: '8px 12px', fontWeight: 500, fontSize: 12,
+    color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em',
+};
+const tdStyle: CSSProperties = { padding: '8px 12px' };
 
 function MetricCard({ label, value }: { label: string; value: string | number }) {
     return (
-        <article className="bg-white rounded-lg border border-slate-200 p-4">
-            <div className="text-sm text-slate-500">{label}</div>
-            <div className="text-2xl font-bold text-slate-900 mt-1">{value}</div>
-        </article>
+        <Card padding="compact">
+            <div style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{label}</div>
+            <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', marginTop: 4 }}>{value}</div>
+        </Card>
     );
 }
 
 function ReportViewer({ report }: { report: GeneratedReport }) {
-    if (!report.data) return <p className="text-sm text-slate-400">No data available.</p>;
+    if (!report.data) return <p style={{ fontSize: 14, color: 'var(--text-muted)' }}>No data available.</p>;
 
     const data = report.data as Record<string, unknown>;
-
-    // Extract common report fields
     const title = (data.title as string) || report.title;
     const reportType = (data.report_type as string) || report.report_type;
     const generatedAt = (data.generated_at as string) || report.created_at;
     const periodDays = data.period_days as number | undefined;
 
-    // Try to extract metrics - common patterns across report types
     const overview = data.overview as Record<string, unknown> | undefined;
     const summary = data.summary as Record<string, unknown> | undefined;
     const metrics = data.metrics as Record<string, unknown> | undefined;
@@ -62,81 +58,61 @@ function ReportViewer({ report }: { report: GeneratedReport }) {
     const highRiskDocuments = data.high_risk_documents as Array<Record<string, unknown>> | undefined;
 
     const metricsSource = overview || summary || metrics || {};
-    const metricEntries = Object.entries(metricsSource).filter(
-        ([, v]) => typeof v === 'number' || typeof v === 'string'
-    );
+    const metricEntries = Object.entries(metricsSource).filter(([, v]) => typeof v === 'number' || typeof v === 'string');
     const riskItems = risks || findings || [];
     const teamItems = team || teamPerformance || [];
 
     return (
-        <div className="space-y-6">
-            {/* Report Header */}
-            <div className="flex items-start justify-between">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
                 <div>
-                    <h3 className="text-xl font-bold text-slate-900">{title}</h3>
-                    <div className="flex items-center gap-3 mt-2">
-                        <span className="px-2.5 py-0.5 text-xs font-semibold rounded-md bg-red-50 text-red-700">
-                            {reportType.replace(/_/g, ' ').toUpperCase()}
+                    <h3 style={{ fontSize: 20, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>{title}</h3>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 8 }}>
+                        <Badge variant="critical">{reportType.replace(/_/g, ' ').toUpperCase()}</Badge>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                            {new Date(generatedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' })}
                         </span>
-                        <span className="text-xs text-slate-400">
-                            {new Date(generatedAt).toLocaleDateString('en-IN', {
-                                day: 'numeric', month: 'long', year: 'numeric',
-                            })}
-                        </span>
-                        {periodDays && (
-                            <span className="text-xs text-slate-400">
-                                ({periodDays} day period)
-                            </span>
-                        )}
+                        {periodDays && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>({periodDays} day period)</span>}
                     </div>
                 </div>
             </div>
 
-            {/* Key Metrics Cards */}
             {metricEntries.length > 0 && (
                 <div>
-                    <h4 className="text-sm font-semibold text-slate-700 mb-3">Key Metrics</h4>
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                    <h4 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 12 }}>Key Metrics</h4>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 12 }}>
                         {metricEntries.map(([key, value]) => (
-                            <MetricCard
-                                key={key}
-                                label={key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
-                                value={typeof value === 'number' ? value.toLocaleString() : String(value)}
-                            />
+                            <MetricCard key={key} label={key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())} value={typeof value === 'number' ? value.toLocaleString() : String(value)} />
                         ))}
                     </div>
                 </div>
             )}
 
-            {/* Risk Distribution */}
             {riskDistribution && (
-                <div className="bg-white rounded-lg border border-slate-200 p-5">
-                    <h4 className="text-sm font-semibold text-slate-700 mb-3">Risk Distribution</h4>
-                    <div className="flex items-center gap-4">
+                <Card>
+                    <h4 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 12 }}>Risk Distribution</h4>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
                         {Object.entries(riskDistribution).map(([level, count]) => (
-                            <div key={level} className="flex items-center gap-2">
-                                <span className={`px-2 py-0.5 text-xs font-semibold rounded ${SEVERITY_COLORS[level] || 'bg-slate-100 text-slate-600'}`}>
-                                    {level.toUpperCase()}
-                                </span>
-                                <span className="text-sm font-bold text-slate-900">{count}</span>
+                            <div key={level} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <Badge variant={SEVERITY_MAP[level] || 'neutral'}>{level.toUpperCase()}</Badge>
+                                <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>{count}</span>
                             </div>
                         ))}
                     </div>
-                </div>
+                </Card>
             )}
 
-            {/* Risk Findings Table */}
             {riskItems.length > 0 && (
-                <div className="bg-white rounded-lg border border-slate-200 p-5">
-                    <h4 className="text-sm font-semibold text-slate-700 mb-3">Risk Findings</h4>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                <Card>
+                    <h4 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 12 }}>Risk Findings</h4>
+                    <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
                             <thead>
-                                <tr className="border-b border-slate-200">
-                                    <th scope="col" className="text-left py-2 px-3 font-medium text-slate-500">Item</th>
-                                    <th scope="col" className="text-left py-2 px-3 font-medium text-slate-500">Severity</th>
-                                    <th scope="col" className="text-left py-2 px-3 font-medium text-slate-500">Details</th>
-                                    <th scope="col" className="text-right py-2 px-3 font-medium text-slate-500">Count</th>
+                                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                                    <th scope="col" style={thStyle}>Item</th>
+                                    <th scope="col" style={thStyle}>Severity</th>
+                                    <th scope="col" style={thStyle}>Details</th>
+                                    <th scope="col" style={{ ...thStyle, textAlign: 'right' }}>Count</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -146,107 +122,92 @@ function ReportViewer({ report }: { report: GeneratedReport }) {
                                     const details = (item.description || item.details || item.text || '') as string;
                                     const count = (item.count || item.total || '') as string | number;
                                     return (
-                                        <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50">
-                                            <td className="py-2 px-3 font-medium text-slate-900">{String(name)}</td>
-                                            <td className="py-2 px-3">
-                                                <span className={`px-2 py-0.5 text-xs font-semibold rounded ${SEVERITY_COLORS[String(severity).toLowerCase()] || 'bg-slate-100 text-slate-600'}`}>
-                                                    {String(severity).toUpperCase()}
-                                                </span>
-                                            </td>
-                                            <td className="py-2 px-3 text-slate-500 max-w-xs truncate">{String(details)}</td>
-                                            <td className="py-2 px-3 text-right text-slate-700 font-medium">{count !== '' ? String(count) : '--'}</td>
+                                        <tr key={idx} style={{ borderBottom: '1px solid var(--border)' }} onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }} onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = ''; }}>
+                                            <td style={{ ...tdStyle, fontWeight: 500, color: 'var(--text-primary)' }}>{String(name)}</td>
+                                            <td style={tdStyle}><Badge variant={SEVERITY_MAP[String(severity).toLowerCase()] || 'neutral'}>{String(severity).toUpperCase()}</Badge></td>
+                                            <td style={{ ...tdStyle, color: 'var(--text-muted)', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{String(details)}</td>
+                                            <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-secondary)', fontWeight: 500 }}>{count !== '' ? String(count) : '--'}</td>
                                         </tr>
                                     );
                                 })}
                             </tbody>
                         </table>
                     </div>
-                </div>
+                </Card>
             )}
 
-            {/* Team Performance Table */}
             {teamItems.length > 0 && (
-                <div className="bg-white rounded-lg border border-slate-200 p-5">
-                    <h4 className="text-sm font-semibold text-slate-700 mb-3">Team Performance</h4>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                <Card>
+                    <h4 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 12 }}>Team Performance</h4>
+                    <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
                             <thead>
-                                <tr className="border-b border-slate-200">
-                                    <th scope="col" className="text-left py-2 px-3 font-medium text-slate-500">Name</th>
-                                    <th scope="col" className="text-right py-2 px-3 font-medium text-slate-500">Docs Reviewed</th>
-                                    <th scope="col" className="text-right py-2 px-3 font-medium text-slate-500">Risks Found</th>
+                                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                                    <th scope="col" style={thStyle}>Name</th>
+                                    <th scope="col" style={{ ...thStyle, textAlign: 'right' }}>Docs Reviewed</th>
+                                    <th scope="col" style={{ ...thStyle, textAlign: 'right' }}>Risks Found</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {teamItems.map((member, idx) => (
-                                    <tr key={idx} className="border-b border-slate-100 hover:bg-slate-50">
-                                        <td className="py-2 px-3 font-medium text-slate-900">
-                                            {String(member.name || member.email || `User ${idx + 1}`)}
-                                        </td>
-                                        <td className="py-2 px-3 text-right text-slate-700">
-                                            {String(member.documents_reviewed || member.scan_count || '--')}
-                                        </td>
-                                        <td className="py-2 px-3 text-right text-slate-700">
-                                            {String(member.total_risks_found || member.risks_found || '--')}
-                                        </td>
+                                    <tr key={idx} style={{ borderBottom: '1px solid var(--border)' }} onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }} onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = ''; }}>
+                                        <td style={{ ...tdStyle, fontWeight: 500, color: 'var(--text-primary)' }}>{String(member.name || member.email || `User ${idx + 1}`)}</td>
+                                        <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-secondary)' }}>{String(member.documents_reviewed || member.scan_count || '--')}</td>
+                                        <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-secondary)' }}>{String(member.total_risks_found || member.risks_found || '--')}</td>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
                     </div>
-                </div>
+                </Card>
             )}
 
-            {/* High Risk Documents */}
             {highRiskDocuments && highRiskDocuments.length > 0 && (
-                <div className="bg-white rounded-lg border border-red-200 p-5">
-                    <h4 className="text-sm font-semibold text-red-700 mb-3">High Risk Documents</h4>
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                <Card style={{ borderColor: 'var(--risk-critical-border)' }}>
+                    <h4 style={{ fontSize: 14, fontWeight: 600, color: 'var(--risk-critical)', marginBottom: 12 }}>High Risk Documents</h4>
+                    <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', fontSize: 14, borderCollapse: 'collapse' }}>
                             <thead>
-                                <tr className="border-b border-slate-200">
-                                    <th scope="col" className="text-left py-2 px-3 font-medium text-slate-500">Filename</th>
-                                    <th scope="col" className="text-right py-2 px-3 font-medium text-slate-500">Risk Score</th>
-                                    <th scope="col" className="text-right py-2 px-3 font-medium text-slate-500">Risks</th>
+                                <tr style={{ borderBottom: '1px solid var(--border)' }}>
+                                    <th scope="col" style={thStyle}>Filename</th>
+                                    <th scope="col" style={{ ...thStyle, textAlign: 'right' }}>Risk Score</th>
+                                    <th scope="col" style={{ ...thStyle, textAlign: 'right' }}>Risks</th>
                                 </tr>
                             </thead>
                             <tbody>
                                 {highRiskDocuments.map((doc, idx) => (
-                                    <tr key={idx} className="border-b border-slate-100 hover:bg-red-50">
-                                        <td className="py-2 px-3 font-medium text-slate-900">{String(doc.filename)}</td>
-                                        <td className="py-2 px-3 text-right font-bold text-red-600">
-                                            {doc.risk_score != null ? Number(doc.risk_score).toFixed(1) : '--'}
-                                        </td>
-                                        <td className="py-2 px-3 text-right text-slate-700">{String(doc.total_risks || '--')}</td>
+                                    <tr key={idx} style={{ borderBottom: '1px solid var(--border)' }} onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--risk-critical-bg)'; }} onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = ''; }}>
+                                        <td style={{ ...tdStyle, fontWeight: 500, color: 'var(--text-primary)' }}>{String(doc.filename)}</td>
+                                        <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, color: 'var(--risk-critical)' }}>{doc.risk_score != null ? Number(doc.risk_score).toFixed(1) : '--'}</td>
+                                        <td style={{ ...tdStyle, textAlign: 'right', color: 'var(--text-secondary)' }}>{String(doc.total_risks || '--')}</td>
                                     </tr>
                                 ))}
                             </tbody>
                         </table>
                     </div>
-                </div>
+                </Card>
             )}
 
-            {/* Fallback: show remaining data as formatted sections */}
             {metricEntries.length === 0 && riskItems.length === 0 && teamItems.length === 0 && (
-                <div className="space-y-4">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                     {Object.entries(data).filter(([k]) => !['title', 'report_type', 'generated_at', 'period_days'].includes(k)).map(([key, value]) => (
-                        <div key={key} className="bg-white rounded-lg border border-slate-200 p-5">
-                            <h4 className="text-sm font-semibold text-slate-700 mb-2">
+                        <Card key={key}>
+                            <h4 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>
                                 {key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                             </h4>
                             {typeof value === 'object' && value !== null ? (
-                                <div className="text-sm text-slate-600 space-y-1">
+                                <div style={{ fontSize: 14, color: 'var(--text-secondary)', display: 'flex', flexDirection: 'column', gap: 4 }}>
                                     {Object.entries(value as Record<string, unknown>).map(([k, v]) => (
-                                        <div key={k} className="flex justify-between py-1 border-b border-slate-50">
-                                            <span className="text-slate-500">{k.replace(/_/g, ' ')}</span>
-                                            <span className="font-medium">{typeof v === 'number' ? v.toLocaleString() : String(v)}</span>
+                                        <div key={k} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+                                            <span style={{ color: 'var(--text-muted)' }}>{k.replace(/_/g, ' ')}</span>
+                                            <span style={{ fontWeight: 500 }}>{typeof v === 'number' ? v.toLocaleString() : String(v)}</span>
                                         </div>
                                     ))}
                                 </div>
                             ) : (
-                                <p className="text-sm text-slate-600">{String(value)}</p>
+                                <p style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{String(value)}</p>
                             )}
-                        </div>
+                        </Card>
                     ))}
                 </div>
             )}
@@ -305,119 +266,117 @@ export default function Reports() {
     };
 
     return (
-        <div className="min-h-screen bg-slate-50">
-            <AppHeader />
-            <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-                {/* Header */}
-                <div className="flex justify-between items-center mb-6">
-                    <div>
-                        <h1 className="text-2xl font-bold text-slate-900">Reports</h1>
-                        <p className="text-sm text-slate-500 mt-1">Generate and view analytics reports</p>
-                    </div>
-                    <label htmlFor="reports-time-range" className="sr-only">Time range</label>
-                    <select
-                        id="reports-time-range"
-                        value={days}
-                        onChange={(e) => setDays(Number(e.target.value))}
-                        className="px-3 py-2 border border-slate-300 rounded-lg text-sm"
-                    >
+        <AppLayout>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+                <div>
+                    <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Reports</h1>
+                    <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginTop: 4 }}>Generate and view analytics reports</p>
+                </div>
+                <div style={{ width: 140 }}>
+                    <SelectInput value={days} onChange={(e) => setDays(Number(e.target.value))}>
                         <option value={7}>7 days</option>
                         <option value={30}>30 days</option>
                         <option value={90}>90 days</option>
                         <option value={365}>1 year</option>
-                    </select>
+                    </SelectInput>
                 </div>
+            </div>
 
-                {/* Error display */}
-                {error && (
-                    <div className="bg-red-50 border border-red-200 text-red-700 p-3 rounded-lg mb-4 text-sm">
-                        {error}
-                    </div>
-                )}
-
-                {/* Generate Reports */}
-                <div className="bg-white rounded-xl border border-slate-200 p-6 mb-6">
-                    <h2 className="text-lg font-semibold text-slate-900 mb-4">Generate New Report</h2>
-                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                        {REPORT_TYPES.map((rt) => (
-                            <button
-                                key={rt.id}
-                                onClick={() => { setGenerating(rt.id); generateMutation.mutate(rt.id); }}
-                                disabled={generating !== null}
-                                className="text-left p-5 border border-slate-200 rounded-xl hover:border-red-300 hover:bg-red-50 transition-colors disabled:opacity-50"
-                            >
-                                <div className="w-10 h-10 bg-red-100 text-red-700 font-bold rounded-lg flex items-center justify-center mb-3">
-                                    {rt.icon}
-                                </div>
-                                <div className="font-medium text-slate-900">{rt.label}</div>
-                                <div className="text-xs text-slate-400 mt-1">{rt.desc}</div>
-                                {generating === rt.id && (
-                                    <div className="text-xs text-red-600 mt-2 font-medium">Generating...</div>
-                                )}
-                            </button>
-                        ))}
-                    </div>
+            {error && (
+                <div style={{ background: 'var(--risk-critical-bg)', border: '1px solid var(--risk-critical-border)', color: 'var(--risk-critical)', padding: '10px 16px', borderRadius: 'var(--radius-md)', marginBottom: 16, fontSize: 14 }}>
+                    {error}
                 </div>
+            )}
 
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {/* Report List */}
-                    <div className="lg:col-span-1 bg-white rounded-xl border border-slate-200 p-5">
-                        <h2 className="text-lg font-semibold text-slate-900 mb-4">Report History</h2>
-                        {isLoading ? (
-                            <div className="text-slate-400 text-sm py-4">Loading...</div>
-                        ) : reports && reports.length > 0 ? (
-                            <div className="space-y-2 max-h-[600px] overflow-y-auto">
-                                {reports.map((r) => (
-                                    <button
-                                        key={r.id}
-                                        onClick={() => handleViewReport(r.id)}
-                                        className={`w-full text-left p-3 rounded-lg border transition-colors ${
-                                            selectedReport?.id === r.id
-                                                ? 'border-red-300 bg-red-50'
-                                                : 'border-slate-100 hover:border-slate-300 hover:bg-slate-50'
-                                        }`}
-                                    >
-                                        <div className="text-sm font-medium text-slate-900 truncate">{r.title}</div>
-                                        <div className="text-xs text-slate-400 mt-1">
-                                            {r.report_type.replace(/_/g, ' ')} — {new Date(r.created_at).toLocaleDateString('en-IN', {
-                                                day: 'numeric', month: 'short', year: 'numeric',
-                                            })}
-                                        </div>
-                                    </button>
-                                ))}
+            {/* Generate Reports */}
+            <Card style={{ marginBottom: 24 }}>
+                <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 16 }}>Generate New Report</h2>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 16 }}>
+                    {REPORT_TYPES.map((rt) => (
+                        <button
+                            key={rt.id}
+                            onClick={() => { setGenerating(rt.id); generateMutation.mutate(rt.id); }}
+                            disabled={generating !== null}
+                            style={{
+                                textAlign: 'left', padding: 20, border: '1px solid var(--border)',
+                                borderRadius: 'var(--radius-lg)', cursor: generating ? 'not-allowed' : 'pointer',
+                                backgroundColor: 'var(--bg-surface)', opacity: generating !== null && generating !== rt.id ? 0.5 : 1,
+                                transition: 'all var(--transition-fast)',
+                            }}
+                            onMouseEnter={(e) => { if (!generating) { e.currentTarget.style.borderColor = 'var(--accent)'; e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; } }}
+                            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.backgroundColor = 'var(--bg-surface)'; }}
+                        >
+                            <div style={{
+                                width: 40, height: 40, backgroundColor: 'var(--accent-glow)',
+                                color: 'var(--accent)', fontWeight: 700, borderRadius: 'var(--radius-md)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 12,
+                            }}>
+                                {rt.icon}
                             </div>
-                        ) : (
-                            <p className="text-sm text-slate-400 py-4">No reports generated yet. Use the cards above to create one.</p>
-                        )}
-                    </div>
+                            <div style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{rt.label}</div>
+                            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{rt.desc}</div>
+                            {generating === rt.id && <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 8, fontWeight: 500 }}>Generating...</div>}
+                        </button>
+                    ))}
+                </div>
+            </Card>
 
-                    {/* Report Viewer */}
-                    <div className="lg:col-span-2 bg-white rounded-xl border border-slate-200 p-5">
-                        <div className="flex justify-between items-center mb-4">
-                            <h2 className="text-lg font-semibold text-slate-900">
-                                {selectedReport ? selectedReport.title : 'Select a Report'}
-                            </h2>
-                            {selectedReport?.data && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 24 }}>
+                {/* Report List */}
+                <Card>
+                    <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 16 }}>Report History</h2>
+                    {isLoading ? (
+                        <div style={{ color: 'var(--text-muted)', fontSize: 14, padding: '16px 0' }}>Loading...</div>
+                    ) : reports && reports.length > 0 ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 600, overflowY: 'auto' }}>
+                            {reports.map((r) => (
                                 <button
-                                    onClick={handleDownloadJSON}
-                                    className="px-3 py-1.5 text-xs font-medium text-red-700 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+                                    key={r.id}
+                                    onClick={() => handleViewReport(r.id)}
+                                    style={{
+                                        width: '100%', textAlign: 'left', padding: 12, borderRadius: 'var(--radius-md)',
+                                        border: `1px solid ${selectedReport?.id === r.id ? 'var(--accent)' : 'var(--border)'}`,
+                                        backgroundColor: selectedReport?.id === r.id ? 'var(--bg-hover)' : 'transparent',
+                                        cursor: 'pointer', transition: 'all var(--transition-fast)',
+                                    }}
+                                    onMouseEnter={(e) => { if (selectedReport?.id !== r.id) e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
+                                    onMouseLeave={(e) => { if (selectedReport?.id !== r.id) e.currentTarget.style.backgroundColor = 'transparent'; }}
                                 >
-                                    Download JSON
+                                    <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.title}</div>
+                                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                                        {r.report_type.replace(/_/g, ' ')} &mdash; {new Date(r.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    </div>
                                 </button>
-                            )}
+                            ))}
                         </div>
-                        {loadingReport ? (
-                            <div className="text-slate-400 text-sm py-8 text-center">Loading report...</div>
-                        ) : selectedReport ? (
-                            <ReportViewer report={selectedReport} />
-                        ) : (
-                            <div className="text-slate-400 text-sm py-8 text-center">
-                                Select a report from the list or generate a new one.
-                            </div>
+                    ) : (
+                        <p style={{ fontSize: 14, color: 'var(--text-muted)', padding: '16px 0' }}>No reports generated yet. Use the cards above to create one.</p>
+                    )}
+                </Card>
+
+                {/* Report Viewer */}
+                <Card>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                        <h2 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', margin: 0 }}>
+                            {selectedReport ? selectedReport.title : 'Select a Report'}
+                        </h2>
+                        {selectedReport?.data && (
+                            <Button variant="secondary" size="sm" onClick={handleDownloadJSON} icon={<Download size={14} />}>
+                                Download JSON
+                            </Button>
                         )}
                     </div>
-                </div>
-            </main>
-        </div>
+                    {loadingReport ? (
+                        <div style={{ color: 'var(--text-muted)', fontSize: 14, padding: '32px 0', textAlign: 'center' }}>Loading report...</div>
+                    ) : selectedReport ? (
+                        <ReportViewer report={selectedReport} />
+                    ) : (
+                        <div style={{ color: 'var(--text-muted)', fontSize: 14, padding: '32px 0', textAlign: 'center' }}>
+                            Select a report from the list or generate a new one.
+                        </div>
+                    )}
+                </Card>
+            </div>
+        </AppLayout>
     );
 }
