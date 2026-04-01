@@ -141,7 +141,7 @@ class PlaybookInfo(BaseModel):
 
 _BASICS_FIELDS = [
     {"name": "contract_type", "type": "select", "required": True, "default": "nda_mutual",
-     "options": ["nda_mutual", "nda_unilateral", "saas"], "placeholder": "Select contract type"},
+     "options": ["nda_mutual", "nda_unilateral", "saas", "msa", "employment"], "placeholder": "Select contract type"},
     {"name": "perspective", "type": "select", "required": True, "default": "balanced",
      "options": ["party_1", "balanced", "party_2"], "placeholder": "Drafting perspective"},
     {"name": "risk_appetite", "type": "select", "required": True, "default": "balanced",

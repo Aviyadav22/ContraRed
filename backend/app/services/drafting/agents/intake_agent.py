@@ -34,11 +34,21 @@ except ImportError:  # pragma: no cover – SaaS playbook may not exist yet
         "clauses": [],
     }
 
+from app.services.drafting.playbooks.msa_drafting import MSA_PLAYBOOK
+from app.services.drafting.playbooks.employment_drafting import EMPLOYMENT_PLAYBOOK
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
 
-VALID_CONTRACT_TYPES = {"nda_mutual", "nda_unilateral", "saas"}
+PLAYBOOK_REGISTRY: Dict[str, Dict[str, Any]] = {
+    "nda_mutual": NDA_MUTUAL_PLAYBOOK,
+    "nda_unilateral": NDA_UNILATERAL_PLAYBOOK,
+    "saas": SAAS_PLAYBOOK,
+    "msa": MSA_PLAYBOOK,
+    "employment": EMPLOYMENT_PLAYBOOK,
+}
+VALID_CONTRACT_TYPES = frozenset(PLAYBOOK_REGISTRY.keys())
 NDA_TYPES = {"nda_mutual", "nda_unilateral"}
 
 JURISDICTION_TO_GOVERNING_LAW: Dict[str, str] = {
@@ -49,12 +59,6 @@ JURISDICTION_TO_GOVERNING_LAW: Dict[str, str] = {
     "IN": "India",
     "GB": "England and Wales",
     "SG": "Singapore",
-}
-
-PLAYBOOK_REGISTRY: Dict[str, Dict[str, Any]] = {
-    "nda_mutual": NDA_MUTUAL_PLAYBOOK,
-    "nda_unilateral": NDA_UNILATERAL_PLAYBOOK,
-    "saas": SAAS_PLAYBOOK,
 }
 
 
