@@ -26,7 +26,7 @@ const Executive = React.lazy(() => import('@/pages/Executive'));
 const Reports = React.lazy(() => import('@/pages/Reports'));
 const Marketplace = React.lazy(() => import('@/pages/Marketplace'));
 const ForgotPassword = React.lazy(() => import('@/pages/ForgotPassword'));
-const Drafting = React.lazy(() => import('@/pages/Drafting'));
+const Drafting = React.lazy(() => import('@/pages/drafting'));
 
 
 const queryClient = new QueryClient({
