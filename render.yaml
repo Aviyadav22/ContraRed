@@ -30,6 +30,12 @@ services:
         value: "gemini"
       - key: ANALYSIS_MODE
         value: "production"
+      - key: ENCRYPTION_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
       - key: RAZORPAY_KEY_ID
         sync: false
       - key: RAZORPAY_KEY_SECRET

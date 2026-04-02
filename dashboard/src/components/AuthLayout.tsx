@@ -11,7 +11,7 @@ const containerStyle: CSSProperties = {
 
 const brandPanelStyle: CSSProperties = {
     width: '50%',
-    backgroundColor: '#0B1120',
+    backgroundColor: '#09090B',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',

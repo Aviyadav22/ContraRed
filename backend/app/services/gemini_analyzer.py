@@ -83,6 +83,70 @@ def _strip_markdown_fences(text: str) -> str:
     return cleaned.strip()
 
 
+def _apply_edits(original_text: str, edits: list) -> tuple:
+    """Apply find/replace edit pairs to original text, returning (fix_text, valid_edits).
+
+    Each edit is a dict with 'find' and 'replace' keys.
+    Only applies edits where 'find' is an exact substring of the text.
+    Returns the modified text and the list of edits that were successfully applied.
+
+    This is the KEY function — it MECHANICALLY guarantees the fix has
+    the same scope as the original text. The AI only identifies what to
+    change; this function applies those changes to the original text.
+    """
+    result = original_text
+    applied_edits = []
+
+    for edit in edits:
+        if not isinstance(edit, dict):
+            continue
+        find = edit.get("find", "")
+        replace = edit.get("replace", "")
+        if not find or not isinstance(find, str):
+            continue
+        if not isinstance(replace, str):
+            continue
+
+        # Exact substring match
+        if find in result:
+            result = result.replace(find, replace, 1)  # Only first occurrence
+            applied_edits.append({"find": find, "replace": replace})
+        else:
+            # Try normalized match (collapse whitespace)
+            import re
+            normalized_find = re.sub(r'\s+', ' ', find.strip())
+            normalized_result = re.sub(r'\s+', ' ', result)
+            if normalized_find in normalized_result:
+                # Find the position in normalized, apply to original
+                idx = normalized_result.index(normalized_find)
+                # Map back to original position (approximate)
+                orig_pos = 0
+                norm_pos = 0
+                while norm_pos < idx and orig_pos < len(result):
+                    if result[orig_pos].isspace():
+                        while orig_pos + 1 < len(result) and result[orig_pos + 1].isspace():
+                            orig_pos += 1
+                    orig_pos += 1
+                    norm_pos += 1
+                # Find end position
+                end_pos = orig_pos
+                find_norm_len = len(normalized_find)
+                consumed = 0
+                while consumed < find_norm_len and end_pos < len(result):
+                    if result[end_pos].isspace():
+                        while end_pos + 1 < len(result) and result[end_pos + 1].isspace():
+                            end_pos += 1
+                    end_pos += 1
+                    consumed += 1
+                actual_find = result[orig_pos:end_pos]
+                result = result[:orig_pos] + replace + result[end_pos:]
+                applied_edits.append({"find": actual_find, "replace": replace})
+            else:
+                logger.warning("Edit 'find' not found in text: '%.80s...'", find)
+
+    return result, applied_edits
+
+
 def _classify_gemini_error(e: Exception) -> AIServiceError:
     """Classify a generic exception into the appropriate AI error type.
 
@@ -737,17 +801,34 @@ class GeminiAnalyzer:
             if not response_text:
                 raise AIServiceError("AI returned an empty response.", "ai_empty_response")
 
-            # Parse JSON
+            # Parse JSON — supports both new {edits} and legacy {fix_text} formats
             cleaned = _strip_markdown_fences(response_text)
-
             data = json.loads(cleaned)
+            reasoning = data.get("reasoning", "")
+
+            # New edit-based format (preferred)
+            edits_raw = data.get("edits")
+            if edits_raw and isinstance(edits_raw, list):
+                fix_text, applied_edits = _apply_edits(safe_original, edits_raw)
+                if not applied_edits:
+                    logger.warning("No edits could be applied — falling back to raw fix_text")
+                    fix_text = data.get("fix_text", "").strip()
+                else:
+                    return {
+                        "fix_text": fix_text,
+                        "fix_edits": applied_edits,
+                        "reasoning": reasoning,
+                    }
+
+            # Legacy format: direct fix_text
             fix_text = data.get("fix_text", "").strip()
             if not fix_text:
                 raise AIServiceError("AI returned empty fix text.", "ai_empty_fix")
 
             return {
                 "fix_text": fix_text,
-                "reasoning": data.get("reasoning", ""),
+                "fix_edits": [],
+                "reasoning": reasoning,
             }
 
         except (AIServiceError, AIServiceUnavailable, AIRateLimited, AIServiceTimeout):
@@ -798,12 +879,26 @@ class GeminiAnalyzer:
             )
 
         prompt = (
-            "You are a contract redlining assistant. Generate replacement clause text for each finding below.\n"
-            "Return a JSON object where keys are the finding IDs and values are the replacement text.\n\n"
-            "Example output format:\n"
-            '{"finding-0": "replacement text...", "finding-1": "replacement text..."}\n\n'
+            "You are an expert contract lawyer redlining a contract using Track Changes.\n\n"
+            "A lawyer NEVER rewrites an entire clause. A lawyer identifies the SPECIFIC problematic words, "
+            "strikes them, and writes replacement words. Everything else stays untouched.\n\n"
+            "RULES:\n"
+            "1. Each 'find' MUST be an exact substring of the Original clause — copy it character for character.\n"
+            "2. Each edit should be the SMALLEST change that addresses the issue (3-10 words, not 30).\n"
+            "3. Most issues need 1-3 edits. Rarely more than 4.\n"
+            "4. Do NOT invent new dollar amounts, percentages, or time periods unless the recommendation requires them.\n"
+            "5. To delete a phrase, set 'replace' to empty string.\n\n"
             f"Defined terms:\n{_sanitize_for_prompt(defined_terms, 3000)}\n\n"
             + "\n".join(items) + "\n\n"
+            "For EACH finding, return an object with 'edits' (array of find/replace pairs) and 'reasoning'.\n\n"
+            "Return a JSON object where keys are finding IDs:\n"
+            '{\n'
+            '  "finding-0": {\n'
+            '    "edits": [{"find": "exact words to strike", "replace": "replacement words"}],\n'
+            '    "reasoning": "what was changed and why"\n'
+            '  },\n'
+            '  "finding-1": { ... }\n'
+            '}\n\n'
             "IMPORTANT: Return ONLY the JSON object, no markdown fences."
         )
 
@@ -838,9 +933,40 @@ class GeminiAnalyzer:
 
             cleaned = _strip_markdown_fences(response_text)
             data = json.loads(cleaned)
-            if isinstance(data, dict):
-                return {k: v for k, v in data.items() if isinstance(v, str) and v.strip()}
-            return {}
+            if not isinstance(data, dict):
+                return {}
+
+            # Build a map of finding_id → {edits, reasoning} or legacy string
+            result = {}
+            # Also need original_text per finding for _apply_edits
+            original_map = {f["id"]: f["original_text"] for f in findings}
+
+            for k, v in data.items():
+                if isinstance(v, str) and v.strip():
+                    # Legacy format: plain string replacement
+                    result[k] = {"fix_text": v.strip(), "fix_edits": [], "reasoning": ""}
+                elif isinstance(v, dict):
+                    edits_raw = v.get("edits", [])
+                    reasoning = v.get("reasoning", "")
+                    original = original_map.get(k, "")
+                    if edits_raw and isinstance(edits_raw, list) and original:
+                        fix_text, applied_edits = _apply_edits(original, edits_raw)
+                        if applied_edits:
+                            result[k] = {
+                                "fix_text": fix_text,
+                                "fix_edits": applied_edits,
+                                "reasoning": reasoning,
+                            }
+                        else:
+                            # No edits matched — try fix_text fallback
+                            ft = v.get("fix_text", "").strip()
+                            if ft:
+                                result[k] = {"fix_text": ft, "fix_edits": [], "reasoning": reasoning}
+                    else:
+                        ft = v.get("fix_text", "").strip()
+                        if ft:
+                            result[k] = {"fix_text": ft, "fix_edits": [], "reasoning": reasoning}
+            return result
 
         except Exception as e:
             logger.warning("Batch fix generation failed: %s", e)
@@ -901,7 +1027,7 @@ Return a JSON array of risk objects. Each object must have these fields:
 - "id": unique string identifier (e.g. "clause-risk-1")
 - "risk_level": "RED" or "YELLOW"
 - "rule_name": name of the violated rule or issue category
-- "original_text": the exact problematic text from the clause
+- "original_text": the FULL clause text verbatim (copy-paste the complete clause, not just one sentence)
 - "explanation": why this is a risk (1-2 sentences)
 - "recommendation": what should be changed (lawyer-readable guidance)
 - "redline_type": "violation" or "missing"

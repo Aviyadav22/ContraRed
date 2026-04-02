@@ -233,7 +233,7 @@ Return a SINGLE valid JSON object. No markdown formatting, no code fences.
 
 1. **VERBATIM original_text**: The `original_text` field is used by software to FIND and HIGHLIGHT text in Microsoft Word. It MUST be a character-for-character exact copy from the contract. Same punctuation, same capitalization, same spacing. If you paraphrase, the software breaks. This is the #1 most important rule.
 
-2. **Surgical Precision**: For violations, extract the NARROWEST problematic text. Target the specific sentence or phrase that creates the risk — not the entire clause. Lawyers want MINIMAL redlines with MAXIMUM impact.
+2. **Complete Clause Extraction**: For violations, extract the FULL clause or sub-clause that contains the risk — from its natural beginning to its natural end (e.g., from "7.6 Termination Upon..." through the end of that numbered section). Do NOT extract just one sentence from a multi-sentence clause. The software uses this text to highlight the full problematic area and apply targeted word-level edits within it. If you only extract the first sentence, the lawyer cannot see or fix problems later in the same clause.
 
 3. **Confidence Score**: Each redline MUST include a `confidence` field (0.0 to 1.0):
    - 0.9-1.0: Clear, unambiguous violation or absence
@@ -265,9 +265,9 @@ CORRECT redline:
   "risk_level": "RED",
   "confidence": 0.95,
   "rule_name": "Confidentiality — Permitted Use",
-  "original_text": "and for any other internal business purpose that the Receiving Party deems reasonably necessary for its operations.",
+  "original_text": "The Receiving Party may use Confidential Information for evaluating the Purpose and for any other internal business purpose that the Receiving Party deems reasonably necessary for its operations.",
   "explanation": "The use right extends beyond the defined Purpose to any internal business purpose, effectively giving the Receiving Party carte blanche to exploit Confidential Information. This defeats the core protective function of the NDA.",
-  "recommendation": "Delete the broad permission language. Restrict use of Confidential Information solely to evaluating and engaging in discussions concerning the Purpose as defined in the agreement."
+  "recommendation": "Delete the broad permission language ('and for any other internal business purpose...'). Restrict use of Confidential Information solely to the Purpose."
 }}
 
 ### Example 2: VIOLATION — Inadequate survival period
@@ -304,7 +304,13 @@ CORRECT redline:
 {{
   "original_text": "2. NON-USE AND NON-DISCLOSURE"
 }}
-Problem: Section headings cannot be surgically replaced. For violations, you MUST extract the specific problematic SENTENCE or PHRASE within the clause body.
+Problem: Section headings alone are not enough. For violations, extract the FULL clause body — from the heading through the end of that section. The software needs the complete text to highlight the problematic area and apply word-level edits within it.
+
+### WRONG — Never extract just the first sentence of a multi-sentence clause:
+{{
+  "original_text": "Upon a Competitor Change in Control, Anthem may terminate this Agreement."
+}}
+Problem: This is only the first sentence. The clause continues with a $10M switching cost penalty and a definition. Extract the COMPLETE clause so the lawyer sees the full picture and edits can target any part of it.
 """
 
 
@@ -331,7 +337,14 @@ Return your analysis as a single valid JSON object.
 # Fix generation prompts (jurisdiction-aware)
 # ---------------------------------------------------------------------------
 
-FIX_VIOLATION_PROMPT = """You are an expert contract lawyer. Produce EXACT replacement text for a problematic clause.
+FIX_VIOLATION_PROMPT = """You are an expert contract lawyer redlining a contract using Track Changes.
+
+A lawyer NEVER rewrites an entire clause. A lawyer:
+1. Reads the clause
+2. Identifies the SPECIFIC problematic words or phrases
+3. Strikes those exact words
+4. Writes replacement words in their place
+5. Leaves everything else untouched
 
 JURISDICTION:
 {jurisdiction_context}
@@ -339,26 +352,39 @@ JURISDICTION:
 {context_block}
 {defined_terms_block}
 
-PROBLEMATIC TEXT (to be replaced):
+CLAUSE TEXT:
 "{original_text}"
 
 RECOMMENDATION: {recommendation}
 PLAYBOOK RULE: {rule_name}
 {playbook_guidance}
 
-Write the EXACT words that will REPLACE the problematic text above.
-Requirements:
-1. SAME SCOPE: if original is one sentence, replacement is one sentence. If original is a paragraph, replacement is a paragraph.
-2. Must slot seamlessly into the surrounding context — grammatically and logically.
-3. No preamble, no instructions — just the replacement words.
-4. MUST be compliant with {jurisdiction_name} law and the jurisdiction-specific requirements listed above.
-5. Professional legal language matching the contract's tone.
-6. Be commercially reasonable and balanced.
+YOUR TASK: Identify the specific words/phrases in the CLAUSE TEXT that need to change, and provide the replacement for each.
+
+RULES:
+1. Each "find" MUST be an exact substring of the CLAUSE TEXT above — copy it character for character.
+2. Each edit should be the SMALLEST change that addresses the issue. Prefer changing 3-10 words over 30.
+3. Most issues need 1-3 edits. Rarely more than 4.
+4. Do NOT invent new dollar amounts, percentages, or time periods unless the recommendation explicitly requires them.
+5. All replacements must be compliant with {jurisdiction_name} law.
+6. If a phrase should be deleted entirely, set "replace" to "".
+7. If text needs to be inserted (not replacing anything), use "find" with the word BEFORE the insertion point and include the insertion in "replace" (e.g. find: "word." replace: "word. New sentence.").
+
+EXAMPLES:
+- Issue: one-sided termination
+  Edit: {{"find": "in its sole discretion and without limitation or termination liability, if Anthem reasonably determines that", "replace": "if"}}
+  (Removed the unilateral discretion language, kept the operative "if")
+
+- Issue: no cure period
+  Edit: {{"find": "fails to meet its obligations under this Section", "replace": "materially breaches its obligations under this Section and fails to cure such breach within thirty (30) days after receiving written notice"}}
 
 Return ONLY a valid JSON object:
 {{
-  "fix_text": "exact replacement words",
-  "reasoning": "2-3 sentences explaining what was changed and why, citing relevant legal standards"
+  "edits": [
+    {{"find": "exact words from clause text to strike", "replace": "replacement words"}},
+    {{"find": "another exact phrase to change", "replace": "its replacement"}}
+  ],
+  "reasoning": "1-2 sentences: what was changed and the legal basis"
 }}
 """
 

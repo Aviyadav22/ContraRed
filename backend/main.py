@@ -52,8 +52,10 @@ class SensitiveDataFilter(logging.Filter):
 
 # Install the filter on the root logger so ALL loggers inherit it
 _sensitive_filter = SensitiveDataFilter()
+import os as _os
+_log_level = getattr(logging, _os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
 logging.basicConfig(
-    level=logging.INFO,
+    level=_log_level,
     format='{"timestamp":"%(asctime)s","level":"%(levelname)s","module":"%(name)s","function":"%(funcName)s","message":"%(message)s"}',
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
@@ -227,6 +229,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Token blacklist init failed: %s — revocation disabled", e)
 
+    # Startup - seed default playbooks if missing (non-fatal)
+    try:
+        from app.services.seed_defaults import seed_default_playbooks
+        from app.db.session import AsyncSessionLocal
+        async with AsyncSessionLocal() as session:
+            n = await seed_default_playbooks(session)
+            if n:
+                logger.info("Seeded %d default playbook(s)", n)
+    except Exception as e:
+        logger.warning("Default playbook seeding failed: %s — app continues", e)
+
     yield
 
     # Shutdown
@@ -398,74 +411,11 @@ async def health_check():
 
 @app.get("/health/ai")
 async def ai_health_check():
-    """Diagnostic: test Vertex AI connectivity and return exact errors."""
-    import os
-    from app.core.config import settings
-
-    import json as _json
-
-    result = {
-        "vertex_project_id": settings.VERTEX_PROJECT_ID or "(not set)",
-        "vertex_location": settings.VERTEX_LOCATION,
-        "gemini_model": settings.GEMINI_ANALYSIS_MODEL,
-    }
-
-    # Check env var BEFORE client init
-    creds_before = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
-    result["creds_before_init"] = "json_blob" if creds_before.strip().startswith("{") else "file" if creds_before else "not_set"
-    if creds_before.strip().startswith("{"):
-        result["creds_json_len"] = len(creds_before)
-        # Try parsing to check
-        try:
-            parsed = _json.loads(creds_before)
-            pk = parsed.get("private_key", "")
-            result["creds_json_parse"] = "ok"
-            result["pk_len"] = len(pk)
-            result["pk_has_real_newlines"] = "\n" in pk
-        except _json.JSONDecodeError as e:
-            result["creds_json_parse"] = f"failed: {e}"
-
-    # Test client init (this calls _setup_credentials)
-    try:
-        from app.core.vertex_client import _get_client, is_available
-        result["is_available"] = is_available()
-        client = _get_client()
-        result["client_type"] = type(client).__name__ if client else None
-    except Exception as e:
-        result["client_init_error"] = f"{type(e).__name__}: {e}"
-
-    # Check env var AFTER client init (should be converted to file path)
-    creds_after = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
-    result["creds_after_init"] = "file" if creds_after.endswith(".json") else "json_blob" if creds_after.strip().startswith("{") else "other"
-
-    # If it's now a file, check the file
-    if creds_after.endswith(".json") and os.path.isfile(creds_after):
-        result["creds_file_path"] = creds_after
-        try:
-            with open(creds_after) as _f:
-                _d = _json.load(_f)
-            pk = _d.get("private_key", "")
-            result["file_pk_len"] = len(pk)
-            result["file_pk_has_newlines"] = "\n" in pk
-            result["file_pk_first30"] = pk[:30]
-        except Exception as _e:
-            result["file_error"] = str(_e)
-    elif creds_after.strip().startswith("{"):
-        result["setup_creds_failed"] = "env var still JSON blob — _setup_credentials() likely failed"
-
-    # Test actual API call
-    if result.get("client_type"):
-        try:
-            from app.core.vertex_client import get_generative_model
-            model = get_generative_model(settings.GEMINI_ANALYSIS_MODEL)
-            resp = model.generate_content("Say hello in exactly 3 words.")
-            result["api_call"] = "success"
-            result["response_preview"] = resp.text[:100] if hasattr(resp, "text") else str(resp)[:100]
-        except Exception as e:
-            result["api_call"] = "failed"
-            result["api_error"] = f"{type(e).__name__}: {e}"
-
-    return result
+    """AI connectivity check — only available in debug mode."""
+    if not settings.DEBUG:
+        raise HTTPException(status_code=404, detail="Not found")
+    from app.core.vertex_client import is_available
+    return {"ai_available": is_available()}
 
 
 @app.get("/health/db")
@@ -529,20 +479,14 @@ async def deep_health_check(response: Response):
         checks["redis"] = {"status": "disconnected", "detail": "Cache service unavailable"}
         logger.warning("Redis health check failed: %s", e)
 
-    # 3. AI Provider (non-critical) — Vertex AI only
+    # 3. AI Provider (non-critical)
     try:
         if settings.VERTEX_PROJECT_ID:
-            ai_status = "vertex_ai_configured"
-            ai_detail = f"project={settings.VERTEX_PROJECT_ID}, location={settings.VERTEX_LOCATION}"
-            checks["ai_provider"] = {"status": ai_status, "detail": ai_detail}
+            checks["ai_provider"] = {"status": "configured"}
         else:
-            checks["ai_provider"] = {
-                "status": "not_configured",
-                "detail": "VERTEX_PROJECT_ID not set — AI features disabled",
-            }
-    except Exception as e:
-        checks["ai_provider"] = {"status": "error", "detail": "AI provider check failed"}
-        logger.warning("AI provider health check failed: %s", e)
+            checks["ai_provider"] = {"status": "not_configured"}
+    except Exception:
+        checks["ai_provider"] = {"status": "error"}
 
     total_ms = round((_time.time() - start) * 1000, 1)
 

@@ -6,9 +6,9 @@
 // @ts-expect-error process.env injected by webpack DefinePlugin
 const API_BASE_URL = process.env.API_BASE_URL || 'http://localhost:8000/api/v1';
 
-// Guard against localhost in production
+// Guard against localhost in production — throw to fail fast
 if (typeof window !== 'undefined' && window.location.protocol === 'https:' && API_BASE_URL.includes('localhost')) {
-    console.error('FATAL: API_BASE_URL points to localhost in production. Check environment variables.');
+    throw new Error('FATAL: API_BASE_URL points to localhost in production. Set the API_BASE_URL environment variable.');
 }
 
 // ============================================================================
@@ -46,7 +46,9 @@ interface RedlineItem {
     clause_type: string;
     explanation: string;
     recommendation: string;
-    suggested_fix?: string;         // Exact replacement text
+    suggested_fix?: string;         // Exact replacement text (composed from edits)
+    fix_edits?: Array<{find: string; replace: string}>;  // Surgical edit pairs
+    fix_reasoning?: string;
     redline_type: 'violation' | 'missing';
     confidence?: number;
     confidence_level?: string;
@@ -171,6 +173,7 @@ interface DocumentListItem {
 class ContraRedAPI {
     private currentUser: User | null = null;
     private refreshPromise: Promise<boolean> | null = null;
+    private analyzeInFlight: boolean = false;
 
     constructor() {
         this.loadUser();
@@ -227,9 +230,9 @@ class ContraRedAPI {
 
         const body = options.body;
 
-        // AbortController timeout: 2 minutes
+        // AbortController timeout: 5 minutes (AI analysis can take 60-90s)
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 120000);
+        const timeoutId = setTimeout(() => controller.abort(), 300000);
 
         let response: Response;
         try {
@@ -242,7 +245,7 @@ class ContraRedAPI {
         } catch (err) {
             clearTimeout(timeoutId);
             if (err instanceof DOMException && err.name === 'AbortError') {
-                throw new Error('Request timed out after 2 minutes. The server may be slow or unreachable.');
+                throw new Error('Request timed out after 5 minutes. The server may be slow or unreachable.');
             }
             throw err;
         } finally {
@@ -440,11 +443,19 @@ class ContraRedAPI {
      * Sends full contract text + playbook to Gemini for holistic analysis.
      * Returns executive summary and redlines with exact-match text anchors.
      */
-    async analyzeWithAI(text: string, filename?: string, playbookId?: string, partySide?: string): Promise<AnalysisResult> {
-        return this.request('/documents/analyze', {
-            method: 'POST',
-            body: JSON.stringify({ text, filename, playbook_id: playbookId, party_side: partySide || 'buyer' }),
-        });
+    async analyzeWithAI(text: string, filename?: string, playbookId?: string, partySide?: string, jurisdiction?: string): Promise<AnalysisResult> {
+        if (this.analyzeInFlight) {
+            throw new Error('Analysis already in progress. Please wait for it to complete.');
+        }
+        this.analyzeInFlight = true;
+        try {
+            return await this.request('/documents/analyze', {
+                method: 'POST',
+                body: JSON.stringify({ text, filename, playbook_id: playbookId, party_side: partySide || 'buyer', jurisdiction: jurisdiction || undefined }),
+            });
+        } finally {
+            this.analyzeInFlight = false;
+        }
     }
 
     /**
@@ -503,7 +514,7 @@ class ContraRedAPI {
         surroundingContext?: string;
         playbookId?: string;
         contractText?: string;
-    }): Promise<{ fix_text: string; reasoning: string; fix_verified?: boolean; fix_warnings?: string[] }> {
+    }): Promise<{ fix_text: string; fix_edits?: Array<{find: string; replace: string}>; reasoning: string; fix_verified?: boolean; fix_warnings?: string[] }> {
         return this.request('/documents/generate-fix', {
             method: 'POST',
             body: JSON.stringify({
@@ -523,10 +534,16 @@ class ContraRedAPI {
     // ========================================================================
 
     async listPlaybooks(): Promise<Playbook[]> {
-        return this.request('/playbooks/');
+        const response = await this.request<{ items: Playbook[] } | Playbook[]>('/playbooks/');
+        // API returns { items: [...], total, skip, limit } but handle both shapes
+        if (Array.isArray(response)) return response;
+        return (response as { items: Playbook[] }).items || [];
     }
 
     async getPlaybook(playbookId: string): Promise<PlaybookDetail> {
+        if (!/^[a-zA-Z0-9\-_]+$/.test(playbookId)) {
+            throw new Error('Invalid playbook ID format');
+        }
         return this.request(`/playbooks/${playbookId}`);
     }
 

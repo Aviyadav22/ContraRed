@@ -111,6 +111,44 @@ def invalidate_playbook_cache(playbook_id: str) -> None:
             del cache[k]
 
 
+# Map detected contract types to PlaybookCategory values in DB
+_CONTRACT_TYPE_TO_CATEGORY = {
+    "nda": "nda",
+    "saas": "saas",
+    "employment": "employment",
+    "msa": "msa",
+    "dpa": "dpa",
+    "ma": "msa",       # M&A falls back to MSA-like rules
+    "general": None,    # No auto-select for general
+}
+
+
+async def load_default_playbook_for_type(
+    db: AsyncSession,
+    contract_type: str,
+) -> Optional[Playbook]:
+    """Load the default public playbook matching a detected contract type.
+
+    Returns None if no matching default playbook exists.
+    """
+    category = _CONTRACT_TYPE_TO_CATEGORY.get(contract_type)
+    if not category:
+        return None
+
+    from sqlalchemy import func, cast, String
+    query = (
+        select(Playbook)
+        .options(selectinload(Playbook.rules_list))
+        .where(
+            Playbook.is_default == True,  # noqa: E712
+            func.lower(cast(Playbook.category, String)) == category.lower(),
+        )
+        .limit(1)
+    )
+    result = await db.execute(query)
+    return result.scalar_one_or_none()
+
+
 async def load_playbook(
     db: AsyncSession,
     playbook_id_raw,

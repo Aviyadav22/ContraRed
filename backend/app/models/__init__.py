@@ -20,6 +20,7 @@ from app.models.compliance_layer import ComplianceLayer, ComplianceLayerRule
 from app.models.batch_job import BatchJob, BatchJobFile
 from app.models.org_risk_profile import OrganizationRiskProfile
 from app.models.jurisdiction import Jurisdiction, JurisdictionRuleOverride
+from app.models.drafting import DraftSession, DraftingPlaybook, DraftSessionStatus
 
 __all__ = [
     "RiskLevel",
@@ -59,4 +60,7 @@ __all__ = [
     "OrganizationRiskProfile",
     "Jurisdiction",
     "JurisdictionRuleOverride",
+    "DraftSession",
+    "DraftingPlaybook",
+    "DraftSessionStatus",
 ]

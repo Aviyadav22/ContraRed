@@ -58,8 +58,8 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   }, []);
 
   if (validated === null) {
-    return <div className="flex items-center justify-center h-screen">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: 'var(--bg-app)' }}>
+      <div style={{ width: 32, height: 32, border: '2px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
     </div>;
   }
   if (!validated) return <Navigate to="/login" replace />;
@@ -93,8 +93,8 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
   }, []);
 
   if (validated === 'loading') {
-    return <div className="flex items-center justify-center h-screen">
-      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: 'var(--bg-app)' }}>
+      <div style={{ width: 32, height: 32, border: '2px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
     </div>;
   }
   if (validated === 'unauthenticated') return <Navigate to="/login" replace />;
@@ -108,7 +108,7 @@ export default function App() {
     <ToastProvider>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <Suspense fallback={<div className="flex flex-col items-center justify-center min-h-screen" style={{ backgroundColor: '#FAFAF9' }}><div className="text-2xl font-bold mb-4" style={{ color: '#C0392B' }}>ContraRed</div><div className="animate-spin rounded-full h-8 w-8 border-2 border-slate-300" style={{ borderTopColor: '#C0392B' }}></div></div>}>
+        <Suspense fallback={<div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: 'var(--bg-app)', gap: 16 }}><div style={{ fontSize: 24, fontWeight: 700, color: 'var(--accent)' }}>ContraRed</div><div style={{ width: 32, height: 32, border: '2px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /></div>}>
           <ErrorBoundary>
           <Routes>
             {/* Public routes */}

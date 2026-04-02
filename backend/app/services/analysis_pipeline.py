@@ -156,6 +156,8 @@ class FinalRedline:
     cross_references: List[str] = field(default_factory=list)
     clause_type: str = ""
     suggested_fix: Optional[str] = None
+    fix_edits: List[Dict[str, str]] = field(default_factory=list)  # [{find, replace}]
+    fix_reasoning: str = ""
     # Smriti MCP enrichment (optional — empty when Smriti unavailable)
     statutory_basis: Optional[Dict[str, Any]] = None
     case_law_context: List[Dict[str, Any]] = field(default_factory=list)
@@ -218,6 +220,8 @@ class PipelineResult:
                     "cross_references": r.cross_references,
                     "clause_type": r.clause_type,
                     "suggested_fix": r.suggested_fix,
+                    "fix_edits": r.fix_edits,
+                    "fix_reasoning": r.fix_reasoning,
                     "statutory_basis": r.statutory_basis,
                     "case_law_context": r.case_law_context,
                 }
@@ -1226,9 +1230,37 @@ class AnalysisPipeline:
 
         # Apply fixes to redlines
         for id_str, redline in finding_map.items():
-            fix = fix_results.get(id_str)
-            if fix and isinstance(fix, str) and fix.strip():
-                redline.suggested_fix = fix.strip()
+            fix_data = fix_results.get(id_str)
+            if not fix_data:
+                continue
+
+            # Handle both dict (new) and string (legacy) formats
+            if isinstance(fix_data, str):
+                fix_text = fix_data.strip()
+                fix_edits = []
+                fix_reasoning = ""
+            elif isinstance(fix_data, dict):
+                fix_text = fix_data.get("fix_text", "").strip()
+                fix_edits = fix_data.get("fix_edits", [])
+                fix_reasoning = fix_data.get("reasoning", "")
+            else:
+                continue
+
+            if not fix_text:
+                continue
+
+            # Scope guard: reject fixes that expanded far beyond the original
+            original_len = len(redline.verified_text or redline.original_text)
+            if original_len > 0 and len(fix_text) > original_len * 2.0 and not fix_edits:
+                logger.warning(
+                    "Fix rejected (scope creep, no edits): %s — original %d chars, fix %d chars",
+                    redline.rule_name, original_len, len(fix_text),
+                )
+                continue
+
+            redline.suggested_fix = fix_text
+            redline.fix_edits = fix_edits
+            redline.fix_reasoning = fix_reasoning
 
         fixed_count = sum(1 for r in fixable if r.suggested_fix)
         logger.info("Fix generation: %d/%d findings got fixes (%d API calls)",
@@ -1535,11 +1567,15 @@ class AnalysisPipeline:
         if not self._analyzer.is_enabled:
             return None
 
-        prompt = f"""You are a contract review expert. Analyze these changes between two versions of a contract.
+        try:
+            safe_changes = _sanitize_for_prompt(changes_text, max_length=20000)
+            safe_rules = _sanitize_for_prompt(rules_context, max_length=5000) if rules_context else ""
 
-{rules_context}
+            prompt = f"""You are a contract review expert. Analyze these changes between two versions of a contract.
 
-{changes_text}
+{safe_rules}
+
+{safe_changes}
 
 For each change, provide a one-sentence assessment:
 - Does this change FAVOR the reviewing party, FAVOR the counterparty, or is it NEUTRAL?
@@ -1550,34 +1586,44 @@ Return a JSON array of objects:
   {{"change_number": 1, "assessment": "favors_us" | "favors_them" | "neutral", "explanation": "Brief explanation"}}
 ]
 """
-        import json as _json
+            import json as _json
 
-        loop = asyncio.get_running_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: self._analyzer.client.generate_content(
-                prompt,
-                generation_config={"max_output_tokens": 4096, "temperature": 0.1},
-            ),
-        )
+            loop = asyncio.get_running_loop()
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: self._analyzer.client.generate_content(
+                        prompt,
+                        generation_config={"max_output_tokens": 4096, "temperature": 0.1},
+                    ),
+                ),
+                timeout=120.0,
+            )
 
-        response_text = ""
-        if response.candidates:
-            candidate = response.candidates[0]
-            if candidate.content and candidate.content.parts:
-                response_text = candidate.content.parts[0].text
+            response_text = ""
+            if response.candidates:
+                candidate = response.candidates[0]
+                if candidate.content and candidate.content.parts:
+                    response_text = candidate.content.parts[0].text
 
-        if not response_text:
-            return None
+            if not response_text:
+                return None
 
-        cleaned = response_text.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        cleaned = cleaned.strip()
+            cleaned = response_text.strip()
+            if cleaned.startswith("```"):
+                cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
 
-        return _json.loads(cleaned)
+            return _json.loads(cleaned)
+
+        except asyncio.TimeoutError:
+            logging.getLogger(__name__).warning("assess_diff_changes timed out after 120s")
+            return []
+        except Exception as e:
+            logging.getLogger(__name__).error("assess_diff_changes failed: %s", e)
+            return []
 
     @property
     def is_enabled(self) -> bool:

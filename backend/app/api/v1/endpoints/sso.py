@@ -11,6 +11,8 @@ Endpoints:
 
 from __future__ import annotations
 
+import hashlib
+import hmac as hmac_mod
 import logging
 import secrets
 import uuid
@@ -69,6 +71,7 @@ class SSOAuthorizeRequest(BaseModel):
 class SSOCallbackRequest(BaseModel):
     code: str = Field(..., description="Authorization code from WorkOS")
     state: str = Field(..., description="CSRF state parameter")
+    state_sig: Optional[str] = Field(None, description="HMAC signature of state parameter")
 
 
 class SSOStatusResponse(BaseModel):
@@ -100,6 +103,19 @@ class SSOLoginResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
+def _sign_state(state: str) -> str:
+    """Create an HMAC signature for SSO CSRF state parameter."""
+    return hmac_mod.new(
+        settings.SECRET_KEY.encode(), state.encode(), hashlib.sha256
+    ).hexdigest()[:16]
+
+
+def _verify_state_signature(state: str, signature: str) -> bool:
+    """Verify the HMAC signature of the SSO CSRF state parameter."""
+    expected = _sign_state(state)
+    return hmac_mod.compare_digest(expected, signature)
+
 
 def _get_client_ip(request: Request) -> Optional[str]:
     """Get real client IP, only trusting X-Forwarded-For from known proxies."""
@@ -166,7 +182,13 @@ async def sso_authorize(
             detail="SSO authorization failed",
         )
 
-    return {"authorization_url": authorization_url, "state": returned_state}
+    # Sign the state so callback can verify it server-side (prevents CSRF)
+    state_signature = _sign_state(returned_state)
+    return {
+        "authorization_url": authorization_url,
+        "state": returned_state,
+        "state_sig": state_signature,
+    }
 
 
 @router.post("/callback", response_model=SSOLoginResponse)
@@ -188,11 +210,19 @@ async def sso_callback(
             detail="SSO is not configured",
         )
 
-    # Validate CSRF state parameter
+    # Validate CSRF state parameter with server-side signature verification
     if not data.state:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Missing CSRF state parameter",
+        )
+
+    # Verify state signature from body, cookie, or header
+    state_sig = data.state_sig or request.cookies.get("sso_state_sig") or request.headers.get("X-SSO-State-Sig", "")
+    if not state_sig or not _verify_state_signature(data.state, state_sig):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid CSRF state — possible replay or forgery",
         )
 
     try:

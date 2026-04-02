@@ -69,8 +69,8 @@ def encrypt_text(plaintext: str) -> str:
     try:
         return _fernet.encrypt(plaintext.encode("utf-8")).decode("utf-8")
     except Exception as exc:
-        logger.error("Encryption failed: %s — returning plaintext", exc)
-        return plaintext
+        logger.error("Encryption failed: %s", exc)
+        raise RuntimeError(f"Encryption failed — cannot store sensitive data in plaintext: {exc}") from exc
 
 
 def decrypt_text(ciphertext: str) -> str:

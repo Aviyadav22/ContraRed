@@ -67,9 +67,9 @@ class ClauseListResponse(BaseModel):
 @router.get("/", response_model=ClauseListResponse)
 async def list_clauses(
     clause_type: Optional[str] = None,
-    search: Optional[str] = None,
-    skip: int = 0,
-    limit: int = Query(50, le=200),
+    search: Optional[str] = Query(None, max_length=200),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -89,7 +89,8 @@ async def list_clauses(
         base_filter.append(ClauseLibrary.clause_type == clause_type)
 
     if search:
-        search_term = f"%{search}%"
+        escaped = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        search_term = f"%{escaped}%"
         base_filter.append(or_(
             ClauseLibrary.clause_type.ilike(search_term),
             ClauseLibrary.name.ilike(search_term)

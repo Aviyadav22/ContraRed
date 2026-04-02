@@ -100,7 +100,9 @@ class RedlineItem(BaseModel):
     clause_type: str = ""
     explanation: str               # Why this is risky
     recommendation: str = ""       # Lawyer-readable guidance
-    suggested_fix: Optional[str] = None  # Exact replacement text (generated)
+    suggested_fix: Optional[str] = None  # Exact replacement text (composed from edits)
+    fix_edits: Optional[List[dict]] = None  # [{find: str, replace: str}] — surgical edits
+    fix_reasoning: Optional[str] = None  # Why the fix was made
     redline_type: Literal["violation", "missing"] = "violation"
     confidence: Optional[float] = None
     confidence_level: Optional[str] = None
@@ -944,8 +946,19 @@ async def batch_analyze(
 
         # Read file and extract text from .docx
         try:
-            raw_bytes = await upload_file.read()
-            if len(raw_bytes) > 20 * 1024 * 1024:  # 20MB
+            # Read in chunks to reject oversized files early
+            _chunks = []
+            _size = 0
+            while True:
+                _chunk = await upload_file.read(64 * 1024)
+                if not _chunk:
+                    break
+                _size += len(_chunk)
+                if _size > 20 * 1024 * 1024:
+                    break
+                _chunks.append(_chunk)
+            raw_bytes = b"".join(_chunks)
+            if _size > 20 * 1024 * 1024:  # 20MB
                 file_statuses.append({
                     "filename": filename,
                     "status": "error",
@@ -1788,8 +1801,9 @@ class GenerateFixRequest(BaseModel):
 
 
 class GenerateFixResponse(BaseModel):
-    """Response with generated fix text."""
+    """Response with generated fix text and surgical edits."""
     fix_text: str
+    fix_edits: Optional[List[dict]] = None  # [{find, replace}] — the actual edits
     reasoning: str
     fix_verified: bool = True
     fix_warnings: Optional[List[str]] = None
@@ -1868,7 +1882,8 @@ async def generate_fix(
 
         return GenerateFixResponse(
             fix_text=generated["fix_text"],
-            reasoning=generated["reasoning"],
+            fix_edits=generated.get("fix_edits") or None,
+            reasoning=generated.get("reasoning", ""),
             fix_verified=fix_verified,
             fix_warnings=fix_warnings if fix_warnings else None,
         )
@@ -2122,13 +2137,19 @@ async def analyze_file(
     client_ip = request.client.host if request.client else None
     user_agent = request.headers.get("user-agent")
 
-    # Read file content
-    file_bytes = await file.read()
-
-    # Validate file size (10 MB max)
+    # Read file content in chunks to avoid unbounded memory usage
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
-    if len(file_bytes) > MAX_FILE_SIZE:
-        raise HTTPException(status_code=413, detail={"message": "File too large. Maximum size is 10 MB.", "error_code": "file_too_large"})
+    chunks = []
+    total_size = 0
+    while True:
+        chunk = await file.read(64 * 1024)  # 64KB chunks
+        if not chunk:
+            break
+        total_size += len(chunk)
+        if total_size > MAX_FILE_SIZE:
+            raise HTTPException(status_code=413, detail={"message": "File too large. Maximum size is 10 MB.", "error_code": "file_too_large"})
+        chunks.append(chunk)
+    file_bytes = b"".join(chunks)
 
     # Validate DOCX magic bytes (ZIP/PK header)
     if not file_bytes[:4] == b'PK\x03\x04':

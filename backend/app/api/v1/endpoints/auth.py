@@ -292,6 +292,14 @@ async def get_current_user(
         if token_data is None:
             raise credentials_exception
 
+    # mfa_setup tokens can ONLY be used for MFA setup/verify endpoints
+    if hasattr(token_data, "token_type") and token_data.token_type == "mfa_setup":
+        if request and not any(seg in str(request.url.path) for seg in ["/mfa/setup", "/mfa/verify"]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="MFA setup required — this token can only be used for MFA endpoints",
+            )
+
     # Check token blacklist (gracefully degrades if Redis unavailable)
     if token_data.jti:
         blacklist = await get_token_blacklist()
@@ -349,14 +357,18 @@ async def register(
                 organization_id=str(existing_user.organization_id) if existing_user.organization_id else None,
             )
 
-        # Create new user
+        # Create new user (is_verified=False until email confirmation)
         user = User(
             email=user_data.email,
             name=user_data.name,
             password_hash=get_password_hash(user_data.password),
             role=UserRole.REVIEWER,
             subscription_tier=SubscriptionTier.FREE,
+            is_verified=False,
         )
+        # TODO: Send email verification link once email service is configured.
+        # For now, user can log in but is_verified remains False.
+        logger.warning("Email verification not yet implemented — user %s registered without email confirmation", user_data.email)
 
         db.add(user)
         await db.flush()
@@ -614,8 +626,15 @@ async def refresh_token(
 
     Accepts refresh_token from request body or from HttpOnly cookie.
     """
+    # CSRF validation when refresh token comes from cookie
+    from app.core.cookies import validate_csrf
+    raw_refresh_body = body.refresh_token if body and body.refresh_token else None
+    raw_refresh_cookie = request.cookies.get("refresh_token") if not raw_refresh_body else None
+    if raw_refresh_cookie and not validate_csrf(request):
+        raise HTTPException(status_code=403, detail="CSRF validation failed")
+
     # Get refresh token from body or cookie
-    raw_refresh = (body.refresh_token if body and body.refresh_token else None) or request.cookies.get("refresh_token")
+    raw_refresh = raw_refresh_body or raw_refresh_cookie
     if not raw_refresh:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -841,11 +860,22 @@ async def mfa_challenge(
             detail="MFA is not enabled for this user",
         )
 
+    # DB-backed lockout check (works cross-worker, unlike in-memory tracking)
+    if user.locked_until and user.locked_until > datetime.now(timezone.utc):
+        raise HTTPException(
+            status_code=status.HTTP_423_LOCKED,
+            detail="Account temporarily locked due to too many failed attempts. Try again later.",
+        )
+
     # Verify the TOTP/backup code
     valid = await verify_mfa(user, data.code, db)
 
     if not valid:
         remaining = _MFA_MAX_ATTEMPTS - await _record_mfa_attempt(token_data.jti)
+        # DB-backed: increment failed_login_attempts and lock if exceeded
+        user.failed_login_attempts = (user.failed_login_attempts or 0) + 1
+        if user.failed_login_attempts >= MAX_LOGIN_ATTEMPTS:
+            user.locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_DURATION_MINUTES)
         await log_audit_event(
             db, user=user, action="mfa_verify_failed", resource_type="auth",
             resource_name=user.email, status="failure",
@@ -860,6 +890,8 @@ async def mfa_challenge(
 
     # MFA verified — clear attempt tracking and complete login
     await _clear_mfa_attempts(token_data.jti)
+    user.failed_login_attempts = 0
+    user.locked_until = None
     user.last_login = datetime.now(timezone.utc)
     client_ip = _get_client_ip(request)
 

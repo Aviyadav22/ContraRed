@@ -4,7 +4,8 @@ from scripts.playbooks._helpers import _r  # noqa: F401
 NDA_UNILATERAL = {
     "name": "NDA — Unilateral",
     "description": "Default playbook for one-way NDAs where only one party discloses confidential information. Includes all mutual NDA rules plus checks for overreach (non-compete, IP assignment, reverse engineering).",
-    "category": "NDA",
+    "category": "nda",
+    "party_side": "buyer",
     "rules": [
         # Inherit core NDA rules
         _r(
@@ -19,6 +20,10 @@ NDA_UNILATERAL = {
             fallback="Confidential Information means information clearly marked as confidential or that a reasonable person would understand to be confidential, excluding publicly available information, independently developed information, and information received from a third party without restriction.",
             prompt="Check if the definition is overly broad without standard exclusions.",
             order=0,
+            risk_description="Definition of confidential information is overly broad without standard carve-outs",
+            unacceptable_signals=["any and all information", "broadest possible definition"],
+            acceptable_signals=["clearly marked as confidential", "standard exclusions"],
+            acceptable_position="Defined with standard exclusions for public, independent, and third-party info",
         ),
         _r(
             clause_type="confidentiality_term",
@@ -31,6 +36,10 @@ NDA_UNILATERAL = {
             fallback="Confidentiality obligations shall survive for three (3) years from the date of disclosure.",
             prompt="Check if term is perpetual or exceeds 5 years.",
             order=1,
+            risk_description="Confidentiality obligation is perpetual or exceeds 5 years",
+            unacceptable_signals=["perpetual", "indefinite", "survive forever"],
+            acceptable_signals=["3 years from disclosure", "5 years post-termination"],
+            acceptable_position="3-5 years from date of disclosure",
         ),
         _r(
             clause_type="permitted_disclosures",
@@ -43,6 +52,10 @@ NDA_UNILATERAL = {
             fallback="The Receiving Party may disclose Confidential Information as required by law, regulation, or court order, provided it gives prompt written notice and cooperates in seeking a protective order.",
             prompt="Check if legally compelled disclosure exceptions exist.",
             order=2,
+            risk_description="No exceptions for legally compelled disclosures (court order, regulatory)",
+            unacceptable_signals=["no disclosure under any circumstances", "absolute prohibition"],
+            acceptable_signals=["required by law", "court order", "with prior notice"],
+            acceptable_position="Permitted for court orders and regulatory requirements with prior notice",
         ),
         _r(
             clause_type="return_of_information",
@@ -55,6 +68,10 @@ NDA_UNILATERAL = {
             fallback="Upon termination or request, the Receiving Party shall return or destroy all Confidential Information and certify destruction in writing within fifteen (15) business days.",
             prompt="Check if return/destruction clause exists. Flag if missing.",
             order=3,
+            risk_description="No return or destruction clause for confidential information",
+            unacceptable_signals=["no return obligation", "may retain indefinitely"],
+            acceptable_signals=["return or destroy", "certification of destruction"],
+            acceptable_position="Return or destroy all materials within 15 days with written certification",
         ),
         # Unilateral-specific: overreach detection
         _r(
@@ -128,6 +145,10 @@ NDA_UNILATERAL = {
             fallback="Neither Party shall solicit for employment any employee of the other Party involved in the exchange of Confidential Information for twelve (12) months following termination.",
             prompt="Check if non-solicitation duration exceeds 12 months.",
             order=7,
+            risk_description="Non-solicitation exceeds 12 months or is unreasonably broad",
+            unacceptable_signals=["24 months non-solicitation", "worldwide", "any employee"],
+            acceptable_signals=["12 months", "employees directly involved"],
+            acceptable_position="12 months, limited to employees involved in confidential exchange",
         ),
         _r(
             clause_type="governing_law_jurisdiction",
@@ -141,6 +162,10 @@ NDA_UNILATERAL = {
             fallback="This Agreement shall be governed by the laws of India. Courts at [City], India shall have exclusive jurisdiction.",
             prompt="Check if governing law is Indian law. Flag foreign jurisdiction.",
             order=8,
+            risk_description="Governing law is not Indian law",
+            unacceptable_signals=["laws of England", "Delaware", "Singapore"],
+            acceptable_signals=["laws of India", "Indian courts"],
+            acceptable_position="Indian law with jurisdiction in a convenient Indian city",
         ),
     ],
 }

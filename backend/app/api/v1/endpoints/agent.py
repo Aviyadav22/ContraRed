@@ -216,7 +216,13 @@ async def trigger_compliance_watch(
 
     org_id = None
     if body.org_id:
-        org_id = _UUID(body.org_id)
+        try:
+            org_id = _UUID(body.org_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid org_id format")
+        # Validate org ownership — prevent IDOR
+        if org_id != current_user.organization_id:
+            raise HTTPException(status_code=403, detail="Cannot trigger scans for other organizations")
     elif current_user.organization_id:
         org_id = current_user.organization_id
 

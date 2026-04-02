@@ -3,11 +3,16 @@
  * Shares authentication patterns with Word Add-in
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
-// Guard against localhost in production (HTTPS context)
+// Warn if API URL is not configured (app still loads, API calls will fail gracefully)
+if (!API_BASE_URL) {
+    console.error('VITE_API_URL is not configured. API calls will fail.');
+}
+
+// Warn if localhost is used in production (HTTPS context)
 if (typeof window !== 'undefined' && window.location.protocol === 'https:' && API_BASE_URL.includes('localhost')) {
-    throw new Error('FATAL: VITE_API_URL points to localhost in production. Set the environment variable to the production API URL.');
+    console.error('VITE_API_URL points to localhost in production. Set the environment variable to the production API URL.');
 }
 
 // ============================================================================
@@ -313,6 +318,13 @@ export async function register(name: string, email: string, password: string): P
 
     // Auto-login after successful registration
     return login(email, password);
+}
+
+export async function forgotPassword(email: string): Promise<void> {
+    await request('/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+    });
 }
 
 export async function getCurrentUser(): Promise<User> {
@@ -841,6 +853,30 @@ export async function getAnalyticsTrends(period?: string, weeks?: number): Promi
 export function getAnalyticsExportUrl(days?: number): string {
     const qs = days ? `?days=${days}` : '';
     return `${API_BASE_URL}/analytics/export${qs}`;
+}
+
+export async function analyticsExportBlob(days?: number): Promise<Blob> {
+    const url = getAnalyticsExportUrl(days);
+    const csrfToken = getCsrfToken();
+    const headers: Record<string, string> = {
+        'Accept': 'text/csv',
+    };
+    if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+    }
+    const res = await fetch(url, {
+        credentials: 'include',
+        headers,
+    });
+    if (!res.ok) {
+        if (res.status === 401) {
+            clearAuth();
+            window.location.href = '/login';
+            throw new Error('Session expired');
+        }
+        throw new Error(`Export failed: ${res.status}`);
+    }
+    return res.blob();
 }
 
 // ============================================================================
@@ -1379,15 +1415,49 @@ export async function getDraftingIntakeSchema(contractType: string): Promise<Int
 }
 
 export async function generateContract(data: GenerateRequest): Promise<GenerateResponse> {
-    return request('/drafting/generate', {
-        method: 'POST',
-        body: JSON.stringify(data),
-    });
+    // Contract generation takes 2-5 minutes (AI drafts + reviews all sections).
+    // Use a 10-minute timeout instead of the default 2-minute request() timeout.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 600000);
+    try {
+        const csrfToken = getCsrfToken();
+        const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+        };
+        if (csrfToken) {
+            headers['X-CSRF-Token'] = csrfToken;
+        }
+        const res = await fetch(`${API_BASE_URL}/drafting/generate`, {
+            method: 'POST',
+            headers,
+            credentials: 'include',
+            body: JSON.stringify(data),
+            signal: controller.signal,
+        });
+        clearTimeout(timeoutId);
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: 'Generation failed' }));
+            throw new Error(err.detail || `Server error ${res.status}`);
+        }
+        return res.json();
+    } catch (err) {
+        clearTimeout(timeoutId);
+        if (err instanceof DOMException && err.name === 'AbortError') {
+            throw new Error('Contract generation timed out after 10 minutes. Please try again.');
+        }
+        throw err;
+    }
 }
 
 export async function downloadDraft(draftId: string): Promise<Blob> {
+    const csrfToken = getCsrfToken();
+    const headers: Record<string, string> = {};
+    if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+    }
     const res = await fetch(`${API_BASE_URL}/drafting/download/${draftId}`, {
         credentials: 'include',
+        headers,
     });
     if (!res.ok) throw new Error('Download failed');
     return res.blob();

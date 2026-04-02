@@ -30,7 +30,8 @@ export function Tooltip({ content, position = 'top', children }: TooltipProps) {
 
   const wrapperStyle: CSSProperties = {
     position: 'relative',
-    display: 'inline-flex',
+    display: 'flex',
+    width: '100%',
   };
 
   const tipStyle: CSSProperties = {
@@ -39,7 +40,7 @@ export function Tooltip({ content, position = 'top', children }: TooltipProps) {
     fontSize: 12,
     fontWeight: 500,
     color: '#F8FAFC',
-    backgroundColor: '#1E293B',
+    backgroundColor: '#27272A',
     borderRadius: 'var(--radius-sm)',
     boxShadow: 'var(--shadow-md)',
     animation: 'fadeIn 0.15s ease-out',

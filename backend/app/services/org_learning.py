@@ -12,6 +12,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.services.prompt_sanitizer import sanitize_for_prompt
+
 from app.models.org_risk_profile import OrganizationRiskProfile
 
 logger = logging.getLogger(__name__)
@@ -49,18 +51,23 @@ async def record_user_decision(
         profile = OrganizationRiskProfile(
             organization_id=org_id,
             clause_type=clause_type,
+            total_encounters=0,
+            accept_count=0,
+            reject_count=0,
+            modify_count=0,
+            escalate_count=0,
         )
         db.add(profile)
 
-    profile.total_encounters += 1
+    profile.total_encounters = (profile.total_encounters or 0) + 1
     if decision == "accept":
-        profile.accept_count += 1
+        profile.accept_count = (profile.accept_count or 0) + 1
     elif decision == "reject":
-        profile.reject_count += 1
+        profile.reject_count = (profile.reject_count or 0) + 1
     elif decision == "modify":
-        profile.modify_count += 1
+        profile.modify_count = (profile.modify_count or 0) + 1
     elif decision == "escalate":
-        profile.escalate_count += 1
+        profile.escalate_count = (profile.escalate_count or 0) + 1
 
     profile.last_updated = datetime.now(timezone.utc)
     await db.flush()
@@ -130,7 +137,7 @@ async def generate_org_context(
         reject_rate = round(p.reject_count / p.total_encounters * 100) if p.total_encounters > 0 else 0
         modify_rate = round(p.modify_count / p.total_encounters * 100) if p.total_encounters > 0 else 0
 
-        clause_label = p.clause_type.replace("_", " ").title()
+        clause_label = sanitize_for_prompt(p.clause_type.replace("_", " ").title(), max_length=200)
 
         if reject_rate >= 60:
             stance = "STRICT — usually rejects this clause type"

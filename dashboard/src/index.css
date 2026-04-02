@@ -9,10 +9,10 @@
   color-scheme: dark;
 
   /* Backgrounds */
-  --bg-app: #0F172A;
-  --bg-surface: #1E293B;
-  --bg-elevated: #334155;
-  --bg-sidebar: #0B1120;
+  --bg-app: #09090B;
+  --bg-surface: #18181B;
+  --bg-elevated: #27272A;
+  --bg-sidebar: #09090B;
   --bg-hover: rgba(255, 255, 255, 0.05);
   --bg-active: rgba(255, 255, 255, 0.1);
 
@@ -23,8 +23,8 @@
   --text-inverse: #0F172A;
 
   /* Borders */
-  --border: rgba(148, 163, 184, 0.15);
-  --border-strong: rgba(148, 163, 184, 0.3);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.15);
 
   /* Brand */
   --accent: #C0392B;

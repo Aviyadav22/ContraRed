@@ -4,7 +4,7 @@ import uuid
 
 def _r(clause_type, primary, risk, patterns, fallback=None, deal_breaker=False,
        ai_verify=True, prompt=None, order=0,
-       detection_mode="keywords_only", risk_description=None,
+       detection_mode="ai_with_keywords", risk_description=None,
        acceptable_position=None, unacceptable_signals=None,
        acceptable_signals=None, clause_context=None):
     """Build a playbook rule dict for seeding."""

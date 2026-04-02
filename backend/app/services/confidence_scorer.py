@@ -9,9 +9,9 @@ Computes a weighted confidence score from 5 factors:
   - Cross-references (10%) : Do other redlines corroborate this one?
 
 Returns: score (0-1), level (HIGH/MEDIUM/LOW), breakdown dict.
-  HIGH   = >= 0.75  (auto-show in UI)
-  MEDIUM = 0.50-0.74 (show with verification badge)
-  LOW    = < 0.50   (collapsed by default)
+  HIGH   = >= 0.70  (auto-show in UI)
+  MEDIUM = 0.45-0.69 (show with verification badge)
+  LOW    = < 0.45   (collapsed by default)
 """
 
 import logging
@@ -74,9 +74,9 @@ class ConfidenceScore:
 
 
 def _level_from_score(score: float) -> ConfidenceLevel:
-    if score >= 0.75:
+    if score >= 0.70:
         return ConfidenceLevel.HIGH
-    if score >= 0.50:
+    if score >= 0.45:
         return ConfidenceLevel.MEDIUM
     return ConfidenceLevel.LOW
 

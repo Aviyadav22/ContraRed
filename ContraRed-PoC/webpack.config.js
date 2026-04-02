@@ -17,6 +17,9 @@ module.exports = async (env, options) => {
     // Determine API URL: use env var or fall back to localhost.
     // In dev mode, proxy through the HTTPS webpack-dev-server to avoid
     // mixed-content blocks (HTTPS add-in → HTTP backend).
+    if (!dev && !process.env.API_BASE_URL) {
+        throw new Error('API_BASE_URL environment variable is required for production builds.');
+    }
     const apiBaseUrl = process.env.API_BASE_URL || (dev ? "/api/v1" : "http://localhost:8000/api/v1");
 
     const config = {
@@ -100,7 +103,11 @@ module.exports = async (env, options) => {
             },
             server: {
                 type: "https",
-                options: env.WEBPACK_BUILD || !dev ? {} : await getHttpsOptions(),
+                options: dev ? {
+                    key: require("path").resolve(require("os").homedir(), ".office-addin-dev-certs/localhost.key"),
+                    cert: require("path").resolve(require("os").homedir(), ".office-addin-dev-certs/localhost.crt"),
+                    ca: require("path").resolve(require("os").homedir(), ".office-addin-dev-certs/ca.crt"),
+                } : {},
             },
             port: 3007,
             static: {

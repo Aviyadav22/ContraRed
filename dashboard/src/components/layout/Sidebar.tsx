@@ -122,7 +122,7 @@ export function Sidebar({
     left: 0,
     bottom: 0,
     width,
-    backgroundColor: '#0B1120',
+    backgroundColor: '#09090B',
     display: 'flex',
     flexDirection: 'column',
     zIndex: 100,
@@ -149,6 +149,43 @@ export function Sidebar({
 
   /* ---- render helpers ---- */
 
+  function renderFooterItem(icon: React.ReactNode, label: string, onClick: () => void) {
+    const style: CSSProperties = {
+      display: 'flex',
+      alignItems: 'center',
+      gap: 12,
+      padding: collapsed ? '10px 0' : '8px 16px',
+      justifyContent: collapsed ? 'center' : 'flex-start',
+      color: '#94A3B8',
+      fontSize: 13,
+      cursor: 'pointer',
+      width: '100%',
+      boxSizing: 'border-box' as const,
+      minHeight: 38,
+      transition: `background var(--transition-fast), color var(--transition-fast)`,
+      backgroundColor: 'transparent',
+      border: 'none',
+      fontFamily: 'var(--font-sans)',
+    };
+
+    const inner = (
+      <div
+        style={style}
+        onClick={onClick}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = '#CBD5E1'; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#94A3B8'; }}
+      >
+        {icon}
+        {!collapsed && <span>{label}</span>}
+      </div>
+    );
+
+    if (collapsed) {
+      return <Tooltip key={label} content={label} position="right">{inner}</Tooltip>;
+    }
+    return inner;
+  }
+
   function renderItem(item: NavItem) {
     if (item.adminOnly && !admin) return null;
     const active = location.pathname === item.path;
@@ -158,7 +195,7 @@ export function Sidebar({
       display: 'flex',
       alignItems: 'center',
       gap: 12,
-      padding: collapsed ? '8px 0' : '8px 16px',
+      padding: collapsed ? '10px 0' : '8px 16px',
       justifyContent: collapsed ? 'center' : 'flex-start',
       cursor: 'pointer',
       borderLeft: active ? '3px solid #C0392B' : '3px solid transparent',
@@ -169,6 +206,9 @@ export function Sidebar({
       whiteSpace: 'nowrap',
       transition: `background var(--transition-fast), color var(--transition-fast)`,
       borderRadius: 0,
+      width: '100%',
+      boxSizing: 'border-box' as const,
+      minHeight: 38,
     };
 
     const hoverHandlers = active
@@ -278,7 +318,7 @@ export function Sidebar({
           if (visibleItems.length === 0) return null;
 
           return (
-            <div key={section.title}>
+            <div key={section.title} style={{ display: 'flex', flexDirection: 'column' }}>
               {idx > 0 && <div style={dividerStyle} />}
               {!collapsed && <div style={sectionLabelStyle}>{section.title}</div>}
               {collapsed && <div style={{ ...dividerStyle, margin: '6px 8px' }} />}
@@ -292,64 +332,24 @@ export function Sidebar({
       <div
         style={{
           borderTop: '1px solid rgba(255,255,255,0.06)',
-          padding: collapsed ? '8px 0' : '8px 12px',
+          padding: 8,
           display: 'flex',
           flexDirection: 'column',
-          gap: 2,
+          gap: 0,
         }}
       >
         {/* Theme toggle */}
-        {collapsed ? (
-          <Tooltip content={theme === 'dark' ? 'Light mode' : 'Dark mode'} position="right">
-            <div
-              onClick={toggleTheme}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '8px 0',
-                color: '#94A3B8',
-                cursor: 'pointer',
-              }}
-            >
-              {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-            </div>
-          </Tooltip>
-        ) : (
-          <div
-            onClick={toggleTheme}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              padding: '8px 4px',
-              color: '#94A3B8',
-              fontSize: 13,
-              cursor: 'pointer',
-            }}
-          >
-            {theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />}
-            <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
-          </div>
+        {renderFooterItem(
+          theme === 'dark' ? <Sun size={18} /> : <Moon size={18} />,
+          theme === 'dark' ? 'Light mode' : 'Dark mode',
+          toggleTheme,
         )}
 
         {/* Collapse toggle (shown in collapsed state) */}
-        {collapsed && (
-          <Tooltip content="Expand sidebar" position="right">
-            <div
-              onClick={onToggleCollapse}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '8px 0',
-                color: '#94A3B8',
-                cursor: 'pointer',
-              }}
-            >
-              <PanelLeft size={18} />
-            </div>
-          </Tooltip>
+        {collapsed && renderFooterItem(
+          <PanelLeft size={18} />,
+          'Expand sidebar',
+          onToggleCollapse,
         )}
 
         {/* User */}
@@ -358,21 +358,22 @@ export function Sidebar({
             display: 'flex',
             alignItems: 'center',
             gap: 10,
-            padding: collapsed ? '8px 0' : '8px 4px',
+            padding: '8px 16px',
             justifyContent: collapsed ? 'center' : 'flex-start',
+            minHeight: 40,
           }}
         >
           <div
             style={{
-              width: 32,
-              height: 32,
+              width: 28,
+              height: 28,
               borderRadius: '50%',
               backgroundColor: 'rgba(192,57,43,0.25)',
               color: '#F87171',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: 600,
               flexShrink: 0,
             }}
@@ -401,38 +402,10 @@ export function Sidebar({
         </div>
 
         {/* Logout */}
-        {collapsed ? (
-          <Tooltip content="Logout" position="right">
-            <div
-              onClick={onLogout}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '8px 0',
-                color: '#94A3B8',
-                cursor: 'pointer',
-              }}
-            >
-              <LogOut size={18} />
-            </div>
-          </Tooltip>
-        ) : (
-          <div
-            onClick={onLogout}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              padding: '8px 4px',
-              color: '#94A3B8',
-              fontSize: 13,
-              cursor: 'pointer',
-            }}
-          >
-            <LogOut size={18} />
-            <span>Logout</span>
-          </div>
+        {renderFooterItem(
+          <LogOut size={18} />,
+          'Logout',
+          onLogout,
         )}
       </div>
     </aside>

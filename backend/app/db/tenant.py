@@ -11,7 +11,7 @@ session variables for Row-Level Security enforcement.
 import logging
 from typing import AsyncGenerator
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,12 +25,13 @@ _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 
 
 async def _get_current_user_for_tenant(
+    request: Request,
     token: str = Depends(_oauth2_scheme),
     db: AsyncSession = Depends(get_db),
 ) -> User:
     """Lazy-load get_current_user to avoid circular import."""
     from app.api.v1.endpoints.auth import get_current_user
-    return await get_current_user(token=token, db=db)
+    return await get_current_user(request=request, token=token, db=db)
 
 
 async def get_tenant_db(

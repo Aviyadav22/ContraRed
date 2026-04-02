@@ -4,7 +4,8 @@ from scripts.playbooks._helpers import _r  # noqa: F401
 NDA_MUTUAL = {
     "name": "NDA — Mutual",
     "description": "Default playbook for mutual non-disclosure agreements. Covers confidentiality scope, term, permitted disclosures, return of information, remedies, and jurisdiction under Indian law.",
-    "category": "NDA",
+    "category": "nda",
+    "party_side": "neutral",
     "rules": [
         _r(
             clause_type="definition_of_confidential_information",
@@ -78,6 +79,10 @@ NDA_MUTUAL = {
             ai_verify=True,
             prompt="Check if there is a return/destruction clause. Flag if missing entirely. Note: it is acceptable to allow retention of archival copies required by law.",
             order=3,
+            risk_description="No return or destruction clause for confidential information upon termination",
+            unacceptable_signals=["no return obligation", "receiving party may retain all copies"],
+            acceptable_signals=["return or destroy within 15 days", "written certification of destruction"],
+            acceptable_position="Return or destroy all materials within 15 business days with written certification",
         ),
         _r(
             clause_type="non_solicitation_in_nda",
@@ -113,6 +118,10 @@ NDA_MUTUAL = {
             ai_verify=True,
             prompt="Check if remedies/injunctive relief is available to both parties (mutual) or only one party (one-sided). Flag if one-sided.",
             order=5,
+            risk_description="Injunctive relief available to only one party (one-sided remedies)",
+            unacceptable_signals=["only disclosing party entitled to injunctive relief"],
+            acceptable_signals=["either party", "mutual injunctive relief", "non-breaching party"],
+            acceptable_position="Mutual right to seek injunctive relief for any breach",
         ),
         _r(
             clause_type="governing_law_jurisdiction",
@@ -128,6 +137,10 @@ NDA_MUTUAL = {
             ai_verify=True,
             prompt="Check if governing law is Indian law. Flag if a foreign jurisdiction is specified. Note the jurisdiction city.",
             order=6,
+            risk_description="Governing law is not Indian law or jurisdiction is outside India",
+            unacceptable_signals=["laws of England", "laws of State of Delaware", "Singapore courts"],
+            acceptable_signals=["laws of India", "courts at Delhi", "courts at Mumbai", "courts at Bangalore"],
+            acceptable_position="Indian law with jurisdiction in a convenient Indian city",
         ),
     ],
 }

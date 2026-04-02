@@ -276,7 +276,11 @@ async def analytics_benchmark(
 
     from uuid import UUID as _UUID
     from app.services.benchmark_service import get_document_percentile
-    return await get_document_percentile(db, current_user.organization_id, _UUID(document_id))
+    try:
+        doc_uuid = _UUID(document_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid document_id format")
+    return await get_document_percentile(db, current_user.organization_id, doc_uuid)
 
 
 @router.post("/benchmarks/refresh")
@@ -361,7 +365,11 @@ async def get_report(
 
     from uuid import UUID as _UUID
     from app.services.report_service import get_report as _get_report
-    result = await _get_report(db, _UUID(report_id), current_user.organization_id)
+    try:
+        report_uuid = _UUID(report_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid report_id format")
+    result = await _get_report(db, report_uuid, current_user.organization_id)
     if not result:
         raise HTTPException(status_code=404, detail="Report not found")
     return result

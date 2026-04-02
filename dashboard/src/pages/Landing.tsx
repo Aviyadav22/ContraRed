@@ -211,7 +211,7 @@ export default function Landing() {
           paddingBottom: 120,
           textAlign: 'center',
           overflow: 'hidden',
-          background: 'linear-gradient(180deg, #0F172A 0%, #1E293B 100%)',
+          background: 'linear-gradient(180deg, #09090B 0%, #18181B 100%)',
         }}
       >
         {/* Subtle grid pattern */}

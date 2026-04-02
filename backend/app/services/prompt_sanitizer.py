@@ -80,7 +80,7 @@ def sanitize_for_prompt(text: str, max_length: int = 50000) -> str:
 
 def validate_contract_length(
     text: str,
-    max_chars: int = 200000,
+    max_chars: int = 1_000_000,
     min_chars: int = 10,
 ) -> Tuple[bool, str]:
     """Validate that contract text length is within acceptable bounds.

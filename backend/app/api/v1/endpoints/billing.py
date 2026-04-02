@@ -179,6 +179,8 @@ class VerifyPaymentRequest(BaseModel):
     razorpay_subscription_id: Optional[str] = None
     razorpay_payment_id: Optional[str] = None
     razorpay_signature: Optional[str] = None
+    # Plan selection (used when creating new subscription)
+    plan: Optional[str] = None  # "starter", "pro", "business", "enterprise"
     # Stripe fields
     stripe_session_id: Optional[str] = None
 
@@ -586,16 +588,21 @@ async def _verify_razorpay(request, current_user, db):
         subscription.current_period_end = datetime.now(timezone.utc) + timedelta(days=30)
         subscription.used_scans = 0
     else:
-        # No existing subscription — create one (H3 fix)
-        current_user.subscription_tier = SubscriptionTier.PRO
-        plan_name = "pro"
+        # No existing subscription — create one
+        # Determine actual plan from request body or default to pro
+        plan_from_request = (request.plan or "pro").lower()
+        plan_type_map = {"starter": PlanType.STARTER, "pro": PlanType.PRO, "business": PlanType.BUSINESS, "enterprise": PlanType.ENTERPRISE}
+        tier_type_map = {"starter": SubscriptionTier.STARTER, "pro": SubscriptionTier.PRO, "business": SubscriptionTier.BUSINESS, "enterprise": SubscriptionTier.ENTERPRISE}
+        selected_plan = plan_type_map.get(plan_from_request, PlanType.PRO)
+        current_user.subscription_tier = tier_type_map.get(plan_from_request, SubscriptionTier.PRO)
+        plan_name = plan_from_request if plan_from_request in plan_type_map else "pro"
         plan_info = get_plan_info(plan_name)
         new_sub = Subscription(
             organization_id=current_user.organization_id or current_user.id,
             razorpay_subscription_id=request.razorpay_subscription_id,
             gateway="razorpay",
             status=SubscriptionStatus.ACTIVE,
-            plan=PlanType.PRO,
+            plan=selected_plan,
             seats=plan_info["seats"],
             included_scans=plan_info["scans"],
             used_scans=0,

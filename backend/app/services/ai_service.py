@@ -285,7 +285,7 @@ class AIService:
                 prompt = user
                 gen_client = client
 
-            # Run in thread pool since Gemini SDK is sync, with 60s timeout
+            # Run in thread pool since Gemini SDK is sync, with 30s timeout
             loop = asyncio.get_running_loop()
             response = await asyncio.wait_for(
                 loop.run_in_executor(
@@ -298,7 +298,7 @@ class AIService:
                         }
                     )
                 ),
-                timeout=60.0,
+                timeout=30.0,
             )
             
             # Try to get text from response, handle various cases
@@ -359,7 +359,7 @@ class AIService:
                     max_tokens=max_tokens,
                     temperature=0.3,
                 ),
-                timeout=60.0,
+                timeout=30.0,
             )
             
             text = response.choices[0].message.content.strip()
@@ -454,7 +454,7 @@ class AIService:
         green_count = sum(1 for r in risks_found if r.risk_level.value == "GREEN")
         
         risk_list = "\n".join([
-            f"- {r.rule_name} ({r.risk_level.value}): {r.match_text[:100]}..."
+            f"- {sanitize_for_prompt(r.rule_name, max_length=200)} ({r.risk_level.value}): {sanitize_for_prompt(r.match_text[:100], max_length=100)}..."
             for r in risks_found[:10]  # Top 10 risks for context
         ])
         
@@ -514,10 +514,10 @@ Provide an executive summary following the specified format:"""
             return self._fallback_fix(primary_position), 0
         
         user_prompt = PLAYBOOK_AWARE_PROMPT.format(
-            playbook_context=playbook_context,
-            primary_position=primary_position,
-            fallback_position=fallback_position or "None specified",
-            clause_text=clause_text
+            playbook_context=sanitize_for_prompt(playbook_context, max_length=5000),
+            primary_position=sanitize_for_prompt(primary_position, max_length=1000),
+            fallback_position=sanitize_for_prompt(fallback_position or "None specified", max_length=1000),
+            clause_text=sanitize_for_prompt(clause_text, max_length=10000),
         )
         
         if self._use_gemini:

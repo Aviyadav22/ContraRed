@@ -196,8 +196,8 @@ export default function Dashboard() {
                 }}
             >
                 {quickActions.map(action => (
-                    <Link key={action.to} to={action.to} style={{ textDecoration: 'none' }}>
-                        <Card variant="interactive" padding="spacious">
+                    <Link key={action.to} to={action.to} style={{ textDecoration: 'none', display: 'flex' }}>
+                        <Card variant="interactive" padding="spacious" style={{ flex: 1 }}>
                             <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
                                 <div style={{ color: 'var(--accent-text)', marginTop: 2, flexShrink: 0 }}>
                                     {action.icon}

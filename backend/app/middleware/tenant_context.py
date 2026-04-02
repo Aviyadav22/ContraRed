@@ -121,8 +121,16 @@ async def set_tenant_context(
 
 
 async def clear_tenant_context(db):
-    """Clear PostgreSQL session variables (for connection recycling)."""
+    """Clear PostgreSQL session variables (for connection recycling).
+
+    Only reset the specific variables we set, not ALL session config,
+    to avoid interfering with connection pool settings or other state.
+    """
     try:
-        await db.execute(text("RESET ALL"))
+        await db.execute(text(
+            "SELECT set_config('app.current_user_id', '', true), "
+            "set_config('app.current_org_id', '', true), "
+            "set_config('app.is_super_admin', 'false', true)"
+        ))
     except Exception:
         pass

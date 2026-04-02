@@ -19,10 +19,13 @@ from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5433/contrared")
+DATABASE_URL = os.getenv("DATABASE_URL")
+if not DATABASE_URL:
+    print("ERROR: DATABASE_URL environment variable is required")
+    sys.exit(1)
 
 # Admin user (from Supabase). Org is NULL for system-level default playbooks.
-ADMIN_USER_ID = "19f4b5b2-8fc3-4e75-bbae-6a60ef225b0e"
+ADMIN_USER_ID = os.getenv("ADMIN_USER_ID", "19f4b5b2-8fc3-4e75-bbae-6a60ef225b0e")
 ORG_ID = None  # System defaults have no org — visible to all
 
 
@@ -81,8 +84,10 @@ async def seed():
     if "supabase" in DATABASE_URL:
         import ssl as _ssl
         _ctx = _ssl.create_default_context()
-        _ctx.check_hostname = False
-        _ctx.verify_mode = _ssl.CERT_NONE
+        # Use proper cert verification — only disable for local testing
+        if os.getenv("DEBUG", "false").lower() == "true":
+            _ctx.check_hostname = False
+            _ctx.verify_mode = _ssl.CERT_NONE
         connect_args["ssl"] = _ctx
         if ":6543/" in DATABASE_URL:
             connect_args["statement_cache_size"] = 0

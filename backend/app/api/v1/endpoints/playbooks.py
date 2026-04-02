@@ -210,8 +210,8 @@ class ReorderRequest(BaseModel):
 
 @router.get("/", response_model=PlaybookListResponse)
 async def list_playbooks(
-    skip: int = 0,
-    limit: int = Query(50, le=200),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -409,8 +409,8 @@ async def browse_marketplace(
     category: Optional[str] = None,
     search: Optional[str] = Query(None, max_length=200, description="Search by playbook name"),
     sort_by: Optional[str] = Query("rating", pattern=r"^(rating|downloads|name)$"),
-    skip: int = 0,
-    limit: int = Query(20, le=100),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(20, ge=1, le=100),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -430,7 +430,8 @@ async def browse_marketplace(
 
     # Search by name
     if search:
-        base_query = base_query.where(Playbook.name.ilike(f"%{search}%"))
+        escaped_search = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        base_query = base_query.where(Playbook.name.ilike(f"%{escaped_search}%"))
 
     # Total count
     count_query = select(func.count()).select_from(base_query.subquery())
@@ -1457,9 +1458,14 @@ async def add_override(
     if not cond_result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Condition not found in this playbook")
 
+    try:
+        rule_id_val = UUID(data.rule_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid rule_id format")
+
     override = PlaybookRuleOverride(
         condition_id=condition_id,
-        rule_id=UUID(data.rule_id),
+        rule_id=rule_id_val,
         override_risk_level=data.override_risk_level,
         override_position_text=data.override_position_text,
         override_is_deal_breaker=data.override_is_deal_breaker,
@@ -1574,10 +1580,19 @@ async def create_dependency(
     """Create a cross-clause dependency."""
     await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
 
+    try:
+        source_rule_id_val = UUID(data.source_rule_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid source_rule_id format")
+    try:
+        target_rule_id_val = UUID(data.target_rule_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid target_rule_id format")
+
     dep = PlaybookRuleDependency(
         playbook_id=playbook_id,
-        source_rule_id=UUID(data.source_rule_id),
-        target_rule_id=UUID(data.target_rule_id),
+        source_rule_id=source_rule_id_val,
+        target_rule_id=target_rule_id_val,
         trigger_condition=data.trigger_condition,
         effect=data.effect,
         effect_params=data.effect_params,

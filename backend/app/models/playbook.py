@@ -67,7 +67,7 @@ class PlaybookRule(Base):
     priority: Mapped[int] = mapped_column(Integer, default=50)
     category: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     subcategory: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    tags: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True, default=list)
+    tags: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True, default=list)
 
     # P2 #29: AI-primary detection
     detection_mode: Mapped[str] = mapped_column(String(30), default="keywords_only")

@@ -27,6 +27,8 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = ""
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 10
 
     @field_validator("DATABASE_URL", mode="before")
     @classmethod
@@ -148,13 +150,13 @@ class Settings(BaseSettings):
     # Contract data must not transit public Google AI endpoints.
     # Vertex AI provides: project-level IAM, audit logging, data residency.
     VERTEX_PROJECT_ID: str = ""
-    VERTEX_LOCATION: str = "asia-south1"  # India data residency
+    VERTEX_LOCATION: str = "us-central1"  # Gemini models available here
 
     # Gemini model names (used via Vertex AI, NOT consumer API)
-    GEMINI_MODEL: str = "gemini-2.5-flash-lite"              # Fast+cheap for subtasks
-    GEMINI_ANALYSIS_MODEL: str = "gemini-2.5-flash"           # Pro model for full contract analysis
-    GEMINI_SCOUT_MODEL: str = "gemini-2.5-flash-lite"
-    GEMINI_SURGEON_MODEL: str = "gemini-2.5-flash"
+    GEMINI_MODEL: str = "gemini-2.5-pro"                     # Pro model for all AI tasks
+    GEMINI_ANALYSIS_MODEL: str = "gemini-2.5-pro"            # Pro model for full contract analysis
+    GEMINI_SCOUT_MODEL: str = "gemini-2.5-flash"             # Flash for fast clause extraction
+    GEMINI_SURGEON_MODEL: str = "gemini-2.5-pro"             # Pro for fix generation (quality matters)
 
     # AI Provider selection: "gemini" (via Vertex AI) or "azure"
     AI_PROVIDER: str = "gemini"
@@ -179,9 +181,9 @@ class Settings(BaseSettings):
                     "Set ENCRYPTION_KEY for production use."
                 )
             else:
-                _config_logger.warning(
-                    "ENCRYPTION_KEY is not set in production. Field-level encryption is disabled. "
-                    "Generate one with: python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\""
+                raise ValueError(
+                    "ENCRYPTION_KEY is required in production. "
+                    "Generate one with: python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'"
                 )
         return v
 
@@ -205,3 +207,17 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# Production safety checks (run at import time)
+if not settings.DEBUG:
+    _all_localhost = all("localhost" in origin for origin in settings.CORS_ORIGINS)
+    if _all_localhost and settings.CORS_ORIGINS:
+        _config_logger.critical(
+            "CORS_ORIGINS contains only localhost origins in production (DEBUG=False). "
+            "Set CORS_ORIGINS to include your production domains."
+        )
+    if "localhost" in settings.FRONTEND_URL:
+        _config_logger.critical(
+            "FRONTEND_URL is set to localhost in production (DEBUG=False). "
+            "Password reset emails will link to localhost. Set FRONTEND_URL to your production URL."
+        )

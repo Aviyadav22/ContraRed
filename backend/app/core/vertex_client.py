@@ -37,8 +37,19 @@ def _setup_credentials() -> None:
     On PaaS platforms like Render, the service account JSON is pasted
     directly into an env var. The Google SDK expects a *file path*, so
     we write the JSON to a temp file and update the env var to point to it.
+
+    Also loads GOOGLE_APPLICATION_CREDENTIALS from .env if not already
+    set in the OS environment (pydantic-settings doesn't export to os.environ).
     """
     creds = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+    if not creds:
+        # Try loading from .env manually since pydantic-settings won't set os.environ
+        from dotenv import dotenv_values
+        env_vals = dotenv_values(os.path.join(os.path.dirname(__file__), "..", "..", ".env"))
+        creds = env_vals.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+        if creds:
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = creds
+            logger.info("Loaded GOOGLE_APPLICATION_CREDENTIALS from .env (length=%d)", len(creds))
     if not creds:
         return
 
@@ -59,11 +70,18 @@ def _setup_credentials() -> None:
 
     fd, path = tempfile.mkstemp(suffix=".json", prefix="gcp_sa_")
     try:
+        os.fchmod(fd, 0o600)  # Owner read/write only
+    except (AttributeError, OSError):
+        pass  # Windows doesn't support fchmod
+    try:
         with os.fdopen(fd, "w") as f:
             # Re-serialize the parsed dict to ensure clean JSON with proper escaping
             json.dump(creds_dict, f)
         os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = path
         logger.info("Wrote GCP service account credentials to temp file")
+        # Register cleanup so the temp file is removed on process exit
+        import atexit
+        atexit.register(lambda p=path: os.unlink(p) if os.path.exists(p) else None)
     except Exception as exc:
         logger.error("Failed to write credentials temp file: %s", exc)
         try:
