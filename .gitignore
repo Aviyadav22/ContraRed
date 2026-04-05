@@ -6,6 +6,7 @@
 *.pem
 *.cert
 sa_key.json
+account_a.json
 
 # Python
 __pycache__/
