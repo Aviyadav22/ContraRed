@@ -23,25 +23,42 @@ export default function CounterReveal({
   const [value, setValue] = useState(0)
 
   useEffect(() => {
-    if (!ref.current) return
+    const el = ref.current
+    if (!el) return
 
     const obj = { val: 0 }
+    let trigger: ScrollTrigger | null = null
 
-    const trigger = ScrollTrigger.create({
-      trigger: ref.current,
-      start: 'top 85%',
-      onEnter: () => {
-        gsap.to(obj, {
-          val: target,
-          duration,
-          ease: 'expo.out',
-          onUpdate: () => setValue(Math.round(obj.val)),
+    function startCount() {
+      gsap.to(obj, {
+        val: target,
+        duration,
+        ease: 'expo.out',
+        onUpdate: () => setValue(Math.round(obj.val)),
+      })
+    }
+
+    const raf = requestAnimationFrame(() => {
+      const rect = el.getBoundingClientRect()
+      if (rect.top > window.innerHeight) {
+        // Below fold — animate on scroll
+        trigger = ScrollTrigger.create({
+          trigger: el,
+          start: 'top 85%',
+          onEnter: startCount,
+          once: true,
         })
-      },
-      once: true,
+      } else {
+        // Already visible — start counting immediately
+        startCount()
+      }
     })
 
-    return () => trigger.kill()
+    return () => {
+      cancelAnimationFrame(raf)
+      trigger?.kill()
+      gsap.killTweensOf(obj)
+    }
   }, [target, duration])
 
   return (

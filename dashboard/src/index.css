@@ -140,6 +140,12 @@
     background: var(--accent-glow);
   }
 
+  /* Fix select/option dropdown colors in dark mode */
+  select, select option {
+    background-color: var(--bg-surface);
+    color: var(--text-primary);
+  }
+
   :focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;

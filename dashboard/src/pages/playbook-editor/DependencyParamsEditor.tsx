@@ -19,9 +19,9 @@ export function DependencyParamsEditor({ effect, value, onChange }: DependencyPa
   return (
     <div className="space-y-3">
       <div>
-        <label className="block text-sm font-medium text-gray-700">Override Risk Level</label>
+        <label className="block text-sm font-medium text-[var(--text-primary)]">Override Risk Level</label>
         <select
-          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
           value={parsed.risk_level || ''}
           onChange={e => updateField('risk_level', e.target.value)}
         >
@@ -32,9 +32,9 @@ export function DependencyParamsEditor({ effect, value, onChange }: DependencyPa
         </select>
       </div>
       <div>
-        <label className="block text-sm font-medium text-gray-700">Override Position Text</label>
+        <label className="block text-sm font-medium text-[var(--text-primary)]">Override Position Text</label>
         <textarea
-          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
           rows={2}
           value={parsed.position_text || ''}
           onChange={e => updateField('position_text', e.target.value)}
@@ -47,9 +47,9 @@ export function DependencyParamsEditor({ effect, value, onChange }: DependencyPa
           id="dep-suppress"
           checked={parsed.suppress || false}
           onChange={e => updateField('suppress', e.target.checked)}
-          className="rounded border-gray-300"
+          className="rounded border-[var(--border)]"
         />
-        <label htmlFor="dep-suppress" className="text-sm text-gray-700">Suppress this rule when dependency triggers</label>
+        <label htmlFor="dep-suppress" className="text-sm text-[var(--text-primary)]">Suppress this rule when dependency triggers</label>
       </div>
     </div>
   );

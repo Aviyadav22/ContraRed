@@ -4,7 +4,7 @@ API V1 Router - Aggregates all endpoint routers.
 
 from fastapi import APIRouter
 
-from app.api.v1.endpoints import auth, users, documents, playbooks, billing, audit, team, clauses, templates, analytics, sso, feedback, jurisdictions, agent, drafting
+from app.api.v1.endpoints import auth, users, documents, playbooks, billing, audit, team, clauses, templates, analytics, sso, feedback, jurisdictions, agent, drafting, consent, rights, grievances, dpdp_compliance
 
 api_router = APIRouter()
 
@@ -111,4 +111,32 @@ api_router.include_router(
     drafting.router,
     prefix="/drafting",
     tags=["Contract Drafting"]
+)
+
+# Consent Management (DPDP Act)
+api_router.include_router(
+    consent.router,
+    prefix="/consent",
+    tags=["Consent Management"]
+)
+
+# Data Principal Rights (DPDP Act Sections 11-14)
+api_router.include_router(
+    rights.router,
+    prefix="/rights",
+    tags=["Data Principal Rights"]
+)
+
+# Grievance Redressal (DPDP Act Section 13)
+api_router.include_router(
+    grievances.router,
+    prefix="/grievances",
+    tags=["Grievance Redressal"]
+)
+
+# DPDP Compliance Command Center (Agentic AI)
+api_router.include_router(
+    dpdp_compliance.router,
+    prefix="/dpdp",
+    tags=["DPDP Compliance"]
 )

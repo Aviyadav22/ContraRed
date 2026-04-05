@@ -17,9 +17,9 @@ export function ConditionValueEditor({ conditionType, value, onChange }: Conditi
     case 'counterparty_type':
       return (
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">Counterparty Type</label>
+          <label className="block text-sm font-medium text-[var(--text-primary)]">Counterparty Type</label>
           <select
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
             value={parsed.value || ''}
             onChange={e => updateField('value', e.target.value)}
           >
@@ -37,20 +37,20 @@ export function ConditionValueEditor({ conditionType, value, onChange }: Conditi
     case 'deal_size':
       return (
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">Deal Size Range</label>
+          <label className="block text-sm font-medium text-[var(--text-primary)]">Deal Size Range</label>
           <div className="flex gap-2 items-center">
             <input
               type="number"
               placeholder="Min ($)"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
               value={parsed.min || ''}
               onChange={e => updateField('min', Number(e.target.value) || 0)}
             />
-            <span className="text-gray-500">to</span>
+            <span className="text-[var(--text-muted)]">to</span>
             <input
               type="number"
               placeholder="Max ($)"
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+              className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
               value={parsed.max || ''}
               onChange={e => updateField('max', Number(e.target.value) || 0)}
             />
@@ -61,9 +61,9 @@ export function ConditionValueEditor({ conditionType, value, onChange }: Conditi
     case 'jurisdiction':
       return (
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">Jurisdiction</label>
+          <label className="block text-sm font-medium text-[var(--text-primary)]">Jurisdiction</label>
           <select
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
             value={parsed.value || ''}
             onChange={e => updateField('value', e.target.value)}
           >
@@ -88,9 +88,9 @@ export function ConditionValueEditor({ conditionType, value, onChange }: Conditi
     case 'contract_side':
       return (
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">Contract Side</label>
+          <label className="block text-sm font-medium text-[var(--text-primary)]">Contract Side</label>
           <select
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
             value={parsed.value || ''}
             onChange={e => updateField('value', e.target.value)}
           >
@@ -105,9 +105,9 @@ export function ConditionValueEditor({ conditionType, value, onChange }: Conditi
     default:
       return (
         <div className="space-y-2">
-          <label className="block text-sm font-medium text-gray-700">Custom Value (JSON)</label>
+          <label className="block text-sm font-medium text-[var(--text-primary)]">Custom Value (JSON)</label>
           <textarea
-            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-mono"
+            className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-mono"
             rows={3}
             value={value}
             onChange={e => onChange(e.target.value)}

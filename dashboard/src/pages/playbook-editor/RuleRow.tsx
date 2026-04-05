@@ -33,7 +33,7 @@ export function RuleRow({
     return (
         <>
             <tr
-                className={`border-b border-slate-100 cursor-pointer hover:bg-slate-50 transition-colors ${isExpanded ? 'bg-slate-50' : ''}`}
+                className={`border-b border-[var(--border)] cursor-pointer hover:bg-[var(--bg-surface)] transition-colors ${isExpanded ? 'bg-[var(--bg-surface)]' : ''}`}
                 onClick={onToggleExpand}
             >
                 <td className="px-6 py-4">
@@ -44,7 +44,7 @@ export function RuleRow({
                         >
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                         </svg>
-                        <span className="font-semibold text-slate-900 text-sm">{rule.clause_type}</span>
+                        <span className="font-semibold text-[var(--text-primary)] text-sm">{rule.clause_type}</span>
                         {rule.is_deal_breaker && (
                             <span className="ml-1 text-[11px] font-bold bg-red-50 text-red-600 px-1.5 py-0.5 rounded">
                                 DEAL BREAKER
@@ -66,14 +66,14 @@ export function RuleRow({
                         {riskLevel.label}
                     </span>
                 </td>
-                <td className="px-6 py-4 text-[13px] text-slate-500">{rule.match_type}</td>
+                <td className="px-6 py-4 text-[13px] text-[var(--text-muted)]">{rule.match_type}</td>
                 <td className="px-6 py-4">
                     <div className="flex flex-wrap gap-1 max-w-[260px]">
                         {rule.detection_patterns.slice(0, 3).map((p, i) => (
-                            <span key={i} className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded">{p}</span>
+                            <span key={i} className="text-xs bg-[var(--bg-elevated)] text-[var(--text-secondary)] px-2 py-0.5 rounded">{p}</span>
                         ))}
                         {rule.detection_patterns.length > 3 && (
-                            <span className="text-xs text-slate-400">+{rule.detection_patterns.length - 3} more</span>
+                            <span className="text-xs text-[var(--text-muted)]">+{rule.detection_patterns.length - 3} more</span>
                         )}
                     </div>
                 </td>
@@ -97,12 +97,12 @@ export function RuleRow({
             {isExpanded && (
                 <tr>
                     <td colSpan={5} className="px-0 py-0">
-                        <div className="bg-slate-50 border-b border-slate-200 px-10 py-6">
-                            <h4 className="text-sm font-bold text-slate-900 mb-4">Negotiation Tiers</h4>
+                        <div className="bg-[var(--bg-surface)] border-b border-[var(--border)] px-10 py-6">
+                            <h4 className="text-sm font-bold text-[var(--text-primary)] mb-4">Negotiation Tiers</h4>
                             {tiersLoading ? (
                                 <div className="flex items-center gap-2 py-4">
-                                    <div className="w-4 h-4 border-2 border-slate-200 border-t-slate-900 rounded-full animate-spin" />
-                                    <span className="text-sm text-slate-500">Loading tiers...</span>
+                                    <div className="w-4 h-4 border-2 border-[var(--border)] border-t-[var(--accent)] rounded-full animate-spin" />
+                                    <span className="text-sm text-[var(--text-muted)]">Loading tiers...</span>
                                 </div>
                             ) : (
                                 <>
@@ -117,13 +117,13 @@ export function RuleRow({
                                                 4: 'border-l-red-500',
                                             };
                                             return (
-                                                <div key={level} className={`bg-white rounded-lg border border-slate-200 border-l-4 ${tierColors[level]} p-4`}>
+                                                <div key={level} className={`bg-[var(--bg-surface)] rounded-lg border border-[var(--border)] border-l-4 ${tierColors[level]} p-4`}>
                                                     <div className="flex items-center justify-between mb-3">
-                                                        <span className="text-[13px] font-bold text-slate-900">{tierLabel}</span>
+                                                        <span className="text-[13px] font-bold text-[var(--text-primary)]">{tierLabel}</span>
                                                         <select
                                                             value={draft.risk_level_at_tier}
                                                             onChange={(e) => onTierChange(level, 'risk_level_at_tier', e.target.value)}
-                                                            className="px-2 py-1 text-xs rounded border border-slate-200 text-slate-700 outline-none bg-white focus:ring-1 focus:ring-slate-900"
+                                                            className="px-2 py-1 text-xs rounded border border-[var(--border)] text-[var(--text-primary)] outline-none bg-[var(--bg-surface)] focus:ring-1 focus:ring-[var(--accent)]"
                                                             onClick={(e) => e.stopPropagation()}
                                                         >
                                                             {RISK_LEVELS.map(rl => (
@@ -132,7 +132,7 @@ export function RuleRow({
                                                         </select>
                                                     </div>
                                                     <div className="mb-3">
-                                                        <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Position Text</label>
+                                                        <label className="block text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wide mb-1">Position Text</label>
                                                         <textarea
                                                             value={draft.position_text}
                                                             onChange={(e) => onTierChange(level, 'position_text', e.target.value)}
@@ -142,7 +142,7 @@ export function RuleRow({
                                                         />
                                                     </div>
                                                     <div>
-                                                        <label className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">Guidance Notes</label>
+                                                        <label className="block text-[11px] font-semibold text-[var(--text-muted)] uppercase tracking-wide mb-1">Guidance Notes</label>
                                                         <textarea
                                                             value={draft.guidance_notes}
                                                             onChange={(e) => onTierChange(level, 'guidance_notes', e.target.value)}
@@ -159,7 +159,7 @@ export function RuleRow({
                                         <button
                                             onClick={(e) => { e.stopPropagation(); onSaveTiers(); }}
                                             disabled={tiersSaving}
-                                            className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors disabled:opacity-50"
+                                            className="px-5 py-2.5 text-sm font-semibold text-white bg-[var(--accent)] rounded-lg hover:bg-[var(--accent-hover)] transition-colors disabled:opacity-50"
                                         >
                                             {tiersSaving ? 'Saving...' : 'Save Tiers'}
                                         </button>

@@ -6,6 +6,7 @@ import ErrorBoundary from '@/components/ErrorBoundary';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { ToastProvider } from '@/contexts/ToastContext';
 import { ToastContainer } from '@/components/ui/Toast';
+import { ConsentBanner } from '@/components/ConsentBanner';
 
 const Landing = React.lazy(() => import('@/pages/Landing'));
 const Login = React.lazy(() => import('@/pages/Login'));
@@ -18,7 +19,6 @@ const AuditLogs = React.lazy(() => import('@/pages/AuditLogs'));
 const Team = React.lazy(() => import('@/pages/Team'));
 const NotFound = React.lazy(() => import('@/pages/NotFound'));
 const ClauseLibrary = React.lazy(() => import('@/pages/ClauseLibrary'));
-const Templates = React.lazy(() => import('@/pages/Templates'));
 const Analytics = React.lazy(() => import('@/pages/Analytics'));
 const Compare = React.lazy(() => import('@/pages/Compare'));
 const BatchUpload = React.lazy(() => import('@/pages/BatchUpload'));
@@ -27,6 +27,10 @@ const Reports = React.lazy(() => import('@/pages/Reports'));
 const Marketplace = React.lazy(() => import('@/pages/Marketplace'));
 const ForgotPassword = React.lazy(() => import('@/pages/ForgotPassword'));
 const Drafting = React.lazy(() => import('@/pages/drafting'));
+const ConsentPreferences = React.lazy(() => import('@/pages/ConsentPreferences'));
+const DataRights = React.lazy(() => import('@/pages/DataRights'));
+const ComplianceDashboard = React.lazy(() => import('@/pages/ComplianceDashboard'));
+const DPDPCommandCenter = React.lazy(() => import('@/pages/DPDPCommandCenter'));
 
 
 const queryClient = new QueryClient({
@@ -122,10 +126,11 @@ export default function App() {
             <Route path="/drafting" element={<ProtectedRoute><Drafting /></ProtectedRoute>} />
             <Route path="/playbooks" element={<ProtectedRoute><Playbooks /></ProtectedRoute>} />
             <Route path="/clause-library" element={<ProtectedRoute><ClauseLibrary /></ProtectedRoute>} />
-            <Route path="/templates" element={<ProtectedRoute><Templates /></ProtectedRoute>} />
             <Route path="/compare" element={<ProtectedRoute><Compare /></ProtectedRoute>} />
             <Route path="/batch-upload" element={<ProtectedRoute><BatchUpload /></ProtectedRoute>} />
             <Route path="/audit-logs" element={<ProtectedRoute><AuditLogs /></ProtectedRoute>} />
+            <Route path="/settings/privacy" element={<ProtectedRoute><ConsentPreferences /></ProtectedRoute>} />
+            <Route path="/settings/data-rights" element={<ProtectedRoute><DataRights /></ProtectedRoute>} />
             <Route path="/marketplace" element={<ProtectedRoute><Marketplace /></ProtectedRoute>} />
 
             {/* Admin-only routes */}
@@ -135,10 +140,14 @@ export default function App() {
             <Route path="/team" element={<AdminRoute><Team /></AdminRoute>} />
             <Route path="/executive" element={<AdminRoute><Executive /></AdminRoute>} />
             <Route path="/reports" element={<AdminRoute><Reports /></AdminRoute>} />
+            <Route path="/compliance" element={<AdminRoute><ComplianceDashboard /></AdminRoute>} />
+            <Route path="/dpdp" element={<ProtectedRoute><DPDPCommandCenter /></ProtectedRoute>} />
 
             {/* Catch-all 404 */}
             <Route path="*" element={<NotFound />} />
           </Routes>
+          {/* DPDP consent banner — shown when AI consent not yet granted */}
+          {isAuthenticated() && <ConsentBanner />}
           </ErrorBoundary>
         </Suspense>
       </BrowserRouter>

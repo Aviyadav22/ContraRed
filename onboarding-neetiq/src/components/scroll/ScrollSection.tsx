@@ -22,6 +22,10 @@ export default function ScrollSection({
   onLeave,
 }: ScrollSectionProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const onEnterRef = useRef(onEnter)
+  const onLeaveRef = useRef(onLeave)
+  onEnterRef.current = onEnter
+  onLeaveRef.current = onLeave
 
   useEffect(() => {
     if (!ref.current) return
@@ -32,37 +36,43 @@ export default function ScrollSection({
       end: pin ? '+=100%' : 'bottom 20%',
       pin: pin ? ref.current : false,
       scrub: scrub,
-      onEnter,
-      onLeave,
+      onEnter: () => onEnterRef.current?.(),
+      onLeave: () => onLeaveRef.current?.(),
     })
 
-    // Animate children in
-    const revealChildren = ref.current.querySelectorAll('.reveal-child')
+    // Animate .reveal-child elements (only if below the fold)
+    const el = ref.current
+    const revealChildren = el.querySelectorAll('.reveal-child')
+    let revealTrigger: ScrollTrigger | null = null
+
+    let raf: number | null = null
     if (revealChildren.length > 0) {
-      gsap.fromTo(
-        revealChildren,
-        { opacity: 0, y: 30 },
-        {
-          opacity: 1,
-          y: 0,
-          duration: 0.6,
-          stagger: 0.12,
-          ease: 'power2.out',
-          scrollTrigger: {
-            trigger: ref.current,
+      raf = requestAnimationFrame(() => {
+        const rect = el.getBoundingClientRect()
+        if (rect.top > window.innerHeight) {
+          gsap.set(revealChildren, { opacity: 0, y: 30 })
+          revealTrigger = ScrollTrigger.create({
+            trigger: el,
             start: 'top 80%',
-          },
+            once: true,
+            onEnter: () => {
+              gsap.to(revealChildren, { opacity: 1, y: 0, duration: 0.6, stagger: 0.12, ease: 'power2.out' })
+            },
+          })
         }
-      )
+      })
     }
 
     return () => {
+      if (raf) cancelAnimationFrame(raf)
       trigger.kill()
+      revealTrigger?.kill()
+      revealChildren.forEach((c) => gsap.killTweensOf(c))
     }
-  }, [pin, scrub, onEnter, onLeave])
+  }, [pin, scrub])
 
   return (
-    <div ref={ref} className={`min-h-[50vh] ${className}`}>
+    <div ref={ref} className={className}>
       {children}
     </div>
   )

@@ -81,6 +81,13 @@ class ErrorResponse(BaseModel):
     detail: Optional[str] = None
 
 
+class ParagraphData(BaseModel):
+    """Paragraph extracted by the Word Add-in with index and style."""
+    index: int
+    text: str
+    style: str = ""
+
+
 class AnalyzeRequest(BaseModel):
     """Request to analyze document text."""
     text: str = Field(..., min_length=1, max_length=500000)
@@ -89,6 +96,7 @@ class AnalyzeRequest(BaseModel):
     party_side: Optional[str] = Field(default="buyer", pattern=r"^(buyer|seller|neutral)$")
     compliance_layers: List[str] = Field(default_factory=list, description="Compliance layer codes to activate, e.g. ['dpdp']")
     jurisdiction: Optional[str] = Field(default=None, description="Jurisdiction code override, e.g. 'IN', 'CA-US'. If omitted, auto-detected from contract text.")
+    paragraphs: Optional[List[ParagraphData]] = Field(default=None, description="Paragraph-indexed text from Word Add-in for precise targeting. When provided, enables paragraph_index in response.")
 
 
 class RedlineItem(BaseModel):
@@ -112,6 +120,7 @@ class RedlineItem(BaseModel):
     cross_references: Optional[List[str]] = None
     statutory_references: Optional[List[str]] = None  # Statute section citations (source trail)
     paragraph_hash: Optional[str] = None
+    paragraph_index: Optional[int] = None  # Paragraph index from Word Add-in for precise targeting
 
 
 class AnalysisResult(BaseModel):
@@ -469,6 +478,38 @@ async def analyze_document(
         await db.refresh(doc)
         doc_id = str(doc.id)
 
+        # Build paragraph lookup for paragraph_index resolution
+        paragraph_texts = None
+        if body.paragraphs:
+            paragraph_texts = [(p.index, p.text) for p in body.paragraphs]
+
+        def _resolve_paragraph_index(clause_text: str) -> Optional[int]:
+            """Find the paragraph index that best matches the redline's clause text."""
+            if not paragraph_texts or not clause_text:
+                return None
+            clause_prefix = clause_text[:100]
+            # Try exact substring match — clause starts in paragraph
+            for idx, ptext in paragraph_texts:
+                if len(ptext) < 20:
+                    continue  # Skip very short paragraphs to avoid false positives
+                if clause_prefix in ptext:
+                    return idx
+            # Try: paragraph text starts the clause (multi-paragraph clauses)
+            for idx, ptext in paragraph_texts:
+                if len(ptext) < 20:
+                    continue
+                if ptext[:80] in clause_text:
+                    return idx
+            # Fallback: normalized match (strip extra whitespace)
+            norm_clause = " ".join(clause_text.split())[:100]
+            for idx, ptext in paragraph_texts:
+                if len(ptext) < 20:
+                    continue
+                norm_p = " ".join(ptext.split())
+                if norm_clause in norm_p or norm_p[:80] in norm_clause:
+                    return idx
+            return None
+
         # Build response — map FinalRedline to RedlineItem
         redline_items = [
             RedlineItem(
@@ -480,6 +521,8 @@ async def analyze_document(
                 explanation=r.explanation,
                 recommendation=r.recommendation,
                 suggested_fix=getattr(r, 'suggested_fix', None),
+                fix_edits=r.fix_edits if r.fix_edits else None,
+                fix_reasoning=r.fix_reasoning if r.fix_reasoning else None,
                 redline_type=r.redline_type,
                 confidence=round(r.confidence.score, 3),
                 confidence_level=r.confidence.level.value,
@@ -487,6 +530,7 @@ async def analyze_document(
                 verification_status=r.verification_status,
                 is_deal_breaker=r.is_deal_breaker,
                 cross_references=r.cross_references or None,
+                paragraph_index=_resolve_paragraph_index(r.verified_text or r.original_text),
             )
             for r in pipeline_result.redlines
         ]
@@ -848,6 +892,8 @@ class BatchFileStatus(BaseModel):
     document_id: Optional[str] = None
     risk_summary: Optional[dict] = None
     error: Optional[str] = None
+    ai_fallback: Optional[bool] = None  # True if AI failed and fell back to rule-engine
+    executive_summary: Optional[List[str]] = None
 
 
 class BatchStatusResponse(BaseModel):
@@ -1099,7 +1145,7 @@ async def _process_batch(
     compliance_layer_codes: Optional[List[str]] = None,
 ):
     """Background task to process all files in a batch concurrently."""
-    semaphore = asyncio.Semaphore(3)  # Max 3 concurrent analyses
+    semaphore = asyncio.Semaphore(1)  # Sequential to avoid Vertex AI rate limits
 
     # Load playbook rules once if playbook_id is given
     playbook_rules = None
@@ -1193,6 +1239,26 @@ async def _process_batch(
                             user_email="batch", organization_id=None,
                             details=json.dumps({"batch_id": batch_id, "file_index": idx}),
                         )
+                        await db_session.flush()
+
+                        # Persist individual findings to DocumentRisk table
+                        for redline in pipeline_result.redlines:
+                            risk = DocumentRisk(
+                                document_id=batch_doc.id,
+                                rule_name=getattr(redline, 'rule_name', None),
+                                clause_text=getattr(redline, 'verified_text', None) or getattr(redline, 'original_text', '') or "",
+                                clause_type=getattr(redline, 'clause_type', None),
+                                redline_type=getattr(redline, 'redline_type', None),
+                                risk_level=DBRiskLevel(redline.risk_level.lower()) if redline.risk_level else DBRiskLevel.YELLOW,
+                                ai_explanation=getattr(redline, 'explanation', None),
+                                suggested_fix=getattr(redline, 'suggested_fix', None),
+                                fix_reasoning=getattr(redline, 'fix_reasoning', None),
+                                is_deal_breaker=getattr(redline, 'is_deal_breaker', False),
+                                confidence=getattr(redline.confidence, 'score', None) if hasattr(redline, 'confidence') and redline.confidence else None,
+                                is_resolved=False,
+                            )
+                            db_session.add(risk)
+
                         await db_session.commit()
                         await db_session.refresh(batch_doc)
                         doc_id = str(batch_doc.id)
@@ -1203,6 +1269,8 @@ async def _process_batch(
                 batch["files"][idx]["status"] = "completed"
                 batch["files"][idx]["document_id"] = doc_id
                 batch["files"][idx]["risk_summary"] = risk_summary
+                batch["files"][idx]["ai_fallback"] = pipeline_result.partial
+                batch["files"][idx]["executive_summary"] = pipeline_result.executive_summary
 
                 logger.info(
                     f"Batch {batch_id} file '{file_info['filename']}': "
@@ -3051,4 +3119,244 @@ async def get_version_diff(
         version_a=a,
         version_b=b,
         diff_data=diff_data,
+    )
+
+
+# ============================================================================
+# Per-Document Risk Findings
+# ============================================================================
+
+
+@router.get("/{document_id}/risks")
+async def get_document_risks(
+    document_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get all risk findings for a specific document.
+
+    Returns clause text, explanations, suggested fixes, risk levels,
+    and confidence scores for each finding.
+    """
+    doc_uuid = UUID(document_id)
+
+    # Verify document belongs to user
+    doc_result = await db.execute(
+        select(Document).where(Document.id == doc_uuid, Document.user_id == current_user.id)
+    )
+    doc = doc_result.scalar()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Get all risks
+    risks_result = await db.execute(
+        select(DocumentRisk)
+        .where(DocumentRisk.document_id == doc_uuid)
+        .order_by(DocumentRisk.created_at)
+    )
+    risks = risks_result.scalars().all()
+
+    return {
+        "document_id": document_id,
+        "filename": doc.filename,
+        "total_risks": len(risks),
+        "risk_summary": doc.risk_summary or {},
+        "findings": [
+            {
+                "id": str(r.id),
+                "rule_name": r.rule_name,
+                "clause_type": r.clause_type,
+                "redline_type": r.redline_type,
+                "risk_level": r.risk_level.value if r.risk_level else "YELLOW",
+                "clause_text": r.clause_text,
+                "ai_explanation": r.ai_explanation,
+                "suggested_fix": r.suggested_fix,
+                "fix_reasoning": r.fix_reasoning,
+                "is_deal_breaker": r.is_deal_breaker,
+                "confidence": r.confidence,
+                "is_resolved": r.is_resolved,
+            }
+            for r in risks
+        ],
+    }
+
+
+@router.patch("/{document_id}/risks/{risk_id}")
+async def update_risk_status(
+    document_id: str,
+    risk_id: str,
+    action: str = Query(..., description="accept, dismiss, or resolve"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update a risk finding status (accept/dismiss/resolve)."""
+    risk_uuid = UUID(risk_id)
+    doc_uuid = UUID(document_id)
+
+    result = await db.execute(
+        select(DocumentRisk)
+        .where(DocumentRisk.id == risk_uuid, DocumentRisk.document_id == doc_uuid)
+    )
+    risk = result.scalar()
+    if not risk:
+        raise HTTPException(status_code=404, detail="Risk not found")
+
+    if action in ("dismiss", "resolve", "accept"):
+        risk.is_resolved = True
+    elif action == "unresolve":
+        risk.is_resolved = False
+    else:
+        raise HTTPException(status_code=400, detail="Action must be: accept, dismiss, resolve, or unresolve")
+
+    await db.commit()
+    return {"id": str(risk.id), "is_resolved": risk.is_resolved, "action": action}
+
+
+# ============================================================================
+# Batch Portfolio Report with Full Findings
+# ============================================================================
+
+
+@router.get("/batch/{batch_id}/full-report")
+async def batch_full_report(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Get comprehensive batch report with all findings per document.
+
+    Includes: portfolio summary, per-document findings with clause text,
+    risk heatmap by clause type, top risks, and deal-breakers.
+    """
+    from app.models.batch_job import BatchJob, BatchJobFile
+
+    result = await db.execute(
+        select(BatchJob)
+        .options(selectinload(BatchJob.files))
+        .where(BatchJob.id == UUID(batch_id), BatchJob.user_id == current_user.id)
+    )
+    batch_job = result.scalar_one_or_none()
+    if not batch_job:
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    # Collect all document IDs
+    doc_ids = [f.document_id for f in batch_job.files if f.document_id]
+
+    # Load all findings across all documents in one query
+    all_findings = []
+    if doc_ids:
+        risks_result = await db.execute(
+            select(DocumentRisk)
+            .where(DocumentRisk.document_id.in_(doc_ids))
+            .order_by(DocumentRisk.document_id, DocumentRisk.created_at)
+        )
+        all_findings = risks_result.scalars().all()
+
+    # Group findings by document
+    findings_by_doc = {}
+    for f in all_findings:
+        doc_id_str = str(f.document_id)
+        if doc_id_str not in findings_by_doc:
+            findings_by_doc[doc_id_str] = []
+        findings_by_doc[doc_id_str].append(f)
+
+    # Build per-file details
+    per_file = []
+    agg = {"red": 0, "yellow": 0, "green": 0, "total": 0, "deal_breakers": 0}
+    clause_type_counts = {}
+    rule_name_counts = {}
+
+    for f in sorted(batch_job.files, key=lambda x: x.created_at):
+        rs = f.risk_summary or {}
+        for k in ("red", "yellow", "green", "total"):
+            agg[k] += rs.get(k, 0)
+
+        doc_findings = findings_by_doc.get(str(f.document_id), [])
+        deal_breakers = [df for df in doc_findings if df.is_deal_breaker]
+        agg["deal_breakers"] += len(deal_breakers)
+
+        # Count by clause type and rule name
+        for df in doc_findings:
+            if df.clause_type:
+                clause_type_counts[df.clause_type] = clause_type_counts.get(df.clause_type, 0) + 1
+            if df.rule_name:
+                rule_name_counts[df.rule_name] = rule_name_counts.get(df.rule_name, 0) + 1
+
+        per_file.append({
+            "filename": f.filename,
+            "document_id": str(f.document_id) if f.document_id else None,
+            "status": f.status,
+            "risk_summary": rs,
+            "processing_ms": f.processing_ms,
+            "error": f.error_message,
+            "findings": [
+                {
+                    "id": str(df.id),
+                    "rule_name": df.rule_name,
+                    "clause_type": df.clause_type,
+                    "redline_type": df.redline_type,
+                    "risk_level": df.risk_level.value if df.risk_level else "YELLOW",
+                    "clause_text": df.clause_text,
+                    "ai_explanation": df.ai_explanation,
+                    "suggested_fix": df.suggested_fix,
+                    "is_deal_breaker": df.is_deal_breaker,
+                    "confidence": df.confidence,
+                    "is_resolved": df.is_resolved,
+                }
+                for df in doc_findings
+            ],
+            "ai_fallback": all(
+                (df.ai_explanation or "").startswith("Rule engine detected")
+                for df in doc_findings
+            ) if doc_findings else False,
+        })
+
+    # Top risks sorted by frequency
+    top_risks = sorted(rule_name_counts.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    # Risk heatmap by clause type
+    risk_heatmap = sorted(clause_type_counts.items(), key=lambda x: x[1], reverse=True)
+
+    # Overall compliance score
+    total_rules_checked = max(agg["total"], 1)
+    compliance_score = max(0, round((1 - agg["red"] / total_rules_checked) * 100))
+
+    return {
+        "batch_id": batch_id,
+        "total_files": batch_job.total_files,
+        "completed_files": batch_job.completed_files or 0,
+        "failed_files": batch_job.failed_files or 0,
+        "compliance_score": compliance_score,
+        "aggregate_risk_summary": agg,
+        "top_risks": [{"rule": r[0], "count": r[1]} for r in top_risks],
+        "risk_heatmap": [{"clause_type": h[0], "count": h[1]} for h in risk_heatmap],
+        "per_file": per_file,
+    }
+
+
+@router.get("/batch/{batch_id}/export-docx")
+async def batch_export_docx(
+    batch_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Download a professional Word document report for a completed batch.
+
+    Generates a formatted .docx with executive summary, risk heatmap,
+    and per-contract findings tables — ready to send to clients.
+    """
+    from starlette.responses import Response as StarletteResponse
+
+    # Get the full report data first
+    report_data = await batch_full_report(batch_id, current_user, db)
+
+    # Generate DOCX
+    from app.services.batch_report_docx import generate_batch_report_docx
+    docx_bytes = generate_batch_report_docx(report_data)
+
+    filename = f"ContraRed-Portfolio-Report-{batch_id[:8]}.docx"
+    return StarletteResponse(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

@@ -300,7 +300,7 @@ export async function logout(): Promise<void> {
         });
     } catch { /* best-effort server logout */ }
     clearAuth();
-    window.location.href = '/';
+    window.location.href = '/login';
 }
 
 export async function register(name: string, email: string, password: string): Promise<{ user: User }> {
@@ -1068,6 +1068,8 @@ export interface BatchFileStatus {
     document_id?: string;
     risk_summary?: { red: number; yellow: number; total: number };
     error?: string;
+    ai_fallback?: boolean;  // true = AI failed, results are rule-engine only
+    executive_summary?: string[];
 }
 
 export interface BatchStatusResponse {
@@ -1131,6 +1133,57 @@ export async function batchAnalyze(files: File[], playbookId?: string): Promise<
 
 export async function getBatchStatus(batchId: string): Promise<BatchStatusResponse> {
     return request(`/documents/batch/${batchId}/status`);
+}
+
+export interface BatchFinding {
+    id: string;
+    rule_name: string | null;
+    clause_type: string | null;
+    redline_type: string | null;
+    risk_level: string;
+    clause_text: string;
+    ai_explanation: string | null;
+    suggested_fix: string | null;
+    is_deal_breaker: boolean;
+    confidence: number | null;
+    is_resolved: boolean;
+}
+
+export interface BatchFullReport {
+    batch_id: string;
+    total_files: number;
+    completed_files: number;
+    failed_files: number;
+    compliance_score: number;
+    aggregate_risk_summary: { red: number; yellow: number; green: number; total: number; deal_breakers: number };
+    top_risks: { rule: string; count: number }[];
+    risk_heatmap: { clause_type: string; count: number }[];
+    per_file: {
+        filename: string;
+        document_id: string | null;
+        status: string;
+        risk_summary: { red: number; yellow: number; green: number; total: number };
+        findings: BatchFinding[];
+        error: string | null;
+        ai_fallback?: boolean;
+    }[];
+}
+
+export async function getBatchFullReport(batchId: string): Promise<BatchFullReport> {
+    return request(`/documents/batch/${batchId}/full-report`);
+}
+
+export async function getDocumentRisks(documentId: string): Promise<{
+    document_id: string;
+    filename: string;
+    total_risks: number;
+    findings: BatchFinding[];
+}> {
+    return request(`/documents/${documentId}/risks`);
+}
+
+export async function updateRiskStatus(documentId: string, riskId: string, action: 'accept' | 'dismiss' | 'resolve' | 'unresolve'): Promise<{ id: string; is_resolved: boolean }> {
+    return request(`/documents/${documentId}/risks/${riskId}?action=${action}`, { method: 'PATCH' });
 }
 
 // ============================================================================
@@ -1469,4 +1522,377 @@ export async function getDraftAddinPayload(draftId: string): Promise<Record<stri
 
 export async function listDraftingPlaybooks(): Promise<DraftingPlaybookSummary[]> {
     return request('/drafting/playbooks');
+}
+
+// ============================================================================
+// Consent Management API (DPDP Act)
+// ============================================================================
+
+export interface ConsentPurpose {
+    code: string;
+    name: string;
+    description: string;
+    is_required: boolean;
+    personal_data_categories: string[];
+    third_parties: string[];
+    retention_period: string | null;
+    translations: Record<string, { name: string; description: string }>;
+}
+
+export interface ConsentStatusPurpose extends ConsentPurpose {
+    granted: boolean;
+    granted_at: string | null;
+    withdrawn_at: string | null;
+}
+
+export interface ConsentStatus {
+    has_consent_record: boolean;
+    consent_record_id?: string;
+    status?: string;
+    created_at?: string;
+    updated_at?: string;
+    purposes: ConsentStatusPurpose[];
+}
+
+export interface ConsentEvent {
+    id: string;
+    event_type: string;
+    purpose_code: string | null;
+    actor: string;
+    details: Record<string, unknown>;
+    created_at: string;
+}
+
+export interface ConsentReceipt {
+    id: string;
+    receipt_data: Record<string, unknown>;
+    schema_version: string;
+    digital_signature: string | null;
+    issued_at: string;
+    downloaded_at: string | null;
+}
+
+export interface PrivacyPolicy {
+    id: string;
+    version: number;
+    title: string;
+    content: string;
+    language: string;
+    checksum: string;
+    effective_from: string;
+}
+
+export async function getConsentPurposes(): Promise<ConsentPurpose[]> {
+    return request('/consent/purposes');
+}
+
+export async function getCurrentPrivacyPolicy(language = 'en'): Promise<PrivacyPolicy> {
+    return request(`/consent/policy/current?language=${language}`);
+}
+
+export async function getConsentStatus(): Promise<ConsentStatus> {
+    return request('/consent/status');
+}
+
+export async function grantConsent(purposeCodes: string[], policyChecksum?: string): Promise<{ consent_record_id: string; granted_purposes: string[] }> {
+    return request('/consent/grant', {
+        method: 'POST',
+        body: JSON.stringify({
+            purpose_codes: purposeCodes,
+            privacy_policy_version: policyChecksum,
+        }),
+    });
+}
+
+export async function withdrawConsent(purposeCodes: string[], reason?: string): Promise<{ consent_record_id: string; withdrawn_purposes: string[] }> {
+    return request('/consent/withdraw', {
+        method: 'POST',
+        body: JSON.stringify({
+            purpose_codes: purposeCodes,
+            reason,
+        }),
+    });
+}
+
+export async function getConsentHistory(limit = 50, offset = 0): Promise<ConsentEvent[]> {
+    return request(`/consent/history?limit=${limit}&offset=${offset}`);
+}
+
+export async function getConsentReceipts(): Promise<ConsentReceipt[]> {
+    return request('/consent/receipts');
+}
+
+export async function registerWithConsent(
+    name: string, email: string, password: string,
+    consentPurposes: string[], policyChecksum?: string,
+): Promise<{ user: User }> {
+    const response = await fetch(`${API_BASE_URL}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+            name, email, password,
+            consent_purposes: consentPurposes,
+            privacy_policy_accepted: true,
+            privacy_policy_version: policyChecksum,
+        }),
+    });
+
+    if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Registration failed' }));
+        throw new Error(error.detail || 'Registration failed');
+    }
+
+    return login(email, password);
+}
+
+// ============================================================================
+// DPDP Compliance Command Center API
+// ============================================================================
+
+export interface DPDPContractFinding {
+    rule_id: string;
+    section: string;
+    risk_level: string;
+    is_deal_breaker: boolean;
+    title: string;
+    description: string;
+    clause_text: string;
+    suggested_fix: string;
+    confidence: number;
+}
+
+export interface DPDPScanResult {
+    contract_name: string;
+    contract_type: string;
+    total_findings: number;
+    red_findings: number;
+    yellow_findings: number;
+    green_findings: number;
+    deal_breakers: number;
+    compliance_score: number;
+    findings: DPDPContractFinding[];
+    scanned_at: string;
+}
+
+export interface DPDPPortfolioReport {
+    total_contracts: number;
+    average_compliance_score: number;
+    contracts_with_deal_breakers: number;
+    risk_heatmap: Record<string, number>;
+    section_coverage: Record<string, string>;
+    top_risks: string[];
+    contract_results: DPDPScanResult[];
+    generated_at: string;
+}
+
+export interface DPDPAssessmentQuestion {
+    id: string;
+    category: string;
+    section: string;
+    question: string;
+    guidance: string;
+    weight: number;
+    is_critical: boolean;
+}
+
+export interface DPDPSectionScore {
+    section: string;
+    section_name: string;
+    status: string;
+    score: number;
+    findings: string[];
+    recommendations: string[];
+    priority: string;
+}
+
+export interface DPDPGapAssessment {
+    organization_name: string;
+    overall_score: number;
+    overall_status: string;
+    section_scores: DPDPSectionScore[];
+    critical_gaps: string[];
+    action_items: string[];
+    estimated_remediation_effort: string;
+    deadline_risk: string;
+    assessed_at: string;
+}
+
+export interface DPDPDeadline {
+    title: string;
+    description: string;
+    deadline: string;
+    section: string | null;
+    status: string;
+    days_remaining: number;
+}
+
+export interface DPDPAlert {
+    alert_type: string;
+    severity: string;
+    title: string;
+    description: string;
+    action_required: string;
+    created_at: string;
+}
+
+export interface DPDPDashboard {
+    overall_score: number;
+    status: string;
+    contracts_scanned: number;
+    active_findings: number;
+    resolved_findings: number;
+    pending_rights_requests: number;
+    pending_grievances: number;
+    upcoming_deadlines: DPDPDeadline[];
+    recent_alerts: DPDPAlert[];
+    section_scores: Record<string, number>;
+    trend: Record<string, unknown>[];
+}
+
+export interface DPDPRemediationOutput {
+    remediation_type: string;
+    title: string;
+    content: string;
+    language: string;
+    sections: { heading: string; content: string }[];
+    applicable_dpdp_sections: string[];
+    notes: string[];
+    generated_at: string;
+}
+
+export interface DPDPBreachNotification {
+    dpb_notification: string;
+    principal_notification: string;
+    cert_in_notification: string;
+    timeline: Record<string, unknown>;
+    recommended_actions: string[];
+}
+
+export async function dpdpScanContract(contractText: string, contractName = '', contractType = 'general'): Promise<DPDPScanResult> {
+    return request('/dpdp/scan', {
+        method: 'POST',
+        body: JSON.stringify({ contract_text: contractText, contract_name: contractName, contract_type: contractType, jurisdiction: 'IN' }),
+    });
+}
+
+export async function dpdpScanBulk(contracts: { contract_text: string; contract_name: string; contract_type: string }[]): Promise<DPDPPortfolioReport> {
+    return request('/dpdp/scan/bulk', {
+        method: 'POST',
+        body: JSON.stringify({ contracts, generate_portfolio_report: true }),
+    });
+}
+
+// dpdpGetAssessmentQuestions and dpdpRunAssessment are defined below with full type safety
+
+export async function dpdpRemediate(data: Record<string, unknown>): Promise<DPDPRemediationOutput> {
+    return request('/dpdp/remediate', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function dpdpBreachNotification(data: Record<string, unknown>): Promise<DPDPBreachNotification> {
+    return request('/dpdp/remediate/breach-notification', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function dpdpGetTemplates(): Promise<{ templates: { type: string; name: string; description: string }[] }> {
+    return request('/dpdp/remediate/templates');
+}
+
+export async function dpdpGetDashboard(): Promise<DPDPDashboard> {
+    return request('/dpdp/dashboard');
+}
+
+export async function dpdpGetOverdue(): Promise<{ total_overdue: number; rights_requests: unknown[]; grievances: unknown[] }> {
+    return request('/dpdp/overdue');
+}
+
+// DPDP Compliance Reports
+export async function dpdpGenerateReport(): Promise<{
+    report_id: string;
+    title: string;
+    summary: string;
+    compliance_score: number;
+    content: Record<string, unknown>;
+    generated_at: string;
+}> {
+    return request('/dpdp/report', { method: 'POST' });
+}
+
+export async function dpdpGetReportHistory(): Promise<{
+    id: string;
+    title: string;
+    summary: string;
+    compliance_score: number;
+    report_type: string;
+    generated_at: string;
+}[]> {
+    return request('/dpdp/reports');
+}
+
+// DPDP Knowledge Base Search
+export async function dpdpSearchRegulation(query: string, maxResults = 5): Promise<{
+    source: string;
+    section: string;
+    title: string;
+    summary: string;
+    full_text: string;
+    penalties: string | null;
+    deadline: string | null;
+}[]> {
+    return request(`/dpdp/knowledge/search?q=${encodeURIComponent(query)}&max_results=${maxResults}`);
+}
+
+// DPDP Consent Health
+export async function dpdpGetConsentHealth(): Promise<{
+    health_score: number;
+    active_consents: number;
+    total_records: number;
+    consent_rate: number;
+    purpose_stats: { code: string; name: string; grant_count: number }[];
+    recent_events: Record<string, number>;
+}> {
+    return request('/dpdp/consent-health');
+}
+
+// DPDP Gap Assessment
+export interface DPDPAssessmentQuestion {
+    id: string;
+    category: string;
+    section: string;
+    question: string;
+    guidance: string;
+    weight: number;
+    is_critical: boolean;
+}
+
+export async function dpdpGetAssessmentQuestions(params?: {
+    processes_children_data?: boolean;
+    is_significant_fiduciary?: boolean;
+    has_cross_border?: boolean;
+}): Promise<DPDPAssessmentQuestion[]> {
+    const qs = new URLSearchParams();
+    if (params?.processes_children_data) qs.set('processes_children_data', 'true');
+    if (params?.is_significant_fiduciary) qs.set('is_significant_fiduciary', 'true');
+    if (params?.has_cross_border) qs.set('has_cross_border', 'true');
+    return request(`/dpdp/assessment/questions?${qs.toString()}`);
+}
+
+export async function dpdpRunAssessment(data: {
+    org_name: string;
+    industry?: string;
+    answers: { question_id: string; answer: string; evidence?: string; notes?: string }[];
+    processes_children_data?: boolean;
+    is_significant_fiduciary?: boolean;
+    has_cross_border?: boolean;
+}): Promise<{
+    overall_score: number;
+    overall_status: string;
+    section_scores: unknown[];
+    critical_gaps: unknown[];
+    action_items: unknown[];
+    deadline_risk: number;
+}> {
+    return request('/dpdp/assessment', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
 }

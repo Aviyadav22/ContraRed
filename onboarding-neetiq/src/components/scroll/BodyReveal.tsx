@@ -13,22 +13,32 @@ export default function BodyReveal({ children, className = '' }: BodyRevealProps
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!ref.current) return
+    const el = ref.current
+    if (!el) return
 
-    gsap.fromTo(
-      ref.current,
-      { opacity: 0, y: 30 },
-      {
-        opacity: 1,
-        y: 0,
-        duration: 0.6,
-        ease: 'power2.out',
-        scrollTrigger: {
-          trigger: ref.current,
-          start: 'top 85%',
-        },
+    let trigger: ScrollTrigger | null = null
+
+    // Wait one frame so layout is settled and getBoundingClientRect is accurate
+    const raf = requestAnimationFrame(() => {
+      const rect = el.getBoundingClientRect()
+      if (rect.top > window.innerHeight) {
+        // Below the fold — hide and animate on scroll
+        gsap.set(el, { opacity: 0, y: 30 })
+        trigger = ScrollTrigger.create({
+          trigger: el,
+          start: 'top 90%',
+          once: true,
+          onEnter: () => gsap.to(el, { opacity: 1, y: 0, duration: 0.6, ease: 'power2.out' }),
+        })
       }
-    )
+      // Already visible — leave it alone, no animation needed
+    })
+
+    return () => {
+      cancelAnimationFrame(raf)
+      trigger?.kill()
+      gsap.killTweensOf(el)
+    }
   }, [])
 
   return (

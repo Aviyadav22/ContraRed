@@ -187,6 +187,10 @@ class UserCreate(BaseModel):
     email: EmailStr
     name: str = Field(..., min_length=1, max_length=255)
     password: str = Field(..., min_length=8, max_length=128)
+    # DPDP Act consent fields
+    consent_purposes: Optional[List[str]] = Field(None, description="List of consented purpose codes (must include 'account_management')")
+    privacy_policy_accepted: Optional[bool] = Field(None, description="Must be True to register")
+    privacy_policy_version: Optional[str] = Field(None, description="Checksum of accepted privacy policy")
 
     @field_validator('password')
     @classmethod
@@ -372,6 +376,41 @@ async def register(
 
         db.add(user)
         await db.flush()
+
+        # DPDP Act: Record consent (always grant account_management at minimum)
+        consent_purposes = user_data.consent_purposes or ["account_management"]
+        if "account_management" not in consent_purposes:
+            consent_purposes.append("account_management")
+        if consent_purposes:
+            try:
+                from app.services.consent_service import consent_service
+                # consent_purposes already validated above
+
+                # Look up policy version if checksum provided
+                policy_version_id = None
+                if user_data.privacy_policy_version:
+                    from app.models.consent import ConsentPolicy
+                    policy_result = await db.execute(
+                        select(ConsentPolicy.id)
+                        .where(ConsentPolicy.checksum == user_data.privacy_policy_version)
+                        .limit(1)
+                    )
+                    policy_version_id = policy_result.scalar()
+
+                await consent_service.grant_consent(
+                    db=db,
+                    subject_id=user.id,
+                    purpose_codes=consent_purposes,
+                    policy_version_id=policy_version_id,
+                    organization_id=user.organization_id,
+                    ip_address=_get_client_ip(request),
+                    user_agent=request.headers.get("user-agent"),
+                    collection_method="web_form",
+                    expression_method="checkbox",
+                )
+            except Exception as consent_err:
+                # Consent recording should not block registration
+                logger.warning("Consent recording failed during registration: %s", consent_err)
 
         # Audit log
         await log_audit_event(

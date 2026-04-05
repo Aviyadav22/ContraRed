@@ -61,14 +61,14 @@ export function ConditionsTab({
         <>
             <div className="flex justify-between items-center mb-8">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Conditions ({conditions?.length || 0})</h1>
-                    <p className="text-sm text-slate-500 mt-1">
+                    <h1 className="text-2xl font-bold text-[var(--text-primary)]">Conditions ({conditions?.length || 0})</h1>
+                    <p className="text-sm text-[var(--text-muted)] mt-1">
                         Deal context conditions that modify rule behavior based on counterparty, deal size, jurisdiction, or contract side.
                     </p>
                 </div>
                 <button
                     onClick={() => setShowAddCondition(true)}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors"
+                    className="flex items-center gap-2 px-5 py-2.5 bg-[var(--accent)] text-white text-sm font-semibold rounded-lg hover:bg-[var(--accent-hover)] transition-colors"
                 >
                     <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
                     Add Condition
@@ -77,8 +77,8 @@ export function ConditionsTab({
 
             {/* Add Condition Form */}
             {showAddCondition && (
-                <div className="bg-white rounded-xl border border-slate-200 p-7 mb-6">
-                    <h3 className="text-base font-bold text-slate-900 mb-5">New Condition</h3>
+                <div className="bg-[var(--bg-surface)] rounded-xl border border-[var(--border)] p-7 mb-6">
+                    <h3 className="text-base font-bold text-[var(--text-primary)] mb-5">New Condition</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label className={labelClass}>Name</label>
@@ -155,17 +155,17 @@ export function ConditionsTab({
                             />
                         </div>
                     </div>
-                    <div className="flex justify-end gap-3 mt-6 pt-5 border-t border-slate-100">
+                    <div className="flex justify-end gap-3 mt-6 pt-5 border-t border-[var(--border)]">
                         <button
                             onClick={() => setShowAddCondition(false)}
-                            className="px-5 py-2.5 text-sm font-medium text-slate-500 bg-transparent border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+                            className="px-5 py-2.5 text-sm font-medium text-[var(--text-muted)] bg-transparent border border-[var(--border)] rounded-lg hover:bg-[var(--bg-surface)] transition-colors"
                         >
                             Cancel
                         </button>
                         <button
                             onClick={() => createConditionMutation.mutate()}
                             disabled={!newCondition.name || createConditionMutation.isPending}
-                            className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors disabled:opacity-50"
+                            className="px-5 py-2.5 text-sm font-semibold text-white bg-[var(--accent)] rounded-lg hover:bg-[var(--accent-hover)] transition-colors disabled:opacity-50"
                         >
                             {createConditionMutation.isPending ? 'Creating...' : 'Create Condition'}
                         </button>
@@ -177,20 +177,20 @@ export function ConditionsTab({
             {conditions && conditions.length > 0 ? (
                 <div className="space-y-4">
                     {conditions.map((condition: PlaybookCondition) => (
-                        <div key={condition.id} className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                        <div key={condition.id} className="bg-[var(--bg-surface)] rounded-xl border border-[var(--border)] overflow-hidden">
                             <div
-                                className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-slate-50 transition-colors"
+                                className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-[var(--bg-surface)] transition-colors"
                                 onClick={() => setExpandedConditionId(expandedConditionId === condition.id ? null : condition.id)}
                             >
                                 <div className="flex items-center gap-4">
                                     <div>
                                         <div className="flex items-center gap-2">
-                                            <span className="font-semibold text-sm text-slate-900">{condition.name}</span>
-                                            <span className={`px-2 py-0.5 text-[11px] font-semibold rounded ${condition.is_active ? 'bg-green-50 text-green-600' : 'bg-slate-100 text-slate-400'}`}>
+                                            <span className="font-semibold text-sm text-[var(--text-primary)]">{condition.name}</span>
+                                            <span className={`px-2 py-0.5 text-[11px] font-semibold rounded ${condition.is_active ? 'bg-green-50 text-green-600' : 'bg-[var(--bg-elevated)] text-[var(--text-muted)]'}`}>
                                                 {condition.is_active ? 'Active' : 'Inactive'}
                                             </span>
                                         </div>
-                                        <p className="text-xs text-slate-500 mt-0.5">
+                                        <p className="text-xs text-[var(--text-muted)] mt-0.5">
                                             {CONDITION_TYPES.find(ct => ct.value === condition.condition_type)?.label || condition.condition_type}
                                             {' '}{OPERATORS.find(op => op.value === condition.operator)?.label || condition.operator}
                                             {' '}
@@ -199,7 +199,7 @@ export function ConditionsTab({
                                     </div>
                                 </div>
                                 <div className="flex items-center gap-4">
-                                    <span className="text-xs text-slate-400">{condition.overrides_count} override{condition.overrides_count !== 1 ? 's' : ''}</span>
+                                    <span className="text-xs text-[var(--text-muted)]">{condition.overrides_count} override{condition.overrides_count !== 1 ? 's' : ''}</span>
                                     <button
                                         onClick={(e) => { e.stopPropagation(); if (confirm('Delete this condition?')) deleteConditionMutation.mutate(condition.id); }}
                                         className="text-[13px] font-semibold text-red-600 bg-transparent border-none cursor-pointer hover:text-red-700"
@@ -217,12 +217,12 @@ export function ConditionsTab({
 
                             {/* Expanded: Overrides */}
                             {expandedConditionId === condition.id && (
-                                <div className="border-t border-slate-100 px-6 py-5 bg-slate-50">
+                                <div className="border-t border-[var(--border)] px-6 py-5 bg-[var(--bg-surface)]">
                                     <div className="flex justify-between items-center mb-4">
-                                        <h4 className="text-sm font-semibold text-slate-700">Rule Overrides</h4>
+                                        <h4 className="text-sm font-semibold text-[var(--text-primary)]">Rule Overrides</h4>
                                         <button
                                             onClick={() => setShowAddOverride(showAddOverride === condition.id ? null : condition.id)}
-                                            className="text-xs font-semibold text-slate-900 bg-white border border-slate-200 px-3 py-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+                                            className="text-xs font-semibold text-[var(--text-primary)] bg-[var(--bg-surface)] border border-[var(--border)] px-3 py-1.5 rounded-lg hover:bg-[var(--bg-elevated)] transition-colors"
                                         >
                                             + Add Override
                                         </button>
@@ -230,7 +230,7 @@ export function ConditionsTab({
 
                                     {/* Add Override Form */}
                                     {showAddOverride === condition.id && (
-                                        <div className="bg-white rounded-lg border border-slate-200 p-5 mb-4">
+                                        <div className="bg-[var(--bg-surface)] rounded-lg border border-[var(--border)] p-5 mb-4">
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                 <div>
                                                     <label className={labelClass}>Target Rule</label>
@@ -274,24 +274,24 @@ export function ConditionsTab({
                                                         id={`suppress-${condition.id}`}
                                                         checked={newOverride.suppress_rule}
                                                         onChange={(e) => setNewOverride(prev => ({ ...prev, suppress_rule: e.target.checked }))}
-                                                        className="w-4 h-4 accent-slate-900 cursor-pointer"
+                                                        className="w-4 h-4 accent-[var(--accent)] cursor-pointer"
                                                     />
-                                                    <label htmlFor={`suppress-${condition.id}`} className="text-sm font-medium text-slate-700 cursor-pointer">
+                                                    <label htmlFor={`suppress-${condition.id}`} className="text-sm font-medium text-[var(--text-primary)] cursor-pointer">
                                                         Suppress Rule
                                                     </label>
                                                 </div>
                                             </div>
-                                            <div className="flex justify-end gap-3 mt-4 pt-4 border-t border-slate-100">
+                                            <div className="flex justify-end gap-3 mt-4 pt-4 border-t border-[var(--border)]">
                                                 <button
                                                     onClick={() => setShowAddOverride(null)}
-                                                    className="px-4 py-2 text-sm font-medium text-slate-500 bg-transparent border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+                                                    className="px-4 py-2 text-sm font-medium text-[var(--text-muted)] bg-transparent border border-[var(--border)] rounded-lg hover:bg-[var(--bg-surface)] transition-colors"
                                                 >
                                                     Cancel
                                                 </button>
                                                 <button
                                                     onClick={() => addOverrideMutation.mutate(condition.id)}
                                                     disabled={!newOverride.rule_id || addOverrideMutation.isPending}
-                                                    className="px-4 py-2 text-sm font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors disabled:opacity-50"
+                                                    className="px-4 py-2 text-sm font-semibold text-white bg-[var(--accent)] rounded-lg hover:bg-[var(--accent-hover)] transition-colors disabled:opacity-50"
                                                 >
                                                     {addOverrideMutation.isPending ? 'Adding...' : 'Add Override'}
                                                 </button>
@@ -300,7 +300,7 @@ export function ConditionsTab({
                                     )}
 
                                     {condition.overrides_count === 0 && showAddOverride !== condition.id && (
-                                        <p className="text-xs text-slate-400 italic">No overrides configured for this condition.</p>
+                                        <p className="text-xs text-[var(--text-muted)] italic">No overrides configured for this condition.</p>
                                     )}
                                 </div>
                             )}
@@ -308,15 +308,15 @@ export function ConditionsTab({
                     ))}
                 </div>
             ) : (
-                <div className="text-center py-16 px-8 bg-white rounded-xl border border-slate-200">
+                <div className="text-center py-16 px-8 bg-[var(--bg-surface)] rounded-xl border border-[var(--border)]">
                     <svg width="48" height="48" fill="none" stroke="var(--text-muted)" viewBox="0 0 24 24" className="mx-auto mb-4">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
                     </svg>
-                    <h3 className="text-lg font-semibold text-slate-900 mb-2">No conditions yet</h3>
-                    <p className="text-sm text-slate-500 mb-6">Add conditions to dynamically adjust rules based on deal context.</p>
+                    <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">No conditions yet</h3>
+                    <p className="text-sm text-[var(--text-muted)] mb-6">Add conditions to dynamically adjust rules based on deal context.</p>
                     <button
                         onClick={() => setShowAddCondition(true)}
-                        className="px-6 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors"
+                        className="px-6 py-2.5 text-sm font-semibold text-white bg-[var(--accent)] rounded-lg hover:bg-[var(--accent-hover)] transition-colors"
                     >
                         Add Condition
                     </button>

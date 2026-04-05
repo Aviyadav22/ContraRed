@@ -115,16 +115,22 @@ class DocumentComparison(Base):
 
 class DocumentRisk(Base):
     __tablename__ = "document_risks"
-    
+
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     document_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("documents.id", ondelete="CASCADE"))
     rule_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("playbook_rules.id"), nullable=True)
+    rule_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     clause_text: Mapped[str] = mapped_column(Text, nullable=False)
+    clause_type: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    redline_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # violation, missing
     start_offset: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     end_offset: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     risk_level: Mapped[RiskLevel] = mapped_column(SQLEnum(RiskLevel))
     ai_explanation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     suggested_fix: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fix_reasoning: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    is_deal_breaker: Mapped[bool] = mapped_column(Boolean, default=False)
+    confidence: Mapped[Optional[float]] = mapped_column(nullable=True)
     is_resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     

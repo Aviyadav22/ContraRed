@@ -1153,8 +1153,8 @@ async function scanDocument(): Promise<void> {
   setScanLoading(true);
 
   try {
-    // Step 1: Get document text from Word
-    const documentText = await getDocumentText();
+    // Step 1: Get document text with paragraph structure from Word
+    const { paragraphs: docParagraphs, fullText: documentText } = await getDocumentParagraphs();
     lastScannedText = documentText || '';
 
     if (!documentText || documentText.trim().length < 50) {
@@ -1167,7 +1167,7 @@ async function scanDocument(): Promise<void> {
       return;
     }
 
-    // Step 2: Call AI-First analysis API (with selected playbook)
+    // Step 2: Call AI-First analysis API (with selected playbook + paragraph structure)
     const selectedPlaybookId = playbookSelect()?.value || undefined;
     log.info('Starting analysis...');
 
@@ -1188,10 +1188,11 @@ async function scanDocument(): Promise<void> {
     const selectedPartySide = partySideSelect?.value || 'buyer';
     const jurisdictionSelect = document.getElementById('jurisdictionSelect') as HTMLSelectElement;
     const selectedJurisdiction = jurisdictionSelect?.value || 'IN';
-    const aiResult = await api.analyzeWithAI(documentText, docName, selectedPlaybookId, selectedPartySide, selectedJurisdiction);
+    const aiResult = await api.analyzeWithAI(documentText, docName, selectedPlaybookId, selectedPartySide, selectedJurisdiction, docParagraphs);
 
     currentAIAnalysis = aiResult;
     fixedRisks.clear();
+    appliedFixesMap.clear();
 
     // Store document fingerprint for identity check on restore
     const docFingerprint = simpleHash(documentText);
@@ -1201,7 +1202,8 @@ async function scanDocument(): Promise<void> {
     displayAIResults(aiResult);
     saveScanState(docFingerprint);
 
-    // Step 4: Highlight risks in document using three-tier search
+    // Step 4: Clear stale Content Controls from previous scan, then highlight + wrap new risks
+    await clearContraRedContentControls();
     await highlightAIRedlines(aiResult.risks);
     log.info('Analysis complete:', { risks: aiResult.risks?.length, tokens: aiResult.tokens_used });
 
@@ -2558,11 +2560,8 @@ async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW' |
 
       if (result.range) {
         let color: string;
-        if (redlineType === 'missing') {
-          color = '#93C5FD'; // Blue for missing clause insert points
-        } else {
-          color = riskLevel === 'RED' ? '#F87171' : riskLevel === 'GREEN' ? '#86EFAC' : '#FEF08A';
-        }
+        // Light gray highlight just marks location — risk level shown in taskpane
+        color = 'Silver';
         result.range.font.highlightColor = color;
         result.range.select();
         await context.sync();
@@ -2582,47 +2581,24 @@ async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW' |
 
 /**
  * Undo a previously applied redline fix.
- * For violations: finds the applied fix text and replaces it back with original_text.
- * For missing clauses: finds the inserted text and removes it.
+ * Uses Content Control lookup first (most precise), falls back to text search.
+ * For violations: replaces fix text back with original_text.
+ * For missing clauses: deletes the inserted text.
  */
 async function undoRedlineFix(redline: RedlineItem, appliedFix?: string): Promise<void> {
   await Word.run(async (context) => {
     const searchText = appliedFix || redline.recommendation;
     if (!searchText) return;
 
-    // Use stored location info for precise undo targeting
-    const fixInfo = appliedFixesMap.get(redline.id);
     let targetRange: Word.Range | null = null;
 
-    if (fixInfo && fixInfo.paragraphIndex >= 0) {
-      // Try paragraph-index-based matching first to avoid wrong-location undo
-      try {
-        const body = context.document.body;
-        const allParas = body.paragraphs;
-        allParas.load('items/text');
-        await context.sync();
-
-        if (fixInfo.paragraphIndex < allParas.items.length) {
-          const para = allParas.items[fixInfo.paragraphIndex];
-          // Verify context hash matches (paragraph content is still similar)
-          if (para.text.substring(0, 100) === fixInfo.contextHash ||
-              para.text.includes(searchText.substring(0, 50))) {
-            // Search within this specific paragraph
-            const paraRange = para.getRange();
-            const searchResults = paraRange.search(searchText.substring(0, 255), { matchCase: false });
-            searchResults.load('items');
-            await context.sync();
-            if (searchResults.items.length > 0) {
-              targetRange = searchResults.items[0];
-            }
-          }
-        }
-      } catch (locErr) {
-        log.warn('Paragraph-based undo lookup failed, falling back to global search:', locErr);
-      }
+    // Try Content Control lookup first — most reliable after applying a fix
+    const ccResult = await findContentControlByTag(redline.id, context);
+    if (ccResult) {
+      targetRange = ccResult.range;
     }
 
-    // Fallback: global search
+    // Fallback: search for the applied fix text in the document
     if (!targetRange) {
       const result = await findTextInDocument(searchText, context);
       if (!result.range) {
@@ -2645,33 +2621,68 @@ async function undoRedlineFix(redline: RedlineItem, appliedFix?: string): Promis
 }
 
 /**
- * Revert ALL applied fixes at once. Walks the appliedFixesMap and restores
- * each clause to its original text, then clears the map and resets UI.
+ * Revert ALL applied fixes at once. Uses Content Controls for precise targeting,
+ * falls back to text search. Restores each clause to its original text.
  */
 async function revertAllFixes(): Promise<void> {
   if (appliedFixesMap.size === 0) return;
   const entries = Array.from(appliedFixesMap.entries());
   let reverted = 0;
-  for (const [id, fixInfo] of entries) {
-    try {
-      await Word.run(async (context) => {
-        const searchText = fixInfo.fixText.substring(0, 255);
-        const body = context.document.body;
-        const searchResults = body.search(searchText, { matchCase: false });
-        searchResults.load('items');
-        await context.sync();
-        if (searchResults.items.length > 0) {
-          searchResults.items[0].insertText(fixInfo.originalText, Word.InsertLocation.replace);
-          await context.sync();
-          reverted++;
+
+  // Batch all reverts in a single Word.run for performance
+  try {
+    await Word.run(async (context) => {
+      // Phase A: Look up all Content Controls by tag in one sync
+      const ccLookups = entries.map(([id]) => ({
+        id,
+        cc: context.document.contentControls.getByTag(`cr-${id}`),
+      }));
+      ccLookups.forEach(l => l.cc.load('items'));
+      await context.sync();
+
+      // Phase B: Separate CC-found from fallback-needed, then batch fallback searches
+      const revertPlans: Array<{ id: string; range: Word.Range; originalText: string }> = [];
+      const body = context.document.body;
+      const fallbackSearches: Array<{ id: string; originalText: string; results: ReturnType<Word.Body['search']> }> = [];
+
+      for (const { id, cc } of ccLookups) {
+        const fixInfo = appliedFixesMap.get(id);
+        if (!fixInfo) continue;
+
+        if (cc.items.length > 0) {
+          revertPlans.push({ id, range: cc.items[0].getRange(), originalText: fixInfo.originalText });
+        } else {
+          // Queue fallback search (no sync yet)
+          const searchText = fixInfo.fixText.substring(0, 255);
+          const searchResults = body.search(searchText, { matchCase: false });
+          searchResults.load('items');
+          fallbackSearches.push({ id, originalText: fixInfo.originalText, results: searchResults });
         }
-      });
-      appliedFixesMap.delete(id);
-    } catch (err) {
-      log.warn(`Failed to revert fix ${id}:`, err);
-    }
+      }
+
+      // ONE sync for all fallback searches
+      if (fallbackSearches.length > 0) {
+        await context.sync();
+        for (const { id, originalText, results } of fallbackSearches) {
+          if (results.items.length > 0) {
+            revertPlans.push({ id, range: results.items[0], originalText });
+          }
+        }
+      }
+
+      // Phase C: Apply all reverts in one sync
+      for (const plan of revertPlans) {
+        plan.range.insertText(plan.originalText, Word.InsertLocation.replace);
+        reverted++;
+      }
+      await context.sync();
+    });
+  } catch (err) {
+    log.warn('Batch revert error:', err);
   }
-  // Reset fixed-risk UI state
+
+  // Clean up state
+  appliedFixesMap.clear();
   fixedRisks.clear();
   const cards = document.querySelectorAll('.risk-card.fixed');
   cards.forEach(c => c.classList.remove('fixed'));
@@ -2679,9 +2690,55 @@ async function revertAllFixes(): Promise<void> {
 }
 
 /**
- * Highlight all AI redlines in the document.
- * Batched approach: queues all searches in one sync, then applies all highlights in a second sync.
- * Reduces N+1 round-trips to just 2.
+ * Look up a Content Control by its tag within the current Word.run context.
+ * Returns the CC's range if found, null otherwise.
+ * Used by apply, undo, and batch-apply to precisely target redline locations.
+ */
+async function findContentControlByTag(
+  tag: string,
+  context: Word.RequestContext
+): Promise<{ range: Word.Range; cc: Word.ContentControl } | null> {
+  // CC tags are prefixed with 'cr-' to avoid collision with other add-ins
+  const prefixedTag = tag.startsWith('cr-') ? tag : `cr-${tag}`;
+  const ccCollection = context.document.contentControls.getByTag(prefixedTag);
+  ccCollection.load('items');
+  await context.sync();
+  if (ccCollection.items.length > 0) {
+    const cc = ccCollection.items[0];
+    const range = cc.getRange();
+    return { range, cc };
+  }
+  return null;
+}
+
+/**
+ * Remove all ContraRed Content Controls from the document (preserving content).
+ * Called before re-scanning to clear stale anchors.
+ */
+async function clearContraRedContentControls(): Promise<void> {
+  try {
+    await Word.run(async (context) => {
+      const ccs = context.document.contentControls;
+      ccs.load('items/tag');
+      await context.sync();
+      for (const cc of ccs.items) {
+        // ContraRed CC tags are prefixed with 'cr-' to avoid collision with other add-ins
+        if (cc.tag && cc.tag.startsWith('cr-')) {
+          cc.delete(false); // false = keep content, just remove the CC wrapper
+        }
+      }
+      await context.sync();
+      log.info(`Cleared ${ccs.items.length} Content Controls from previous scan`);
+    });
+  } catch (error) {
+    log.warn('Failed to clear Content Controls:', error);
+  }
+}
+
+/**
+ * Highlight all AI redlines in the document and wrap each in a Content Control.
+ * Batched approach: queues all searches in one sync, then applies highlights + CCs in a second sync.
+ * Content Controls persist across Word.run contexts, enabling precise fix targeting later.
  */
 async function highlightAIRedlines(redlines: RedlineItem[]): Promise<void> {
   if (!redlines.length) return;
@@ -2697,20 +2754,64 @@ async function highlightAIRedlines(redlines: RedlineItem[]): Promise<void> {
       });
       await context.sync();
 
-      // Apply all highlights
+      // Also load paragraphs if any redline has paragraph_index for disambiguation
+      const hasParagraphIndices = redlines.some(r => r.paragraph_index !== undefined && r.paragraph_index !== null);
+      let paragraphs: Word.ParagraphCollection | null = null;
+      if (hasParagraphIndices) {
+        paragraphs = body.paragraphs;
+        paragraphs.load('items/text');
+        await context.sync();
+      }
+
+      // Apply highlights and wrap each found range in a Content Control
       for (const { redline, results } of searchSets) {
         if (results.items.length > 0) {
-          let highlightColor: string;
-          if (redline.redline_type === 'missing') {
-            highlightColor = '#93C5FD'; // Blue for insertion points
-          } else {
-            highlightColor = redline.risk_level === 'RED' ? '#F87171' : '#FEF08A';
+          // Use paragraph_index to pick the right match when duplicates exist
+          let targetRange = results.items[0];
+          if (results.items.length > 1 && redline.paragraph_index !== undefined && redline.paragraph_index !== null && paragraphs) {
+            // Find the match closest to the expected paragraph
+            try {
+              const targetPara = paragraphs.items[redline.paragraph_index];
+              if (targetPara) {
+                const targetParaRange = targetPara.getRange();
+                // Check each result to see which one is in the target paragraph
+                for (const item of results.items) {
+                  const parentPara = item.paragraphs.getFirst();
+                  parentPara.load('text');
+                }
+                await context.sync();
+                for (let ri = 0; ri < results.items.length; ri++) {
+                  try {
+                    const parentText = results.items[ri].paragraphs.getFirst().text;
+                    if (parentText === targetPara.text) {
+                      targetRange = results.items[ri];
+                      break;
+                    }
+                  } catch { /* skip */ }
+                }
+              }
+            } catch {
+              // Fall back to first match
+            }
           }
-          results.items[0].font.highlightColor = highlightColor;
+          // Light gray highlight just marks location — risk level shown in taskpane
+          const highlightColor = 'Silver';
+          targetRange.font.highlightColor = highlightColor;
+
+          // Wrap in Content Control for persistent anchoring
+          try {
+            const cc = targetRange.insertContentControl();
+            cc.tag = `cr-${redline.id}`;
+            cc.title = redline.rule_name || 'ContraRed Risk';
+            cc.appearance = Word.ContentControlAppearance.hidden;
+          } catch {
+            // Content Control creation may fail on overlapping ranges — highlight still works
+            log.warn(`Could not create Content Control for: ${redline.rule_name}`);
+          }
         }
       }
       await context.sync();
-      log.info(`Highlighted ${redlines.length} redlines in document`);
+      log.info(`Highlighted ${redlines.length} redlines in document (with Content Controls)`);
     });
   } catch (error) {
     log.error('Bulk highlight error:', error);
@@ -2798,12 +2899,11 @@ async function applyAIRedline(redline: RedlineItem, cardElement: HTMLElement, fi
   try {
     let surgicalSuccess = false;
 
-    // PRIMARY APPROACH: Edit-based surgical replacement
-    // When fix_edits are available, apply each find/replace individually in the document.
-    // This is more precise than replacing the entire clause range.
-    // Falls back to full-range replacement when edits aren't available.
+    // PRIMARY APPROACH: Content Control–scoped surgical replacement
+    // 1. Look up the CC by tag (set during highlight) for precise targeting
+    // 2. When fix_edits available, batch all searches then all replacements (2 syncs)
+    // 3. Falls back to full-range replacement, then OOXML if needed
     if (redline.redline_type !== 'missing') {
-      // Check for stored edits
       const editsJson = cardElement.dataset.fixEdits;
       const fixEdits: Array<{find: string; replace: string}> = editsJson ? JSON.parse(editsJson) : [];
 
@@ -2817,43 +2917,61 @@ async function applyAIRedline(redline: RedlineItem, cardElement: HTMLElement, fi
             log.warn('Could not enable ChangeTrackingMode:', trackErr);
           }
 
+          // Try Content Control lookup first for precise targeting
+          const ccResult = await findContentControlByTag(redline.id, context);
+          const searchScope = ccResult ? ccResult.range : context.document.body;
+
+          // Clear scan highlight from the ENTIRE clause before applying edits
+          // (surgical edits only touch small phrases — the rest of the clause would keep its color)
+          if (ccResult) {
+            ccResult.range.font.set({ highlightColor: null as unknown as string });
+            await context.sync();
+          }
+
           if (fixEdits.length > 0) {
-            // EDIT-BASED APPLY: Apply each find/replace pair individually
-            const body = context.document.body;
+            // BATCHED EDIT-BASED APPLY: search all edits in one sync, replace all in another
+            const editSearches = fixEdits
+              .filter(edit => edit.find)
+              .map(edit => {
+                const searchText = edit.find.length <= 255 ? edit.find : edit.find.slice(0, 255);
+                const results = searchScope.search(searchText, { matchCase: true, matchWholeWord: false });
+                results.load('items');
+                return { edit, results };
+              });
+            await context.sync(); // ONE sync for all searches
+
             let appliedCount = 0;
-
-            for (const edit of fixEdits) {
-              if (!edit.find) continue;
-              // Search for the exact 'find' text (up to Word's 255 char limit)
-              const searchText = edit.find.length <= 255
-                ? edit.find
-                : edit.find.slice(0, 255);
-              const searchResults = body.search(searchText, { matchCase: true, matchWholeWord: false });
-              searchResults.load('items');
-              await context.sync();
-
-              if (searchResults.items.length > 0) {
-                // Replace the first match
-                searchResults.items[0].insertText(edit.replace, Word.InsertLocation.replace);
-                await context.sync();
+            // Apply replacements in reverse order to preserve earlier ranges
+            for (let i = editSearches.length - 1; i >= 0; i--) {
+              const { edit, results } = editSearches[i];
+              if (results.items.length > 0) {
+                // Clear scan highlight before replacing so fix text doesn't inherit red/yellow color
+                results.items[0].font.set({ highlightColor: null as unknown as string });
+                results.items[0].insertText(edit.replace, Word.InsertLocation.replace);
                 appliedCount++;
                 log.info(`Edit applied: "${edit.find.slice(0, 40)}..." → "${edit.replace.slice(0, 40)}..."`);
               } else {
-                log.warn(`Edit find text not found in document: "${edit.find.slice(0, 60)}..."`);
+                log.warn(`Edit find text not found: "${edit.find.slice(0, 60)}..."`);
               }
             }
+            await context.sync(); // ONE sync for all replacements
 
             if (appliedCount > 0) {
               surgicalSuccess = true;
-              log.info(`Edit-based apply: ${appliedCount}/${fixEdits.length} edits applied`);
+              log.info(`Batched edit apply: ${appliedCount}/${fixEdits.length} edits applied`);
             } else {
               throw new Error('SURGICAL_NO_RANGE');
             }
           } else {
-            // FALLBACK: Full-range replacement (legacy path)
-            const result = await findTextInDocument(redline.clause_text, context);
+            // FALLBACK: Full-range replacement
+            // If CC found, use its range directly; otherwise search the document
+            let targetRange: Word.Range | null = ccResult ? ccResult.range : null;
+            if (!targetRange) {
+              const result = await findTextInDocument(redline.clause_text, context);
+              targetRange = result.range;
+            }
 
-            if (!result.range) {
+            if (!targetRange) {
               throw new Error('SURGICAL_NO_RANGE');
             }
 
@@ -2862,12 +2980,14 @@ async function applyAIRedline(redline: RedlineItem, cardElement: HTMLElement, fi
               throw new Error('SURGICAL_NO_DIFFS');
             }
 
-            result.range.insertText(textToApply, Word.InsertLocation.replace);
+            // Clear scan highlight before replacing so fix text doesn't inherit red/yellow color
+            targetRange.font.set({ highlightColor: null as unknown as string });
+            targetRange.insertText(textToApply, Word.InsertLocation.replace);
             await context.sync();
 
             // Add a comment explaining the redline
             try {
-              result.range.insertComment(`ContraRed: ${redline.explanation || redline.rule_name || 'AI-suggested revision'}`);
+              targetRange.insertComment(`ContraRed: ${redline.explanation || redline.rule_name || 'AI-suggested revision'}`);
               await context.sync();
             } catch (commentErr) {
               log.warn('Could not insert comment:', commentErr);
@@ -2909,24 +3029,34 @@ async function applyAIRedline(redline: RedlineItem, cardElement: HTMLElement, fi
           log.warn('Could not enable ChangeTrackingMode:', trackErr);
         }
 
-        const result = await findTextInDocument(redline.clause_text, context);
+        // Try CC lookup first, then fallback to text search
+        const ccResult = await findContentControlByTag(redline.id, context);
+        let targetRange: Word.Range | null = ccResult ? ccResult.range : null;
 
-        if (!result.range) {
+        if (!targetRange) {
+          const result = await findTextInDocument(redline.clause_text, context);
+          targetRange = result.range;
+        }
+
+        if (!targetRange) {
           showToastOnCard(cardElement, 'Could not locate this clause — text may have been modified');
           return;
         }
 
+        // Clear scan highlight before applying OOXML so fix text doesn't inherit red/yellow color
+        targetRange.font.set({ highlightColor: null as unknown as string });
+
         // Apply the Track Changes OOXML (fallback path)
         if (redline.redline_type === 'missing') {
-          result.range.insertOoxml(redlineResponse.ooxml, Word.InsertLocation.after);
+          targetRange.insertOoxml(redlineResponse.ooxml, Word.InsertLocation.after);
         } else {
-          result.range.insertOoxml(redlineResponse.ooxml, Word.InsertLocation.replace);
+          targetRange.insertOoxml(redlineResponse.ooxml, Word.InsertLocation.replace);
         }
         await context.sync();
 
         // After applying the fix, add a comment explaining the redline
         try {
-          result.range.insertComment(`ContraRed: ${redline.explanation || redline.rule_name || 'AI-suggested revision'}`);
+          targetRange.insertComment(`ContraRed: ${redline.explanation || redline.rule_name || 'AI-suggested revision'}`);
           await context.sync();
         } catch (commentErr) {
           log.warn('Could not insert comment:', commentErr);
@@ -2936,30 +3066,12 @@ async function applyAIRedline(redline: RedlineItem, cardElement: HTMLElement, fi
       });
     }
 
-    // Store precise location info for undo targeting (runs after either path)
-    await Word.run(async (context) => {
-      let paragraphIndex = -1;
-      try {
-        const body = context.document.body;
-        const allParas = body.paragraphs;
-        allParas.load('items/text');
-        await context.sync();
-        for (let pi = 0; pi < allParas.items.length; pi++) {
-          if (allParas.items[pi].text.includes(textToApply.substring(0, 50))) {
-            paragraphIndex = pi;
-            break;
-          }
-        }
-        const contextHash = paragraphIndex >= 0 ? allParas.items[paragraphIndex].text.substring(0, 100) : '';
-        appliedFixesMap.set(redline.id, {
-          originalText: redline.clause_text,
-          fixText: textToApply,
-          paragraphIndex,
-          contextHash,
-        });
-      } catch (locErr) {
-        log.warn('Could not store fix location for undo:', locErr);
-      }
+    // Store undo info using Content Control tag (no fragile paragraph index)
+    appliedFixesMap.set(redline.id, {
+      originalText: redline.clause_text,
+      fixText: textToApply,
+      paragraphIndex: -1,  // deprecated — CC-based undo is used instead
+      contextHash: '',
     });
 
     // Mark as fixed and store the applied text for undo
@@ -3022,27 +3134,140 @@ async function applyAllRedlines(): Promise<void> {
   const withGeneratedFix = unfixed.filter(r => document.getElementById(`risk-${r.id}`)?.dataset.generatedFix);
 
   if (withGeneratedFix.length > 0) {
-    // Phase 2: Apply all generated fixes
+    // Phase 2: Batched apply — use Content Controls for precise targeting with minimal syncs
+    if (progressText) progressText.textContent = `Applying ${withGeneratedFix.length} fixes...`;
     let applied = 0;
     let failed = 0;
 
-    for (const redline of withGeneratedFix) {
-      if (applyAllCancelled) { if (progressText) progressText.textContent = `Cancelled. ${applied} applied, ${failed} failed.`; break; }
+    try {
+      await Word.run(async (context) => {
+        // Enable track changes once for all edits
+        try {
+          context.document.changeTrackingMode = Word.ChangeTrackingMode.trackAll;
+          await context.sync();
+        } catch (trackErr) {
+          log.warn('Could not enable ChangeTrackingMode:', trackErr);
+        }
 
-      const pct = ((applied + failed) / withGeneratedFix.length) * 100;
-      if (progressFill) progressFill.style.width = `${pct}%`;
-      if (progressText) progressText.textContent = `Applying ${applied + failed + 1} / ${withGeneratedFix.length}`;
+        // Phase A: Load all Content Controls by tag in ONE sync
+        const ccLookups = withGeneratedFix.map(redline => ({
+          redline,
+          cc: context.document.contentControls.getByTag(`cr-${redline.id}`),
+        }));
+        ccLookups.forEach(l => l.cc.load('items'));
+        await context.sync();
 
-      const card = document.getElementById(`risk-${redline.id}`);
-      const fixText = card?.dataset.generatedFix;
-      if (!card || !fixText) { failed++; continue; }
+        if (applyAllCancelled) return;
 
-      try {
-        await applyAIRedline(redline, card, fixText);
-        applied++;
-      } catch {
-        failed++;
-      }
+        // Phase B: For each fix, queue searches within its CC range
+        const body = context.document.body;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const editPlans: Array<{ results: any; edit: { find: string; replace: string }; redlineId: string }> = [];
+        const fullReplacePlans: Array<{ range: Word.Range; fixText: string; redline: RedlineItem }> = [];
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const fallbackSearchPlans: Array<{ results: any; fixText: string; redline: RedlineItem }> = [];
+
+        for (const { redline, cc } of ccLookups) {
+          const card = document.getElementById(`risk-${redline.id}`);
+          if (!card) { failed++; continue; }
+          const fixText = card.dataset.generatedFix;
+          if (!fixText) { failed++; continue; }
+
+          const editsJson = card.dataset.fixEdits;
+          const fixEdits: Array<{find: string; replace: string}> = editsJson ? JSON.parse(editsJson) : [];
+          const hasCC = cc.items.length > 0;
+          const searchScope = hasCC ? cc.items[0].getRange() : body;
+
+          // Clear scan highlight from entire clause so fix text is clean
+          if (hasCC) {
+            cc.items[0].getRange().font.set({ highlightColor: null as unknown as string });
+          }
+
+          if (fixEdits.length > 0 && redline.redline_type !== 'missing') {
+            // Queue surgical edit searches within CC range (or body as fallback)
+            for (const edit of fixEdits) {
+              if (!edit.find) continue;
+              const searchText = edit.find.length <= 255 ? edit.find : edit.find.slice(0, 255);
+              const results = searchScope.search(searchText, { matchCase: true, matchWholeWord: false });
+              results.load('items');
+              editPlans.push({ results, edit, redlineId: redline.id });
+            }
+          } else if (hasCC) {
+            // Full-range replacement using CC range (safe — CC wraps the clause)
+            fullReplacePlans.push({ range: cc.items[0].getRange(), fixText, redline });
+          } else {
+            // No CC found — search for the clause text in body (NEVER use body directly as range)
+            const clauseSearch = redline.clause_text.slice(0, 255);
+            const results = body.search(clauseSearch, { matchCase: false, matchWholeWord: false });
+            results.load('items');
+            fallbackSearchPlans.push({ results, fixText, redline });
+          }
+        }
+        await context.sync(); // ONE sync for all searches
+
+        if (applyAllCancelled) return;
+
+        // Resolve fallback searches into full-replace plans
+        for (const { results, fixText, redline } of fallbackSearchPlans) {
+          if (results.items.length > 0) {
+            fullReplacePlans.push({ range: results.items[0], fixText, redline });
+          } else {
+            failed++;
+            log.warn(`Batch apply: could not locate clause for ${redline.rule_name}`);
+          }
+        }
+
+        // Phase C: Apply all replacements
+        const appliedIds = new Set<string>();
+
+        // Apply surgical edits in reverse order to preserve ranges
+        for (let i = editPlans.length - 1; i >= 0; i--) {
+          const { results, edit, redlineId } = editPlans[i];
+          if (results.items.length > 0) {
+            // Clear scan highlight so fix text doesn't inherit red/yellow color
+            results.items[0].font.set({ highlightColor: null as unknown as string });
+            results.items[0].insertText(edit.replace, Word.InsertLocation.replace);
+            appliedIds.add(redlineId);
+          }
+        }
+
+        // Apply full-range replacements
+        for (const { range, fixText, redline } of fullReplacePlans) {
+          try {
+            // Clear scan highlight so fix text doesn't inherit red/yellow color
+            range.font.set({ highlightColor: null as unknown as string });
+            range.insertText(fixText, Word.InsertLocation.replace);
+            appliedIds.add(redline.id);
+          } catch {
+            failed++;
+          }
+        }
+
+        await context.sync(); // ONE sync for all replacements
+
+        // Mark all successfully applied
+        for (const id of appliedIds) {
+          fixedRisks.add(id);
+          const card = document.getElementById(`risk-${id}`);
+          if (card) {
+            card.classList.add('fixed');
+            const fixText = card.dataset.generatedFix || '';
+            const redline = withGeneratedFix.find(r => r.id === id);
+            if (redline) {
+              appliedFixesMap.set(id, {
+                originalText: redline.clause_text,
+                fixText,
+                paragraphIndex: -1,
+                contextHash: '',
+              });
+            }
+          }
+          applied++;
+        }
+        saveScanState();
+      });
+    } catch (err) {
+      log.error('Batch apply error:', err);
     }
 
     if (!applyAllCancelled) {
@@ -3179,6 +3404,40 @@ async function getDocumentText(): Promise<string> {
     body.load('text');
     await context.sync();
     return body.text;
+  });
+}
+
+/** Paragraph data sent to backend for indexed extraction. */
+interface ParagraphData {
+  index: number;
+  text: string;
+  style: string;
+}
+
+/**
+ * Extract paragraph-indexed text from the Word document.
+ * Returns structured paragraphs with indices and style names, plus the full text for backward compat.
+ * This enables the backend to return paragraph_index per risk for precise targeting.
+ */
+async function getDocumentParagraphs(): Promise<{ paragraphs: ParagraphData[]; fullText: string }> {
+  return Word.run(async (context) => {
+    const body = context.document.body;
+    const paragraphs = body.paragraphs;
+    paragraphs.load('items/text,items/style');
+    await context.sync();
+
+    const result: ParagraphData[] = [];
+    let fullText = '';
+    for (let i = 0; i < paragraphs.items.length; i++) {
+      const p = paragraphs.items[i];
+      result.push({
+        index: i,
+        text: p.text,
+        style: p.style || '',
+      });
+      fullText += p.text + '\n';
+    }
+    return { paragraphs: result, fullText: fullText.trimEnd() };
   });
 }
 

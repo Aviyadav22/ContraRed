@@ -56,6 +56,7 @@ interface RedlineItem {
     is_deal_breaker?: boolean;
     cross_references?: string[];
     paragraph_hash?: string;
+    paragraph_index?: number;       // Backend-reported paragraph index for precise targeting
 }
 
 interface AnalysisResult {
@@ -443,7 +444,14 @@ class ContraRedAPI {
      * Sends full contract text + playbook to Gemini for holistic analysis.
      * Returns executive summary and redlines with exact-match text anchors.
      */
-    async analyzeWithAI(text: string, filename?: string, playbookId?: string, partySide?: string, jurisdiction?: string): Promise<AnalysisResult> {
+    async analyzeWithAI(
+        text: string,
+        filename?: string,
+        playbookId?: string,
+        partySide?: string,
+        jurisdiction?: string,
+        paragraphs?: Array<{ index: number; text: string; style: string }>
+    ): Promise<AnalysisResult> {
         if (this.analyzeInFlight) {
             throw new Error('Analysis already in progress. Please wait for it to complete.');
         }
@@ -451,7 +459,14 @@ class ContraRedAPI {
         try {
             return await this.request('/documents/analyze', {
                 method: 'POST',
-                body: JSON.stringify({ text, filename, playbook_id: playbookId, party_side: partySide || 'buyer', jurisdiction: jurisdiction || undefined }),
+                body: JSON.stringify({
+                    text,
+                    filename,
+                    playbook_id: playbookId,
+                    party_side: partySide || 'buyer',
+                    jurisdiction: jurisdiction || undefined,
+                    paragraphs: paragraphs || undefined,
+                }),
             });
         } finally {
             this.analyzeInFlight = false;
@@ -667,6 +682,47 @@ class ContraRedAPI {
         const response = await fetch(`${baseUrl}/health`);
         if (!response.ok) throw new Error(`Health check failed: ${response.status}`);
         return response.json();
+    }
+
+    // ========================================================================
+    // Consent Management (DPDP Act)
+    // ========================================================================
+
+    async getConsentStatus(): Promise<{
+        has_consent_record: boolean;
+        purposes: Array<{
+            code: string;
+            name: string;
+            description: string;
+            is_required: boolean;
+            granted: boolean;
+            third_parties: string[];
+        }>;
+    }> {
+        return this.request('/consent/status');
+    }
+
+    async grantConsent(purposeCodes: string[]): Promise<{ consent_record_id: string; granted_purposes: string[] }> {
+        return this.request('/consent/grant', {
+            method: 'POST',
+            body: JSON.stringify({ purpose_codes: purposeCodes }),
+        });
+    }
+
+    /**
+     * Check if user has consented to contract analysis before proceeding.
+     * Returns true if consent is granted, false if not.
+     * If not granted, the caller should show a consent prompt.
+     */
+    async checkAnalysisConsent(): Promise<boolean> {
+        try {
+            const status = await this.getConsentStatus();
+            const analysisPurpose = status.purposes.find(p => p.code === 'contract_analysis');
+            return analysisPurpose?.granted ?? false;
+        } catch {
+            // If consent check fails, allow through (fail open)
+            return true;
+        }
     }
 }
 

@@ -14,41 +14,40 @@ export default function TextReveal({ children, as: Tag = 'h2', className = '' }:
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!ref.current) return
+    const el = ref.current
+    if (!el) return
 
-    const words = ref.current.querySelectorAll('.word')
+    const words = el.querySelectorAll('.word')
+    const underline = el.querySelector('.underline-wipe')
+    let trigger: ScrollTrigger | null = null
 
-    gsap.set(words, { y: '115%', opacity: 0 })
+    const raf = requestAnimationFrame(() => {
+      const rect = el.getBoundingClientRect()
+      if (rect.top > window.innerHeight) {
+        // Below the fold — hide and animate on scroll
+        gsap.set(words, { y: '115%', opacity: 0 })
+        if (underline) gsap.set(underline, { scaleX: 0, transformOrigin: 'left' })
 
-    gsap.to(words, {
-      y: '0%',
-      opacity: 1,
-      duration: 0.8,
-      ease: 'power3.out',
-      stagger: 0.08,
-      scrollTrigger: {
-        trigger: ref.current,
-        start: 'top 85%',
-      },
+        trigger = ScrollTrigger.create({
+          trigger: el,
+          start: 'top 90%',
+          once: true,
+          onEnter: () => {
+            gsap.to(words, { y: '0%', opacity: 1, duration: 0.8, ease: 'power3.out', stagger: 0.08 })
+            if (underline) {
+              gsap.to(underline, { scaleX: 1, duration: 0.6, delay: 0.08 * words.length + 0.4, ease: 'power2.out' })
+            }
+          },
+        })
+      }
+      // Already visible — leave it alone
     })
 
-    // Gold underline wipe after text lands
-    const underline = ref.current.querySelector('.underline-wipe')
-    if (underline) {
-      gsap.fromTo(
-        underline,
-        { scaleX: 0, transformOrigin: 'left' },
-        {
-          scaleX: 1,
-          duration: 0.6,
-          delay: 0.08 * words.length + 0.4,
-          ease: 'power2.out',
-          scrollTrigger: {
-            trigger: ref.current,
-            start: 'top 85%',
-          },
-        }
-      )
+    return () => {
+      cancelAnimationFrame(raf)
+      trigger?.kill()
+      words.forEach((w) => gsap.killTweensOf(w))
+      if (underline) gsap.killTweensOf(underline)
     }
   }, [children])
 

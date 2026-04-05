@@ -116,13 +116,13 @@ module.exports = async (env, options) => {
             proxy: [
                 {
                     context: ["/api"],
-                    target: "http://localhost:8000",
+                    target: "http://localhost:8001",
                     changeOrigin: true,
                     secure: false,
                 },
                 {
                     context: ["/health"],
-                    target: "http://localhost:8000",
+                    target: "http://localhost:8001",
                     changeOrigin: true,
                     secure: false,
                 },

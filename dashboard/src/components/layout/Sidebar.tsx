@@ -8,7 +8,6 @@ import {
   PenTool,
   BookOpen,
   Library,
-  Layers,
   GitCompareArrows,
   BarChart3,
   TrendingUp,
@@ -17,6 +16,7 @@ import {
   Users,
   CreditCard,
   Store,
+  ShieldCheck,
   Sun,
   Moon,
   PanelLeftClose,
@@ -64,8 +64,13 @@ const sections: NavSection[] = [
     items: [
       { label: 'Playbooks', icon: BookOpen, path: '/playbooks' },
       { label: 'Clause Library', icon: Library, path: '/clause-library' },
-      { label: 'Templates', icon: Layers, path: '/templates' },
-      { label: 'Compare', icon: GitCompareArrows, path: '/compare' },
+{ label: 'Compare', icon: GitCompareArrows, path: '/compare' },
+    ],
+  },
+  {
+    title: 'COMPLIANCE',
+    items: [
+      { label: 'DPDP Center', icon: ShieldCheck, path: '/dpdp' },
     ],
   },
   {

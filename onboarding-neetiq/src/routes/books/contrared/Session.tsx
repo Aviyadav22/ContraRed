@@ -90,12 +90,11 @@ export default function ContraRedSession() {
 
   // Entrance animation
   useEffect(() => {
-    if (!containerRef.current) return
-    gsap.fromTo(
-      containerRef.current,
-      { opacity: 0 },
-      { opacity: 1, duration: 0.8, ease: 'power2.out' },
-    )
+    const el = containerRef.current
+    if (!el) return
+    gsap.set(el, { opacity: 0 })
+    const tween = gsap.to(el, { opacity: 1, duration: 0.8, ease: 'power2.out' })
+    return () => { tween.kill() }
   }, [id])
 
   // Chapter completion handler
@@ -116,6 +115,15 @@ export default function ContraRedSession() {
     ? sessionData.chapters.every((c) => completedChapterIds.has(c.id))
     : false
 
+  // Quiz completion: navigate to next session or completion
+  const handleQuizComplete = useCallback(() => {
+    if (id >= TOTAL_SESSIONS) {
+      navigate('/completion')
+    } else {
+      navigate(`/contrared/session/${id + 1}`)
+    }
+  }, [id, navigate])
+
   useEffect(() => {
     if (allChaptersComplete && !showQuiz) {
       setShowQuiz(true)
@@ -131,15 +139,6 @@ export default function ContraRedSession() {
   if (!sessionData) {
     return <Navigate to="/contrared" replace />
   }
-
-  // Quiz completion: navigate to next session or completion
-  const handleQuizComplete = useCallback(() => {
-    if (id >= TOTAL_SESSIONS) {
-      navigate('/completion')
-    } else {
-      navigate(`/contrared/session/${id + 1}`)
-    }
-  }, [id, navigate])
 
   // Progress calculation
   const totalChapters = sessionData.chapters.length
@@ -157,7 +156,7 @@ export default function ContraRedSession() {
         label: `Ch ${Math.min(currentChapterCount + 1, totalChapters)} of ${totalChapters}`,
       }}
     >
-      <div ref={containerRef} style={{ opacity: 0 }}>
+      <div ref={containerRef}>
         {/* 3D Hero Scene */}
         <Suspense
           fallback={

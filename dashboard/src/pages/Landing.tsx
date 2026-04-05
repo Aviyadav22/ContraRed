@@ -290,27 +290,7 @@ export default function Landing() {
               fontSize: 14,
             }}
           >
-            <div
-              style={{
-                display: 'flex',
-                gap: 4,
-              }}
-            >
-              {[...Array(5)].map((_, i) => (
-                <div
-                  key={i}
-                  style={{
-                    width: 28,
-                    height: 28,
-                    borderRadius: '50%',
-                    backgroundColor: 'var(--bg-elevated)',
-                    border: '2px solid var(--bg-surface)',
-                    marginLeft: i > 0 ? -8 : 0,
-                  }}
-                />
-              ))}
-            </div>
-            <span style={{ marginLeft: 8 }}>Trusted by 100+ legal teams</span>
+            <span>Built for legal teams that move fast and negotiate smarter.</span>
           </div>
         </div>
       </section>
@@ -742,9 +722,6 @@ export default function Landing() {
         >
           <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
             &copy; 2026 ContraRed. All rights reserved.
-          </span>
-          <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>
-            Built with AI, designed for lawyers.
           </span>
         </div>
       </footer>

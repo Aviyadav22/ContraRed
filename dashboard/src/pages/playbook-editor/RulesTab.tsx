@@ -44,14 +44,14 @@ export function RulesTab({
             {/* Title row */}
             <div className="flex justify-between items-center mb-8">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900">Rules ({rules.length})</h1>
-                    <p className="text-sm text-slate-500 mt-1">
+                    <h1 className="text-2xl font-bold text-[var(--text-primary)]">Rules ({rules.length})</h1>
+                    <p className="text-sm text-[var(--text-muted)] mt-1">
                         Detection rules applied when scanning documents with this playbook.
                     </p>
                 </div>
                 <button
                     onClick={() => setShowAddRule(true)}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white text-sm font-semibold rounded-lg hover:bg-slate-800 transition-colors"
+                    className="flex items-center gap-2 px-5 py-2.5 bg-[var(--accent)] text-white text-sm font-semibold rounded-lg hover:bg-[var(--accent-hover)] transition-colors"
                 >
                     <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
                     Add Rule
@@ -60,8 +60,8 @@ export function RulesTab({
 
             {/* Add Rule Panel */}
             {showAddRule && (
-                <div className="bg-white rounded-xl border border-slate-200 p-7 mb-6">
-                    <h3 className="text-base font-bold text-slate-900 mb-5">{editingRuleId ? 'Edit Rule' : 'New Detection Rule'}</h3>
+                <div className="bg-[var(--bg-surface)] rounded-xl border border-[var(--border)] p-7 mb-6">
+                    <h3 className="text-base font-bold text-[var(--text-primary)] mb-5">{editingRuleId ? 'Edit Rule' : 'New Detection Rule'}</h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div>
                             <label className={labelClass}>Clause Type</label>
@@ -96,7 +96,7 @@ export function RulesTab({
                                     <option key={type.value} value={type.value}>{type.label}</option>
                                 ))}
                             </select>
-                            <p className="text-xs text-slate-400 mt-1">
+                            <p className="text-xs text-[var(--text-muted)] mt-1">
                                 {MATCH_TYPES.find(t => t.value === newRule.match_type)?.hint}
                             </p>
                         </div>
@@ -116,7 +116,7 @@ export function RulesTab({
                             <div className="md:col-span-2">
                                 <label className={labelClass}>
                                     Risk Description
-                                    <span className="text-xs text-slate-400 ml-1 font-normal">(what the AI should look for)</span>
+                                    <span className="text-xs text-[var(--text-muted)] ml-1 font-normal">(what the AI should look for)</span>
                                 </label>
                                 <textarea
                                     value={newRule.risk_description || ''}
@@ -131,7 +131,7 @@ export function RulesTab({
                             <div className="md:col-span-2">
                                 <label className={labelClass}>
                                     Acceptable Position
-                                    <span className="text-xs text-slate-400 ml-1 font-normal">(what's OK — prevents false positives)</span>
+                                    <span className="text-xs text-[var(--text-muted)] ml-1 font-normal">(what's OK — prevents false positives)</span>
                                 </label>
                                 <textarea
                                     value={newRule.acceptable_position || ''}
@@ -148,9 +148,9 @@ export function RulesTab({
                                 id="dealBreaker"
                                 checked={newRule.is_deal_breaker}
                                 onChange={(e) => setNewRule(prev => ({ ...prev, is_deal_breaker: e.target.checked }))}
-                                className="w-4 h-4 accent-slate-900 cursor-pointer"
+                                className="w-4 h-4 accent-[var(--accent)] cursor-pointer"
                             />
-                            <label htmlFor="dealBreaker" className="text-sm font-medium text-slate-700 cursor-pointer">
+                            <label htmlFor="dealBreaker" className="text-sm font-medium text-[var(--text-primary)] cursor-pointer">
                                 Deal Breaker
                             </label>
                         </div>
@@ -179,7 +179,7 @@ export function RulesTab({
                                 <button
                                     type="button"
                                     onClick={handleAddPattern}
-                                    className="px-4 py-2.5 text-sm font-medium bg-slate-100 text-slate-700 border border-slate-200 rounded-lg hover:bg-slate-200 transition-colors"
+                                    className="px-4 py-2.5 text-sm font-medium bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border)] rounded-lg hover:bg-[var(--bg-hover)] transition-colors"
                                 >
                                     Add
                                 </button>
@@ -190,7 +190,7 @@ export function RulesTab({
                                         {pattern}
                                         <button
                                             onClick={() => handleRemovePattern(idx)}
-                                            className="bg-transparent border-none text-slate-500 cursor-pointer text-base leading-none p-0 hover:text-slate-700"
+                                            className="bg-transparent border-none text-[var(--text-muted)] cursor-pointer text-base leading-none p-0 hover:text-[var(--text-primary)]"
                                         >&times;</button>
                                     </span>
                                 ))}
@@ -198,10 +198,10 @@ export function RulesTab({
                         </div>
                         )}
                     </div>
-                    <div className="flex justify-end gap-3 mt-6 pt-5 border-t border-slate-100">
+                    <div className="flex justify-end gap-3 mt-6 pt-5 border-t border-[var(--border)]">
                         <button
                             onClick={() => { setShowAddRule(false); setEditingRuleId(null); setNewRule({ clause_type: '', primary_position: '', risk_level: 'yellow', match_type: 'exact', is_deal_breaker: false, detection_patterns: [], detection_mode: 'keywords_only' }); setPatternInput(''); }}
-                            className="px-5 py-2.5 text-sm font-medium text-slate-500 bg-transparent border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+                            className="px-5 py-2.5 text-sm font-medium text-[var(--text-muted)] bg-transparent border border-[var(--border)] rounded-lg hover:bg-[var(--bg-surface)] transition-colors"
                         >
                             Cancel
                         </button>
@@ -214,7 +214,7 @@ export function RulesTab({
                                 }
                             }}
                             disabled={!newRule.clause_type || !newRule.primary_position || addRuleMutation.isPending || updateRuleMutation.isPending}
-                            className="px-5 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors disabled:opacity-50"
+                            className="px-5 py-2.5 text-sm font-semibold text-white bg-[var(--accent)] rounded-lg hover:bg-[var(--accent-hover)] transition-colors disabled:opacity-50"
                         >
                             {editingRuleId
                                 ? (updateRuleMutation.isPending ? 'Saving...' : 'Save Rule')
@@ -226,15 +226,15 @@ export function RulesTab({
 
             {/* Rules Table */}
             {rules.length > 0 ? (
-                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <div className="bg-[var(--bg-surface)] rounded-xl border border-[var(--border)] overflow-hidden">
                     <table className="w-full border-collapse">
                         <thead>
-                            <tr className="bg-slate-50 border-b border-slate-200">
-                                <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Clause Type</th>
-                                <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Risk</th>
-                                <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Match</th>
-                                <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Patterns</th>
-                                <th scope="col" className="text-right px-6 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Actions</th>
+                            <tr className="bg-[var(--bg-surface)] border-b border-[var(--border)]">
+                                <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wide">Clause Type</th>
+                                <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wide">Risk</th>
+                                <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wide">Match</th>
+                                <th scope="col" className="text-left px-6 py-3 text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wide">Patterns</th>
+                                <th scope="col" className="text-right px-6 py-3 text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wide">Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -288,15 +288,15 @@ export function RulesTab({
                     </table>
                 </div>
             ) : (
-                <div className="text-center py-16 px-8 bg-white rounded-xl border border-slate-200">
+                <div className="text-center py-16 px-8 bg-[var(--bg-surface)] rounded-xl border border-[var(--border)]">
                     <svg width="48" height="48" fill="none" stroke="var(--text-muted)" viewBox="0 0 24 24" className="mx-auto mb-4">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                     </svg>
-                    <h3 className="text-lg font-semibold text-slate-900 mb-2">No rules yet</h3>
-                    <p className="text-sm text-slate-500 mb-6">Add your first detection rule to start flagging risky clauses.</p>
+                    <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">No rules yet</h3>
+                    <p className="text-sm text-[var(--text-muted)] mb-6">Add your first detection rule to start flagging risky clauses.</p>
                     <button
                         onClick={() => setShowAddRule(true)}
-                        className="px-6 py-2.5 text-sm font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors"
+                        className="px-6 py-2.5 text-sm font-semibold text-white bg-[var(--accent)] rounded-lg hover:bg-[var(--accent-hover)] transition-colors"
                     >
                         Add Rule
                     </button>

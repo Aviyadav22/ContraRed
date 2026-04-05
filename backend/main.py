@@ -240,6 +240,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Default playbook seeding failed: %s — app continues", e)
 
+    # Startup - seed DPDP consent purposes and privacy policy (non-fatal)
+    try:
+        from app.services.seed_consent_defaults import seed_all_consent_defaults
+        from app.db.session import AsyncSessionLocal
+        async with AsyncSessionLocal() as session:
+            await seed_all_consent_defaults(session)
+    except Exception as e:
+        logger.warning("Consent defaults seeding failed: %s — app continues", e)
+
     yield
 
     # Shutdown
@@ -336,11 +345,15 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
 # 0. Request body size limit
 app.add_middleware(MaxBodySizeMiddleware)
 
+# 0.5. Consent enforcement (blocks requests missing required consent)
+from app.middleware.consent_middleware import ConsentEnforcementMiddleware
+app.add_middleware(ConsentEnforcementMiddleware)
+
 # 1. Tenant context for RLS (sets PG session vars from JWT)
 from app.middleware.tenant_context import TenantContextMiddleware
 app.add_middleware(TenantContextMiddleware)
 
-# 1. Security headers on all responses
+# 1.1. Security headers on all responses
 app.add_middleware(SecurityHeadersMiddleware)
 
 # 1.5. Request ID for tracing

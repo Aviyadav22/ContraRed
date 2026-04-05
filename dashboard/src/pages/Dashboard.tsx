@@ -162,14 +162,14 @@ export default function Dashboard() {
                                 {card.icon}
                             </div>
                             <div>
-                                <p style={{ fontSize: 24, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.2 }}>
+                                <div style={{ fontSize: 24, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.2 }}>
                                     {statsLoading ? (
                                         <Skeleton variant="text" width={48} height={24} />
                                     ) : card.value}
-                                </p>
-                                <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
+                                </div>
+                                <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
                                     {card.label}
-                                </p>
+                                </div>
                                 {'extra' in card && card.extra}
                             </div>
                         </div>

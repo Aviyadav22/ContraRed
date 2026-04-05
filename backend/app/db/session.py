@@ -70,7 +70,7 @@ async def init_db():
         return
     async with engine.begin() as conn:
         # Import models to register them
-        from app.models import user, organization, playbook, document, audit_log, feedback, template, billing, analytics  # noqa
+        from app.models import user, organization, playbook, document, audit_log, feedback, template, billing, analytics, consent, compliance_result  # noqa
         await conn.run_sync(Base.metadata.create_all)
 
 

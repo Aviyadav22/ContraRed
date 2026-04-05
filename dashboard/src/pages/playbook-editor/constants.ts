@@ -57,5 +57,5 @@ export const TABS = [
     { key: 'analytics', label: 'Analytics' },
 ];
 
-export const inputClass = "w-full px-3 py-2.5 rounded-lg border border-slate-200 text-sm text-slate-900 outline-none bg-white focus:ring-2 focus:ring-slate-900 focus:border-transparent";
-export const labelClass = "block text-[13px] font-semibold text-slate-700 mb-1.5";
+export const inputClass = "w-full px-3 py-2.5 rounded-lg border border-[var(--border)] text-sm text-[var(--text-primary)] outline-none bg-[var(--bg-surface)] focus:ring-2 focus:ring-[var(--accent)] focus:border-transparent";
+export const labelClass = "block text-[13px] font-semibold text-[var(--text-primary)] mb-1.5";

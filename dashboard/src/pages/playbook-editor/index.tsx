@@ -340,15 +340,15 @@ export default function PlaybookEditor() {
         <AppLayout>
 
             {/* Breadcrumb */}
-            <div className="bg-white border-b border-slate-200">
+            <div className="bg-[var(--bg-surface)] border-b border-[var(--border)]">
                 <div className="max-w-7xl mx-auto px-8 h-12 flex items-center gap-2 text-sm">
-                    <Link to="/playbooks" className="text-slate-500 no-underline font-medium hover:text-slate-700">
+                    <Link to="/playbooks" className="text-[var(--text-muted)] no-underline font-medium hover:text-[var(--text-primary)]">
                         Playbooks
                     </Link>
-                    <span className="text-slate-300">/</span>
-                    <span className="font-semibold text-slate-900">{playbook.name}</span>
+                    <span className="text-[var(--text-muted)]">/</span>
+                    <span className="font-semibold text-[var(--text-primary)]">{playbook.name}</span>
                     <span className={`ml-2 px-2.5 py-0.5 text-xs font-semibold rounded-md ${
-                        playbook.is_public ? 'bg-green-50 text-green-600' : 'bg-slate-100 text-slate-500'
+                        playbook.is_public ? 'bg-green-50 text-green-600' : 'bg-[var(--bg-elevated)] text-[var(--text-muted)]'
                     }`}>
                         {playbook.is_public ? 'Public' : 'Private'}
                     </span>
@@ -356,7 +356,7 @@ export default function PlaybookEditor() {
             </div>
 
             {/* Tab Navigation */}
-            <div className="bg-white border-b border-slate-200">
+            <div className="bg-[var(--bg-surface)] border-b border-[var(--border)]">
                 <div className="max-w-7xl mx-auto px-8">
                     <nav className="flex gap-8">
                         {TABS.map(tab => (
@@ -365,13 +365,13 @@ export default function PlaybookEditor() {
                                 onClick={() => setActiveTab(tab.key)}
                                 className={`relative py-3.5 text-sm font-medium bg-transparent border-none cursor-pointer transition-colors ${
                                     activeTab === tab.key
-                                        ? 'text-slate-900'
-                                        : 'text-slate-400 hover:text-slate-600'
+                                        ? 'text-[var(--text-primary)]'
+                                        : 'text-[var(--text-muted)] hover:text-[var(--text-secondary)]'
                                 }`}
                             >
                                 {tab.label}
                                 {activeTab === tab.key && (
-                                    <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-slate-900 rounded-full" />
+                                    <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--accent)] rounded-full" />
                                 )}
                             </button>
                         ))}

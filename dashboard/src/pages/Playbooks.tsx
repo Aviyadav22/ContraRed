@@ -85,6 +85,10 @@ export default function Playbooks() {
     const deleteMutation = useMutation({
         mutationFn: deletePlaybook,
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['playbooks'] }),
+        onError: (err: Error) => {
+            console.error('Delete failed:', err.message);
+            // Don't let delete errors cascade to logout
+        },
     });
 
     const publishMutation = useMutation({

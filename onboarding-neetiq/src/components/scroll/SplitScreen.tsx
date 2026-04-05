@@ -26,30 +26,44 @@ export default function SplitScreen({
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (!ref.current) return
+    const el = ref.current
+    if (!el) return
 
-    const leftEl = ref.current.querySelector('.split-left')
-    const rightEl = ref.current.querySelector('.split-right')
+    const leftEl = el.querySelector('.split-left')
+    const rightEl = el.querySelector('.split-right')
+    let trigger: ScrollTrigger | null = null
 
-    const tl = gsap.timeline({
-      scrollTrigger: {
-        trigger: ref.current,
-        start: 'top 75%',
-      },
+    const raf = requestAnimationFrame(() => {
+      const rect = el.getBoundingClientRect()
+      if (rect.top > window.innerHeight) {
+        // Below the fold — hide and animate on scroll
+        if (leftEl) gsap.set(leftEl, { x: -50, opacity: 0 })
+        if (rightEl) gsap.set(rightEl, { x: 50, opacity: 0 })
+
+        trigger = ScrollTrigger.create({
+          trigger: el,
+          start: 'top 75%',
+          once: true,
+          onEnter: () => {
+            const tl = gsap.timeline()
+            tl.to(leftEl, { x: 0, opacity: 1, duration: 0.6 })
+            tl.to(rightEl, { x: 0, opacity: 1, duration: 0.6 }, '<0.2')
+            if (leftFade) {
+              tl.to(leftEl, { opacity: 0.3, scale: 0.95, duration: 0.8, delay: 0.5 })
+            }
+            if (rightGlow) {
+              tl.to(rightEl, { boxShadow: '0 0 30px rgba(197,168,128,0.3)', borderColor: '#C5A880', duration: 0.8 }, '<')
+            }
+          },
+        })
+      }
     })
 
-    tl.fromTo(leftEl, { x: -50, opacity: 0 }, { x: 0, opacity: 1, duration: 0.6 })
-    tl.fromTo(rightEl, { x: 50, opacity: 0 }, { x: 0, opacity: 1, duration: 0.6 }, '<0.2')
-
-    if (leftFade) {
-      tl.to(leftEl, { opacity: 0.3, scale: 0.95, duration: 0.8, delay: 0.5 })
-    }
-    if (rightGlow) {
-      tl.to(rightEl, {
-        boxShadow: '0 0 30px rgba(197, 168, 128, 0.3)',
-        borderColor: '#C5A880',
-        duration: 0.8,
-      }, '<')
+    return () => {
+      cancelAnimationFrame(raf)
+      trigger?.kill()
+      if (leftEl) gsap.killTweensOf(leftEl)
+      if (rightEl) gsap.killTweensOf(rightEl)
     }
   }, [leftFade, rightGlow])
 

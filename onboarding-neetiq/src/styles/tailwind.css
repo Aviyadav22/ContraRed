@@ -3,6 +3,13 @@
 
 @import "tailwindcss";
 
+@layer base {
+  html {
+    color: #E8E8E8;
+    background-color: #0A0A0A;
+  }
+}
+
 @theme {
   --color-bg: #0A0A0A;
   --color-surface: #111111;
