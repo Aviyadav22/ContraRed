@@ -109,6 +109,55 @@ export interface CreateClauseData {
 }
 
 // ============================================================================
+// Redline Analysis Types
+// ============================================================================
+
+export interface RedlineItem {
+    id: string;
+    risk_level: 'RED' | 'YELLOW' | 'GREEN';
+    rule_name: string;
+    clause_text: string;
+    clause_type: string;
+    explanation: string;
+    recommendation: string;
+    suggested_fix?: string;
+    fix_edits?: Array<{ find: string; replace: string }>;
+    fix_reasoning?: string;
+    redline_type: 'violation' | 'missing';
+    confidence?: number;
+    confidence_level?: string;
+    confidence_breakdown?: Record<string, number>;
+    verification_status?: string;
+    is_deal_breaker: boolean;
+    cross_references?: string[];
+    statutory_references?: string[];
+    paragraph_index?: number;
+}
+
+export interface AnalysisResult {
+    document_id: string;
+    filename: string;
+    executive_summary: string[];
+    risks: RedlineItem[];
+    total_risks: number;
+    risk_summary: { red: number; yellow: number; green: number };
+    tokens_used: number;
+    jurisdiction?: string;
+    jurisdiction_name?: string;
+    pipeline_partial: boolean;
+    hallucination_stats?: Record<string, unknown>;
+    compliance_scores?: Record<string, Record<string, unknown>>;
+}
+
+export interface GenerateFixResponse {
+    fix_text: string;
+    fix_edits?: Array<{ find: string; replace: string }>;
+    reasoning: string;
+    fix_verified: boolean;
+    fix_warnings?: string[];
+}
+
+// ============================================================================
 // Auth Storage (cookies for tokens, localStorage for user profile only)
 // ============================================================================
 
@@ -1895,4 +1944,76 @@ export async function dpdpRunAssessment(data: {
         method: 'POST',
         body: JSON.stringify(data),
     });
+}
+
+// ============================================================================
+// Contract Redline Analysis API
+// ============================================================================
+
+export async function analyzeContract(text: string, options: {
+    playbook_id?: string;
+    party_side?: 'buyer' | 'seller' | 'neutral';
+    jurisdiction?: string;
+    filename?: string;
+} = {}): Promise<AnalysisResult> {
+    return request('/documents/analyze', {
+        method: 'POST',
+        body: JSON.stringify({
+            text,
+            playbook_id: options.playbook_id || undefined,
+            party_side: options.party_side || 'buyer',
+            jurisdiction: options.jurisdiction || undefined,
+            filename: options.filename || 'pasted-contract.txt',
+        }),
+    });
+}
+
+export async function analyzeClause(clause_text: string, options: {
+    playbook_id?: string;
+    jurisdiction?: string;
+} = {}): Promise<{ risks: RedlineItem[]; tokens_used: number; analysis_time_ms: number }> {
+    return request('/documents/analyze-clause', {
+        method: 'POST',
+        body: JSON.stringify({
+            clause_text,
+            playbook_id: options.playbook_id || undefined,
+            jurisdiction: options.jurisdiction || undefined,
+        }),
+    });
+}
+
+export async function generateFix(params: {
+    original_text: string;
+    recommendation: string;
+    rule_name: string;
+    redline_type: 'violation' | 'missing';
+    surrounding_context?: string;
+    playbook_id?: string;
+    contract_text?: string;
+}): Promise<GenerateFixResponse> {
+    return request('/documents/generate-fix', {
+        method: 'POST',
+        body: JSON.stringify(params),
+    });
+}
+
+export async function exportRedlineReport(params: {
+    filename: string;
+    executive_summary: string[];
+    redlines: Record<string, unknown>[];
+    risk_summary: { red: number; yellow: number; green: number };
+}): Promise<Blob> {
+    const csrfToken = getCsrfToken();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (csrfToken) {
+        headers['X-CSRF-Token'] = csrfToken;
+    }
+    const res = await fetch(`${API_BASE_URL}/documents/export-report`, {
+        method: 'POST',
+        credentials: 'include',
+        headers,
+        body: JSON.stringify(params),
+    });
+    if (!res.ok) throw new Error('Export failed');
+    return res.blob();
 }

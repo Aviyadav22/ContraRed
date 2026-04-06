@@ -31,6 +31,7 @@ const ConsentPreferences = React.lazy(() => import('@/pages/ConsentPreferences')
 const DataRights = React.lazy(() => import('@/pages/DataRights'));
 const ComplianceDashboard = React.lazy(() => import('@/pages/ComplianceDashboard'));
 const DPDPCommandCenter = React.lazy(() => import('@/pages/DPDPCommandCenter'));
+const Redline = React.lazy(() => import('@/pages/redline'));
 
 
 const queryClient = new QueryClient({
@@ -127,6 +128,7 @@ export default function App() {
             <Route path="/playbooks" element={<ProtectedRoute><Playbooks /></ProtectedRoute>} />
             <Route path="/clause-library" element={<ProtectedRoute><ClauseLibrary /></ProtectedRoute>} />
             <Route path="/compare" element={<ProtectedRoute><Compare /></ProtectedRoute>} />
+            <Route path="/redline" element={<ProtectedRoute><Redline /></ProtectedRoute>} />
             <Route path="/batch-upload" element={<ProtectedRoute><BatchUpload /></ProtectedRoute>} />
             <Route path="/audit-logs" element={<ProtectedRoute><AuditLogs /></ProtectedRoute>} />
             <Route path="/settings/privacy" element={<ProtectedRoute><ConsentPreferences /></ProtectedRoute>} />

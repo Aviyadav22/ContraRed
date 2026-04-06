@@ -9,6 +9,7 @@ import {
   BookOpen,
   Library,
   GitCompareArrows,
+  Scissors,
   BarChart3,
   TrendingUp,
   FileBarChart,
@@ -65,6 +66,7 @@ const sections: NavSection[] = [
       { label: 'Playbooks', icon: BookOpen, path: '/playbooks' },
       { label: 'Clause Library', icon: Library, path: '/clause-library' },
 { label: 'Compare', icon: GitCompareArrows, path: '/compare' },
+      { label: 'AI Redlining', icon: Scissors, path: '/redline' },
     ],
   },
   {
