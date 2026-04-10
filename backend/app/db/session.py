@@ -17,13 +17,10 @@ connect_args = {
 }
 _is_supabase = "supabase.com" in settings.DATABASE_URL or "supabase.co" in settings.DATABASE_URL
 if _is_supabase:
-    import ssl as _ssl
-    _ctx = _ssl.create_default_context()
-    # Supabase pooler (PgBouncer) connections need relaxed hostname checking
-    # because the pooler hostname differs from the certificate CN.
-    # We still verify the certificate chain (CERT_REQUIRED) but skip hostname match.
-    _ctx.check_hostname = False
-    connect_args["ssl"] = _ctx
+    # Use ssl=True for Supabase connections. The pooler (PgBouncer) uses
+    # certificates that may not pass strict hostname or CA verification
+    # on all platforms. asyncpg's ssl=True creates a permissive SSL context.
+    connect_args["ssl"] = True
     # Transaction pooler (port 6543) requires disabling prepared statements
     if ":6543/" in settings.DATABASE_URL:
         connect_args["statement_cache_size"] = 0
