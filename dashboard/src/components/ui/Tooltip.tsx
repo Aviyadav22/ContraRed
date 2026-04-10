@@ -17,7 +17,7 @@ const positionStyles: Record<TooltipPosition, CSSProperties> = {
 
 export function Tooltip({ content, position = 'top', children }: TooltipProps) {
   const [visible, setVisible] = useState(false);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
+  const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const show = useCallback(() => {
     timerRef.current = setTimeout(() => setVisible(true), 300);

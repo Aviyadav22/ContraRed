@@ -1,7 +1,7 @@
 import { type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { AppLayout } from '@/components/layout';
-import { Card, Badge } from '@/components/ui';
+import { Badge } from '@/components/ui';
 import { Shield, Users, Clock, AlertTriangle, CheckCircle, Globe, FileText } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';

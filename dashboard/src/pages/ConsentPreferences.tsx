@@ -6,9 +6,9 @@ import {
     type ConsentStatus, type ConsentEvent, type ConsentReceipt,
 } from '@/api/client';
 import { AppLayout } from '@/components/layout';
-import { Button, Badge, Card } from '@/components/ui';
+import { Button, Badge } from '@/components/ui';
 import { Modal } from '@/components/ui/Modal';
-import { Shield, Download, Clock, AlertTriangle, Check, X, Info, ChevronDown, ChevronUp } from 'lucide-react';
+import { Shield, Download, Clock, AlertTriangle, Check, ChevronDown, ChevronUp } from 'lucide-react';
 
 const sectionStyle: CSSProperties = {
     marginBottom: 32,
@@ -321,7 +321,7 @@ export default function ConsentPreferences() {
 
             {/* Withdraw All Modal */}
             {showWithdrawAll && (
-                <Modal title="Withdraw All Optional Consents" onClose={() => setShowWithdrawAll(false)}>
+                <Modal open={true} title="Withdraw All Optional Consents" onClose={() => setShowWithdrawAll(false)}>
                     <div style={{ padding: 24 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
                             <AlertTriangle size={24} style={{ color: 'var(--red)' }} />
@@ -343,7 +343,7 @@ export default function ConsentPreferences() {
 
             {/* Privacy Policy Modal */}
             {showPolicy && (
-                <Modal title="Privacy Policy" onClose={() => setShowPolicy(false)}>
+                <Modal open={true} title="Privacy Policy" onClose={() => setShowPolicy(false)}>
                     <div style={{ padding: 24, maxHeight: '60vh', overflowY: 'auto' }}>
                         {policy ? (
                             <>

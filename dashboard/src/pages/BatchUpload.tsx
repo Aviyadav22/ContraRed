@@ -14,7 +14,7 @@ import {
 } from '@/api/client';
 import { AppLayout } from '@/components/layout';
 import { Button, Card, Badge, SelectInput } from '@/components/ui';
-import { Upload, X, RotateCcw, Download, ChevronDown, ChevronRight, Check, AlertTriangle, Shield, FileText } from 'lucide-react';
+import { Upload, X, RotateCcw, Download, ChevronDown, ChevronRight, Check, AlertTriangle, FileText } from 'lucide-react';
 
 const MAX_FILES = 10;
 const ACCEPTED_EXT = '.docx';

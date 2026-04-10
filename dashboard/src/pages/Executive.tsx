@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useState, type CSSProperties } from 'react';
+import { useState } from 'react';
 import { getExecutiveDashboard } from '@/api/client';
 import { AppLayout } from '@/components/layout';
 import { Card, SelectInput } from '@/components/ui';

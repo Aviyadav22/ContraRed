@@ -3,7 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import { compareContracts, listPlaybooks, type CompareResponse, type DiffChange, type Playbook } from '@/api/client';
 import { AppLayout } from '@/components/layout';
 import { Button, Badge, SelectInput, TextareaInput } from '@/components/ui';
-import { ArrowLeftRight, RotateCcw, X } from 'lucide-react';
+import { ArrowLeftRight, RotateCcw } from 'lucide-react';
 
 const CHANGE_STYLES: Record<string, { bg: string; border: string; badgeVariant: 'low' | 'critical' | 'high' }> = {
     added: { bg: 'var(--risk-low-bg)', border: 'var(--risk-low-border)', badgeVariant: 'low' },

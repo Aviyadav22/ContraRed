@@ -1,10 +1,10 @@
 import { useState, type CSSProperties } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { AppLayout } from '@/components/layout';
-import { Button, Badge, Card } from '@/components/ui';
+import { Button, Badge } from '@/components/ui';
 import { Modal } from '@/components/ui/Modal';
 import { TextareaInput, TextInput, SelectInput } from '@/components/ui/Input';
-import { FileText, Trash2, Edit3, UserPlus, AlertCircle, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { FileText, Trash2, Edit3, UserPlus, AlertCircle } from 'lucide-react';
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 function apiRequest<T = any>(endpoint: string, options?: RequestInit): Promise<T> {
@@ -185,7 +185,7 @@ export default function DataRights() {
 
             {/* Modals */}
             {showAccessModal && (
-                <Modal title="Export Your Data" onClose={() => setShowAccessModal(false)}>
+                <Modal open={true} title="Export Your Data" onClose={() => setShowAccessModal(false)}>
                     <div style={{ padding: 24 }}>
                         <p style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 16 }}>
                             We will prepare a complete export of all personal data we hold about you. This is your right under DPDP Act Section 11.
@@ -202,7 +202,7 @@ export default function DataRights() {
             )}
 
             {showCorrectionModal && (
-                <Modal title="Request Data Correction" onClose={() => setShowCorrectionModal(false)}>
+                <Modal open={true} title="Request Data Correction" onClose={() => setShowCorrectionModal(false)}>
                     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
                         <TextInput label="Field to Correct" value={correctionField} onChange={e => setCorrectionField(e.target.value)} placeholder="e.g., name, email" />
                         <TextInput label="Current Value" value={correctionCurrent} onChange={e => setCorrectionCurrent(e.target.value)} placeholder="What it currently shows" />
@@ -219,7 +219,7 @@ export default function DataRights() {
             )}
 
             {showErasureModal && (
-                <Modal title="Delete Your Account" onClose={() => setShowErasureModal(false)}>
+                <Modal open={true} title="Delete Your Account" onClose={() => setShowErasureModal(false)}>
                     <div style={{ padding: 24 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16, padding: 16, borderRadius: 8, backgroundColor: 'rgba(239,68,68,0.1)' }}>
                             <AlertCircle size={24} style={{ color: 'var(--red)', flexShrink: 0 }} />
@@ -240,7 +240,7 @@ export default function DataRights() {
             )}
 
             {showNominationModal && (
-                <Modal title="Nominate Representative" onClose={() => setShowNominationModal(false)}>
+                <Modal open={true} title="Nominate Representative" onClose={() => setShowNominationModal(false)}>
                     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
                         <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: 0 }}>
                             Under DPDP Act Section 14, you can designate someone to exercise your data rights in case of death or incapacity.
@@ -259,7 +259,7 @@ export default function DataRights() {
             )}
 
             {showGrievanceModal && (
-                <Modal title="File Grievance" onClose={() => setShowGrievanceModal(false)}>
+                <Modal open={true} title="File Grievance" onClose={() => setShowGrievanceModal(false)}>
                     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 12 }}>
                         <SelectInput label="Category" value={grievanceCategory} onChange={e => setGrievanceCategory(e.target.value)}>
                             <option value="consent_violation">Consent Violation</option>

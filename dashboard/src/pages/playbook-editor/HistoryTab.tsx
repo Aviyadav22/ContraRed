@@ -9,7 +9,7 @@ export interface HistoryTabProps {
     snapshotSummary: string;
     setSnapshotSummary: (v: string) => void;
     createSnapshotMutation: UseMutationResult<PlaybookVersionSummary, Error, void>;
-    rollbackMutation: UseMutationResult<void, Error, string>;
+    rollbackMutation: UseMutationResult<PlaybookVersionSummary, Error, string, unknown>;
 }
 
 export function HistoryTab({

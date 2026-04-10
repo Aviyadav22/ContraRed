@@ -1,21 +1,20 @@
 import { type CSSProperties, useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { AppLayout } from '@/components/layout';
-import { Card, Badge, Button } from '@/components/ui';
+import { Badge, Button } from '@/components/ui';
 import {
     Shield, AlertTriangle, CheckCircle, Clock, FileText,
     Search, ClipboardList, Wrench, Bell, Scale,
-    ChevronDown, ChevronRight, Upload, Download, ArrowRight,
+    ChevronDown, ChevronRight, Download, ArrowRight,
 } from 'lucide-react';
 import {
     dpdpGetDashboard, dpdpScanContract, dpdpGetTemplates, dpdpRemediate,
     dpdpGenerateReport, dpdpGetReportHistory, dpdpSearchRegulation,
-    dpdpGetAssessmentQuestions, dpdpRunAssessment, dpdpGetConsentHealth,
+    dpdpGetAssessmentQuestions, dpdpRunAssessment,
     type DPDPDashboard, type DPDPScanResult, type DPDPContractFinding,
     type DPDPRemediationOutput, type DPDPDeadline, type DPDPAlert,
     type DPDPAssessmentQuestion,
 } from '@/api/client';
-import { TextareaInput, SelectInput } from '@/components/ui/Input';
 
 type Tab = 'overview' | 'scan' | 'assess' | 'remediate' | 'report';
 

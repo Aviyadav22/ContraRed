@@ -7,10 +7,8 @@ import {
     listConditions, createCondition, deleteCondition, addOverride, deleteOverride,
     listDependencies, createDependency, deleteDependency,
     listVersions, createVersionSnapshot, rollbackToVersion,
-    type PlaybookRule, type CreateRuleData,
+    type CreateRuleData,
     type RuleTier,
-    type RuleDependency,
-    type PlaybookVersionSummary,
 } from '@/api/client';
 import { AppLayout } from '@/components/layout';
 import { TABS } from './constants';

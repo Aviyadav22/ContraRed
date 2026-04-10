@@ -5,7 +5,7 @@ import { useFocusTrap } from '@/hooks/useFocusTrap';
 import { listPlaybooks, createPlaybook, deletePlaybook, togglePlaybookPublish, isAdmin, type Playbook } from '@/api/client';
 import { AppLayout } from '@/components/layout';
 import { Button, Badge, Modal, TextInput, TextareaInput } from '@/components/ui';
-import { Plus, Globe, Lock, Pencil, Trash2, FileText } from 'lucide-react';
+import { Plus, Globe, Lock, FileText } from 'lucide-react';
 
 function InlineConfirm({ message, onConfirm, onCancel }: { message: string; onConfirm: () => void; onCancel: () => void }) {
     return (
