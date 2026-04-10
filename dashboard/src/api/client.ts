@@ -164,6 +164,10 @@ export interface GenerateFixResponse {
 const USER_KEY = 'contrared_user';
 
 function getCsrfToken(): string {
+    // First try localStorage (set from login/refresh response body for cross-origin)
+    const stored = localStorage.getItem('contrared_csrf');
+    if (stored) return stored;
+    // Fallback: try cookie (same-origin scenarios)
     const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
     return match ? decodeURIComponent(match[1]) : '';
 }
@@ -201,6 +205,7 @@ export function saveAuth(_tokens: AuthTokens, user: User): void {
 export function clearAuth(): void {
     sessionStorage.removeItem(USER_KEY);
     localStorage.removeItem(USER_KEY);  // Clean up any legacy data
+    localStorage.removeItem('contrared_csrf');
 }
 
 export function isAuthenticated(): boolean {
@@ -274,6 +279,11 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retryCoun
                     credentials: 'include',
                 });
                 if (refreshResp.ok) {
+                    // Store new CSRF token from refresh response
+                    const refreshData = await refreshResp.json().catch(() => ({}));
+                    if (refreshData.csrf_token) {
+                        localStorage.setItem('contrared_csrf', refreshData.csrf_token);
+                    }
                     // Cookies updated by server, retry original request
                     const retryHeaders: Record<string, string> = { ...headers };
                     const newCsrf = getCsrfToken();
@@ -333,6 +343,10 @@ export async function login(email: string, password: string): Promise<{ user: Us
     }
 
     const data = await response.json();
+    // Store CSRF token from response body (cross-origin cookies aren't readable via JS)
+    if (data.csrf_token) {
+        localStorage.setItem('contrared_csrf', data.csrf_token);
+    }
     // Server sets HttpOnly cookies; only store user profile locally
     saveAuth({ access_token: '', refresh_token: '' }, data.user);
     return { user: data.user };
@@ -1153,6 +1167,10 @@ export async function batchAnalyze(files: File[], playbookId?: string): Promise<
                 credentials: 'include',
             });
             if (refreshResp.ok) {
+                const refreshData = await refreshResp.json().catch(() => ({}));
+                if (refreshData.csrf_token) {
+                    localStorage.setItem('contrared_csrf', refreshData.csrf_token);
+                }
                 const retryHeaders: Record<string, string> = {};
                 const newCsrf = getCsrfToken();
                 if (newCsrf) retryHeaders['X-CSRF-Token'] = newCsrf;

@@ -230,6 +230,7 @@ class LoginResponse(BaseModel):
     mfa_setup_required: bool = False
     mfa_challenge_token: Optional[str] = None
     new_ip_detected: Optional[bool] = None
+    csrf_token: Optional[str] = None
     message: Optional[str] = None
 
 
@@ -627,7 +628,7 @@ async def login(
 
     # Set HttpOnly auth cookies
     from app.core.cookies import set_auth_cookies
-    set_auth_cookies(response, access_token, refresh_token)
+    csrf_token = set_auth_cookies(response, access_token, refresh_token)
 
     return {
         "access_token": access_token,
@@ -636,6 +637,7 @@ async def login(
         "mfa_required": False,
         "mfa_challenge_token": None,
         "new_ip_detected": ip_is_new,
+        "csrf_token": csrf_token,
         "user": _user_response_dict(user),
     }
 
@@ -725,11 +727,12 @@ async def refresh_token(
 
     # Set HttpOnly auth cookies
     from app.core.cookies import set_auth_cookies
-    set_auth_cookies(response, new_access, new_refresh)
+    csrf_token = set_auth_cookies(response, new_access, new_refresh)
 
     return Token(
         access_token=new_access,
         refresh_token=new_refresh,
+        csrf_token=csrf_token,
     )
 
 

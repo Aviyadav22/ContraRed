@@ -35,6 +35,7 @@ class Token(BaseModel):
     access_token: str
     refresh_token: str
     token_type: str = "bearer"
+    csrf_token: Optional[str] = None
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
