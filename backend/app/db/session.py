@@ -19,11 +19,10 @@ _is_supabase = "supabase.com" in settings.DATABASE_URL or "supabase.co" in setti
 if _is_supabase:
     import ssl as _ssl
     _ctx = _ssl.create_default_context()
-    if settings.DEBUG:
-        # Only disable verification in local development
-        _ctx.check_hostname = False
-        _ctx.verify_mode = _ssl.CERT_NONE
-    # In production (DEBUG=False), use default CERT_REQUIRED with system CA certs
+    # Supabase pooler (PgBouncer) connections need relaxed hostname checking
+    # because the pooler hostname differs from the certificate CN.
+    # We still verify the certificate chain (CERT_REQUIRED) but skip hostname match.
+    _ctx.check_hostname = False
     connect_args["ssl"] = _ctx
     # Transaction pooler (port 6543) requires disabling prepared statements
     if ":6543/" in settings.DATABASE_URL:
