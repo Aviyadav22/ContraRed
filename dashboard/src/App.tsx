@@ -7,6 +7,7 @@ import { ThemeProvider } from '@/contexts/ThemeContext';
 import { ToastProvider } from '@/contexts/ToastContext';
 import { ToastContainer } from '@/components/ui/Toast';
 import { ConsentBanner } from '@/components/ConsentBanner';
+import { ConsentPromptModal } from '@/components/ConsentPromptModal';
 
 const Landing = React.lazy(() => import('@/pages/Landing'));
 const Login = React.lazy(() => import('@/pages/Login'));
@@ -150,6 +151,7 @@ export default function App() {
           </Routes>
           {/* DPDP consent banner — shown when AI consent not yet granted */}
           {isAuthenticated() && <ConsentBanner />}
+          <ConsentPromptModal />
           </ErrorBoundary>
         </Suspense>
       </BrowserRouter>

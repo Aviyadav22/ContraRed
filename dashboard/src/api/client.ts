@@ -304,6 +304,15 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retryCoun
             throw new Error('Session expired');
         }
         const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+
+        // Intercept 403 consent_required — prompt user and retry on grant
+        if (response.status === 403 && error?.error === 'consent_required' && Array.isArray(error.required_purposes)) {
+            const { requestConsent } = await import('./consentPrompt');
+            await requestConsent(error.required_purposes);
+            // User granted consent — retry the original request
+            return request<T>(endpoint, options, 0);
+        }
+
         // Sanitize error messages to prevent backend detail leakage
         const MAX_ERROR_LENGTH = 200;
         const rawDetail = typeof error === 'object' && error !== null ? (error as any).detail : String(error);
