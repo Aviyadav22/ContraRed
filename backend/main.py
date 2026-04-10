@@ -61,7 +61,7 @@ logging.basicConfig(
 )
 logging.getLogger().addFilter(_sensitive_filter)
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
