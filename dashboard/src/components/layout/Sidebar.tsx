@@ -267,36 +267,21 @@ export function Sidebar({
           minHeight: 56,
         }}
       >
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div
+        <div
+          style={{ display: 'flex', alignItems: 'center', gap: 0, cursor: collapsed ? 'pointer' : 'default' }}
+          onClick={collapsed ? onToggleCollapse : undefined}
+          title={collapsed ? 'Expand sidebar' : undefined}
+        >
+          <span
             style={{
-              width: 28,
-              height: 28,
-              borderRadius: 6,
-              backgroundColor: '#C0392B',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#FFF',
+              color: '#F8FAFC',
               fontWeight: 700,
-              fontSize: 14,
-              flexShrink: 0,
+              fontSize: 18,
+              whiteSpace: 'nowrap',
             }}
           >
-            C
-          </div>
-          {!collapsed && (
-            <span
-              style={{
-                color: '#F8FAFC',
-                fontWeight: 700,
-                fontSize: 16,
-                whiteSpace: 'nowrap',
-              }}
-            >
-              ContraRed
-            </span>
-          )}
+            <span style={{ color: '#C0392B' }}>C</span>{!collapsed && 'ontraRed'}
+          </span>
         </div>
         {!collapsed && (
           <button
