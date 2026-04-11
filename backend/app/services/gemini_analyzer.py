@@ -440,7 +440,7 @@ class GeminiAnalyzer:
 
         # Sanitize user-supplied inputs before prompt interpolation
         truncation_warning = None
-        # gemini-2.5-flash supports 1M tokens (~4M chars); use 1M chars as safe limit
+        # Gemini 3.x supports 1M tokens (~4M chars); use 1M chars as safe limit
         _MAX_CONTRACT_CHARS = 1_000_000
         safe_contract_text = _sanitize_for_prompt(contract_text, max_length=_MAX_CONTRACT_CHARS)
         if len(contract_text) > _MAX_CONTRACT_CHARS:

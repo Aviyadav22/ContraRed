@@ -150,13 +150,13 @@ class Settings(BaseSettings):
     # Contract data must not transit public Google AI endpoints.
     # Vertex AI provides: project-level IAM, audit logging, data residency.
     VERTEX_PROJECT_ID: str = ""
-    VERTEX_LOCATION: str = "us-central1"  # Gemini models available here
+    VERTEX_LOCATION: str = "global"  # 'global' supports both 2.5 and 3.x models
 
     # Gemini model names (used via Vertex AI, NOT consumer API)
-    GEMINI_MODEL: str = "gemini-2.5-pro"                     # Pro model for all AI tasks
-    GEMINI_ANALYSIS_MODEL: str = "gemini-2.5-pro"            # Pro model for full contract analysis
-    GEMINI_SCOUT_MODEL: str = "gemini-2.5-flash"             # Flash for fast clause extraction
-    GEMINI_SURGEON_MODEL: str = "gemini-2.5-pro"             # Pro for fix generation (quality matters)
+    GEMINI_MODEL: str = "gemini-3.1-pro-preview"             # Pro model for all AI tasks
+    GEMINI_ANALYSIS_MODEL: str = "gemini-3.1-pro-preview"    # Pro model for full contract analysis
+    GEMINI_SCOUT_MODEL: str = "gemini-3-flash-preview"       # Flash for fast clause extraction
+    GEMINI_SURGEON_MODEL: str = "gemini-3.1-pro-preview"     # Pro for fix generation (quality matters)
 
     # AI Provider selection: "gemini" (via Vertex AI) or "azure"
     AI_PROVIDER: str = "gemini"

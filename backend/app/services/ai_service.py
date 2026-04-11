@@ -191,7 +191,7 @@ class AIService:
         user_prompt = f"Risk type: {safe_rule} ({safe_level})\nClause: \"{safe_clause}\"\n\nExplain the risk in ONE sentence (max 20 words):"
         
         if self._use_gemini:
-            # Note: gemini-3-pro-preview is a 'thinking' model that uses tokens for reasoning
+            # Note: gemini-3.1-pro-preview is a 'thinking' model that uses tokens for reasoning
             # It needs higher limits to produce actual output
             return await self._gemini_generate(
                 system=EXPLAIN_SYSTEM_PROMPT,
@@ -238,7 +238,7 @@ class AIService:
         user_prompt = f"Original clause:\n\"{safe_clause}\"\n\nPreferred position: {safe_position}\n\nGenerate replacement text:"
         
         if self._use_gemini:
-            # Note: gemini-3-pro-preview needs ~4000+ tokens for legal clause rewrites
+            # Note: gemini-3.1-pro-preview needs ~4000+ tokens for legal clause rewrites
             # due to internal reasoning before output
             result, tokens = await self._gemini_generate(
                 system=SUGGEST_FIX_SYSTEM_PROMPT,

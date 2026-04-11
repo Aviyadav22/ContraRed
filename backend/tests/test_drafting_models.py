@@ -60,7 +60,7 @@ def test_raw_draft():
         sections=[DraftSection(number="1", heading="Preamble", content="This Agreement...",
                                clause_type="preamble", tier_used="acceptable")],
         defined_terms={"Confidential Information": "means..."},
-        metadata=DraftMetadata(playbook_id="nda-default", model="gemini-2.5-pro",
+        metadata=DraftMetadata(playbook_id="nda-default", model="gemini-3.1-pro-preview",
                                generation_seconds=12.5, tokens_used=4500),
     )
     assert len(rd.sections) == 1
