@@ -224,7 +224,7 @@ export function isAdmin(): boolean {
 // API Request Helper
 // ============================================================================
 
-async function request<T>(endpoint: string, options: RequestInit = {}, retryCount: number = 0): Promise<T> {
+async function request<T>(endpoint: string, options: RequestInit = {}, retryCount: number = 0, timeoutMs: number = 120000): Promise<T> {
     const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         ...(options.headers as Record<string, string>),
@@ -239,9 +239,9 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retryCoun
 
     const url = `${API_BASE_URL}${endpoint}`;
 
-    // AbortController timeout: 2 minutes (matches Word Add-in)
+    // AbortController timeout: configurable, default 2 minutes
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 120000);
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     let response: Response;
     try {
@@ -254,7 +254,8 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retryCoun
     } catch (err) {
         clearTimeout(timeoutId);
         if (err instanceof DOMException && err.name === 'AbortError') {
-            throw new Error('Request timed out after 2 minutes. The server may be slow or unreachable.');
+            const mins = Math.round(timeoutMs / 60000);
+            throw new Error(`Request timed out after ${mins} minute${mins > 1 ? 's' : ''}. The server may be slow or unreachable.`);
         }
         throw err;
     } finally {
@@ -266,7 +267,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retryCoun
     if (retryCount < MAX_RETRIES && (response.status === 429 || response.status >= 500)) {
         const delay = Math.pow(2, retryCount) * 1000; // 1s, 2s
         await new Promise(resolve => setTimeout(resolve, delay));
-        return request<T>(endpoint, options, retryCount + 1);
+        return request<T>(endpoint, options, retryCount + 1, timeoutMs);
     }
 
     if (!response.ok) {
@@ -310,7 +311,7 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retryCoun
             const { requestConsent } = await import('./consentPrompt');
             await requestConsent(error.required_purposes);
             // User granted consent — retry the original request
-            return request<T>(endpoint, options, 0);
+            return request<T>(endpoint, options, 0, timeoutMs);
         }
 
         // Sanitize error messages to prevent backend detail leakage
@@ -1992,7 +1993,7 @@ export async function analyzeContract(text: string, options: {
             jurisdiction: options.jurisdiction || undefined,
             filename: options.filename || 'pasted-contract.txt',
         }),
-    });
+    }, 0, 600000); // 10 min — AI analysis with thinking model
 }
 
 export async function analyzeClause(clause_text: string, options: {
@@ -2006,7 +2007,7 @@ export async function analyzeClause(clause_text: string, options: {
             playbook_id: options.playbook_id || undefined,
             jurisdiction: options.jurisdiction || undefined,
         }),
-    });
+    }, 0, 300000); // 5 min — single clause AI analysis
 }
 
 export async function generateFix(params: {
@@ -2021,7 +2022,7 @@ export async function generateFix(params: {
     return request('/documents/generate-fix', {
         method: 'POST',
         body: JSON.stringify(params),
-    });
+    }, 0, 600000); // 10 min — AI fix generation with thinking model
 }
 
 export async function exportRedlineReport(params: {
