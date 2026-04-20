@@ -558,13 +558,15 @@ class DraftAgent:
             # numbers/frameworks and fall back to playbook defaults.
             directives: list[str] = []
             if clause_type == "limitation_of_liability" and s.get("liability_cap_months"):
+                cap_m = s["liability_cap_months"]
+                window = "12 months" if cap_m >= 12 else f"{cap_m} months"
                 directives.append(
                     f"MANDATORY: The aggregate liability cap for this clause MUST be "
-                    f"exactly {s['liability_cap_months']} months of fees paid by Customer "
-                    f"in the {('12 months' if s['liability_cap_months'] >= 12 else f'{s['liability_cap_months']} months')} "
+                    f"exactly {cap_m} months of fees paid by Customer "
+                    f"in the {window} "
                     f"preceding the claim. Do NOT substitute a different cap. If the tier "
                     f"would normally use a different cap, override it with "
-                    f"{s['liability_cap_months']} months of fees."
+                    f"{cap_m} months of fees."
                 )
             if clause_type in ("data_security", "dpa") and frameworks_list:
                 directives.append(
