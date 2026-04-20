@@ -54,16 +54,17 @@ const logoBoxStyle: CSSProperties = {
     color: '#FFFFFF',
 };
 
+// Brand panel is always dark — hardcode light text so it's readable in light theme too.
 const logoTextStyle: CSSProperties = {
     fontSize: 28,
     fontWeight: 700,
-    color: 'var(--text-primary)',
+    color: '#F8FAFC',
     letterSpacing: '-0.03em',
 };
 
 const taglineStyle: CSSProperties = {
     fontSize: 16,
-    color: 'var(--text-secondary)',
+    color: '#94A3B8',
     textAlign: 'center',
     maxWidth: 280,
 };
@@ -72,7 +73,7 @@ const trustStyle: CSSProperties = {
     position: 'absolute',
     bottom: 32,
     fontSize: 12,
-    color: 'var(--text-muted)',
+    color: '#64748B',
     textAlign: 'center',
     lineHeight: 1.6,
 };

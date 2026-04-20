@@ -15,6 +15,9 @@ import {
     ClipboardList,
     BarChart3,
     FileBarChart,
+    Scissors,
+    PenTool,
+    ArrowRight,
 } from 'lucide-react';
 
 export default function Dashboard() {
@@ -59,12 +62,29 @@ export default function Dashboard() {
         },
     ];
 
-    const quickActions = [
+    // Primary actions — the flagship features (shown prominently)
+    const primaryActions = [
+        {
+            to: '/redline',
+            title: 'AI Redlining',
+            desc: 'Upload a contract and get instant AI-powered risk analysis with suggested fixes.',
+            icon: <Scissors size={20} />,
+        },
+        {
+            to: '/drafting',
+            title: 'Draft a Contract',
+            desc: 'Generate an NDA or SaaS agreement in minutes using our multi-agent drafting system.',
+            icon: <PenTool size={20} />,
+        },
+    ];
+
+    // Secondary actions — tools a user may also need
+    const secondaryActions = [
         {
             to: '/playbooks',
             title: admin ? 'Manage Playbooks' : 'View Playbooks',
             desc: admin
-                ? 'Create and edit clause detection rules for your contracts.'
+                ? 'Create and edit clause detection rules.'
                 : 'Browse available clause detection playbooks.',
             icon: <BookOpen size={18} />,
         },
@@ -77,27 +97,31 @@ export default function Dashboard() {
         {
             to: '/compare',
             title: 'Compare Contracts',
-            desc: 'Upload two contract versions for side-by-side diff analysis.',
+            desc: 'Side-by-side diff analysis of two contract versions.',
             icon: <GitCompareArrows size={18} />,
         },
         {
             to: '/audit-logs',
             title: 'Audit Logs',
-            desc: 'View activity history and compliance audit trail.',
+            desc: 'Activity history and compliance audit trail.',
             icon: <ClipboardList size={18} />,
         },
-        {
-            to: '/executive',
-            title: 'Executive Dashboard',
-            desc: 'High-level metrics and ROI insights for leadership.',
-            icon: <BarChart3 size={18} />,
-        },
-        {
-            to: '/reports',
-            title: 'Reports',
-            desc: 'Generate and download detailed contract analysis reports.',
-            icon: <FileBarChart size={18} />,
-        },
+        ...(admin
+            ? [
+                {
+                    to: '/executive',
+                    title: 'Executive Dashboard',
+                    desc: 'High-level metrics and ROI insights for leadership.',
+                    icon: <BarChart3 size={18} />,
+                },
+                {
+                    to: '/reports',
+                    title: 'Reports',
+                    desc: 'Generate and download detailed contract analysis reports.',
+                    icon: <FileBarChart size={18} />,
+                },
+            ]
+            : []),
     ];
 
     return (
@@ -177,7 +201,7 @@ export default function Dashboard() {
                 ))}
             </div>
 
-            {/* Quick Actions */}
+            {/* Primary actions — flagship features */}
             <h2
                 style={{
                     fontSize: 16,
@@ -186,16 +210,79 @@ export default function Dashboard() {
                     marginBottom: 16,
                 }}
             >
-                Quick Actions
+                Get Started
             </h2>
             <div
                 style={{
                     display: 'grid',
-                    gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+                    gap: 16,
+                    marginBottom: 40,
+                }}
+            >
+                {primaryActions.map(action => (
+                    <Link key={action.to} to={action.to} style={{ textDecoration: 'none', display: 'flex' }}>
+                        <Card
+                            variant="interactive"
+                            padding="spacious"
+                            style={{
+                                flex: 1,
+                                border: '1px solid var(--accent-glow)',
+                                backgroundColor: 'var(--accent-subtle)',
+                            }}
+                        >
+                            <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
+                                <div
+                                    style={{
+                                        width: 40,
+                                        height: 40,
+                                        borderRadius: 'var(--radius-md)',
+                                        backgroundColor: 'var(--accent)',
+                                        color: '#FFFFFF',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        flexShrink: 0,
+                                    }}
+                                >
+                                    {action.icon}
+                                </div>
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                                        <h3 style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>
+                                            {action.title}
+                                        </h3>
+                                        <ArrowRight size={14} style={{ color: 'var(--accent-text)' }} />
+                                    </div>
+                                    <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                                        {action.desc}
+                                    </p>
+                                </div>
+                            </div>
+                        </Card>
+                    </Link>
+                ))}
+            </div>
+
+            {/* Secondary actions — tools */}
+            <h2
+                style={{
+                    fontSize: 16,
+                    fontWeight: 600,
+                    color: 'var(--text-primary)',
+                    marginBottom: 16,
+                }}
+            >
+                Tools
+            </h2>
+            <div
+                style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
                     gap: 16,
                 }}
             >
-                {quickActions.map(action => (
+                {secondaryActions.map(action => (
                     <Link key={action.to} to={action.to} style={{ textDecoration: 'none', display: 'flex' }}>
                         <Card variant="interactive" padding="spacious" style={{ flex: 1 }}>
                             <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>

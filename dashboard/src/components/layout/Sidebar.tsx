@@ -56,6 +56,7 @@ const sections: NavSection[] = [
     title: 'MAIN',
     items: [
       { label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
+      { label: 'AI Redlining', icon: Scissors, path: '/redline' },
       { label: 'Documents', icon: FileText, path: '/batch-upload' },
       { label: 'Drafting', icon: PenTool, path: '/drafting' },
     ],
@@ -65,8 +66,7 @@ const sections: NavSection[] = [
     items: [
       { label: 'Playbooks', icon: BookOpen, path: '/playbooks' },
       { label: 'Clause Library', icon: Library, path: '/clause-library' },
-{ label: 'Compare', icon: GitCompareArrows, path: '/compare' },
-      { label: 'AI Redlining', icon: Scissors, path: '/redline' },
+      { label: 'Compare', icon: GitCompareArrows, path: '/compare' },
     ],
   },
   {
