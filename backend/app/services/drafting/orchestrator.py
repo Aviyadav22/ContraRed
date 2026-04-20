@@ -16,7 +16,7 @@ from app.services.drafting.assembler import Assembler
 
 logger = logging.getLogger(__name__)
 
-_STAGE_TIMEOUT = 120  # seconds per stage
+_STAGE_TIMEOUT = 180  # seconds per stage (parallel clause gen should finish in 20-40s)
 
 
 class DraftingOrchestrator:

@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.drafting.orchestrator import drafting_orchestrator
 from app.services.drafting.renderer.docx_renderer import render_docx
@@ -103,14 +103,21 @@ class SaaSDetailsInput(BaseModel):
 
 
 class GenerateRequest(BaseModel):
+    """Request schema — accepts both canonical and legacy field names."""
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
     contract_type: str
-    perspective: str = "balanced"
+    # Accept both "perspective" (canonical) and "drafting_perspective" (legacy UI name)
+    perspective: str = Field(default="balanced", alias="drafting_perspective")
     risk_appetite: str = "balanced"
     jurisdiction: str = "US-DE"
     party_1: PartyInput
     party_2: PartyInput
-    term: int = 12
+    # Accept both "term" (canonical) and "term_months" (legacy UI name)
+    term: int = Field(default=12, alias="term_months")
     governing_law: str = "Delaware"
+    venue: Optional[str] = None
+    effective_date: Optional[str] = None
     nda_details: Optional[NDADetailsInput] = None
     saas_details: Optional[SaaSDetailsInput] = None
     dispute_resolution: str = "arbitration"
@@ -124,14 +131,22 @@ class GenerateRequest(BaseModel):
 
 
 class GenerateResponse(BaseModel):
+    """Response schema — includes both canonical and UI-friendly field names."""
     draft_id: str
     title: str
+    contract_type: str
     overall_score: float
     risk_alignment: float
     compliance_score: float
     qa_score: float
+    # Canonical
     section_count: int
     annotations: int
+    # UI-friendly aliases (what the dashboard reads)
+    total_sections: int
+    annotations_applied: int
+    conflicts_flagged: int
+    open_items: int
 
 
 class PlaybookInfo(BaseModel):
@@ -259,6 +274,10 @@ async def generate_draft(req: GenerateRequest, current_user = Depends(get_curren
         "governing_law": req.governing_law,
     }
     raw_input["dispute_resolution"] = req.dispute_resolution
+    if req.venue:
+        raw_input["venue"] = req.venue
+    if req.effective_date:
+        raw_input["effective_date"] = req.effective_date
     if req.nda_details:
         raw_input["nda_details"] = req.nda_details.model_dump()
     if req.saas_details:
@@ -289,15 +308,22 @@ async def generate_draft(req: GenerateRequest, current_user = Depends(get_curren
     _store_draft(draft_id, result)
 
     qr = result.quality_report
+    section_count = len(result.draft.sections)
+    open_count = len(qr.open_annotations)
     return GenerateResponse(
         draft_id=draft_id,
         title=result.draft.title,
+        contract_type=result.draft.contract_type,
         overall_score=qr.overall_score,
         risk_alignment=qr.risk_alignment,
         compliance_score=qr.compliance_score,
         qa_score=qr.qa_score,
-        section_count=len(result.draft.sections),
-        annotations=len(qr.open_annotations),
+        section_count=section_count,
+        annotations=open_count,
+        total_sections=section_count,
+        annotations_applied=qr.annotations_applied,
+        conflicts_flagged=qr.conflicts_flagged,
+        open_items=open_count,
     )
 
 
