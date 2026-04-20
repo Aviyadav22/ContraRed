@@ -28,7 +28,14 @@ export default function StepReview({ form, error }: StepReviewProps) {
     return (
         <div className="animate-fade-in space-y-4">
             {error && (
-                <div className="p-3 rounded-lg text-sm" style={{ backgroundColor: 'var(--accent-glow)', color: 'var(--accent)' }}>
+                <div
+                    className="p-3 rounded-lg text-sm border"
+                    style={{
+                        backgroundColor: 'var(--risk-critical-bg)',
+                        color: 'var(--risk-critical)',
+                        borderColor: 'var(--risk-critical-border)',
+                    }}
+                >
                     {error}
                 </div>
             )}

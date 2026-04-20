@@ -4,6 +4,7 @@ import { type DraftingFormData } from './types';
 interface StepDetailsProps {
     form: DraftingFormData;
     set: (key: keyof DraftingFormData, value: unknown) => void;
+    missingFields?: string[];
 }
 
 const inputClass = "w-full px-3 py-2 rounded-lg border text-sm outline-none transition-colors focus:ring-2";
@@ -139,14 +140,20 @@ const JURISDICTIONS = [
     { code: 'CO', label: 'Colombia' },
 ];
 
-export default function StepDetails({ form, set }: StepDetailsProps) {
+export default function StepDetails({ form, set, missingFields = [] }: StepDetailsProps) {
     return (
         <div className="animate-fade-in space-y-6">
             {/* Parties */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="p-5 rounded-xl border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
                     <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-secondary)' }}>
-                        {form.contract_type === 'saas' ? 'PROVIDER' : 'PARTY 1'}
+                        {form.contract_type === 'saas'
+                            ? 'PROVIDER'
+                            : form.contract_type === 'msa'
+                                ? 'SERVICE PROVIDER'
+                                : form.contract_type === 'employment'
+                                    ? 'COMPANY (EMPLOYER)'
+                                    : 'PARTY 1'}
                     </h3>
                     <div className="space-y-3">
                         <div>
@@ -174,7 +181,13 @@ export default function StepDetails({ form, set }: StepDetailsProps) {
 
                 <div className="p-5 rounded-xl border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
                     <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-secondary)' }}>
-                        {form.contract_type === 'saas' ? 'CUSTOMER' : 'PARTY 2'}
+                        {form.contract_type === 'saas'
+                            ? 'CUSTOMER'
+                            : form.contract_type === 'msa'
+                                ? 'CLIENT'
+                                : form.contract_type === 'employment'
+                                    ? 'EMPLOYEE'
+                                    : 'PARTY 2'}
                     </h3>
                     <div className="space-y-3">
                         <div>
@@ -208,16 +221,16 @@ export default function StepDetails({ form, set }: StepDetailsProps) {
                     <div className="space-y-3">
                         <div>
                             <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Purpose of Disclosure *</label>
-                            <textarea className={inputClass} style={{ borderColor: 'var(--border)' }} rows={2} value={form.nda_purpose} onChange={e => set('nda_purpose', e.target.value)} placeholder="e.g., Evaluate a potential technology partnership" />
+                            <textarea className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)' }} rows={2} value={form.nda_purpose} onChange={e => set('nda_purpose', e.target.value)} placeholder="e.g., Evaluate a potential technology partnership" />
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                             <div>
                                 <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Term (months)</label>
-                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.term_months} onChange={e => set('term_months', +e.target.value)} />
+                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', accentColor: 'var(--accent)' }} value={form.term_months} onChange={e => set('term_months', +e.target.value)} />
                             </div>
                             <div>
                                 <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Survival (years)</label>
-                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.nda_survival_years} onChange={e => set('nda_survival_years', +e.target.value)} />
+                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', accentColor: 'var(--accent)' }} value={form.nda_survival_years} onChange={e => set('nda_survival_years', +e.target.value)} />
                             </div>
                             <div className="col-span-2">
                                 <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>CI Categories (comma-separated)</label>
@@ -226,17 +239,17 @@ export default function StepDetails({ form, set }: StepDetailsProps) {
                         </div>
                         <div className="flex items-center gap-6 pt-1">
                             <label className="flex items-center gap-2 cursor-pointer">
-                                <input type="checkbox" checked={form.nda_non_solicitation} onChange={e => set('nda_non_solicitation', e.target.checked)} className="rounded" />
+                                <input type="checkbox" style={{ accentColor: 'var(--accent)' }} checked={form.nda_non_solicitation} onChange={e => set('nda_non_solicitation', e.target.checked)} className="rounded" />
                                 <span className="text-sm" style={{ color: 'var(--text-primary)' }}>Non-Solicitation</span>
                             </label>
                             {form.nda_non_solicitation && (
                                 <div className="flex items-center gap-2">
-                                    <input type="number" className="w-16 px-2 py-1 rounded border text-sm" style={{ borderColor: 'var(--border)' }} value={form.nda_non_solicitation_months} onChange={e => set('nda_non_solicitation_months', +e.target.value)} />
+                                    <input type="number" className="w-16 px-2 py-1 rounded border text-sm" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', accentColor: 'var(--accent)' }} value={form.nda_non_solicitation_months} onChange={e => set('nda_non_solicitation_months', +e.target.value)} />
                                     <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>months</span>
                                 </div>
                             )}
                             <label className="flex items-center gap-2 cursor-pointer">
-                                <input type="checkbox" checked={form.nda_marking_requirement} onChange={e => set('nda_marking_requirement', e.target.checked)} className="rounded" />
+                                <input type="checkbox" style={{ accentColor: 'var(--accent)' }} checked={form.nda_marking_requirement} onChange={e => set('nda_marking_requirement', e.target.checked)} className="rounded" />
                                 <span className="text-sm" style={{ color: 'var(--text-primary)' }}>Marking Requirement</span>
                             </label>
                         </div>
@@ -251,7 +264,7 @@ export default function StepDetails({ form, set }: StepDetailsProps) {
                     <div className="space-y-3">
                         <div>
                             <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Service Description *</label>
-                            <textarea className={inputClass} style={{ borderColor: 'var(--border)' }} rows={2} value={form.saas_service_description} onChange={e => set('saas_service_description', e.target.value)} placeholder="e.g., Cloud-based CRM platform with AI analytics" />
+                            <textarea className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)' }} rows={2} value={form.saas_service_description} onChange={e => set('saas_service_description', e.target.value)} placeholder="e.g., Cloud-based CRM platform with AI analytics" />
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                             <div>
@@ -262,35 +275,35 @@ export default function StepDetails({ form, set }: StepDetailsProps) {
                             </div>
                             <div>
                                 <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Price ($) *</label>
-                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.saas_price_amount || ''} onChange={e => set('saas_price_amount', +e.target.value)} placeholder="99.00" />
+                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', accentColor: 'var(--accent)' }} value={form.saas_price_amount || ''} onChange={e => set('saas_price_amount', +e.target.value)} placeholder="99.00" />
                             </div>
                             <div>
                                 <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Billing</label>
                                 <select className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)' }} value={form.saas_billing_frequency} onChange={e => set('saas_billing_frequency', e.target.value)}>
-                                    {['monthly', 'quarterly', 'annually'].map(f => <option key={f} value={f}>{f}</option>)}
+                                    {['monthly', 'quarterly', 'annual'].map(f => <option key={f} value={f}>{f}</option>)}
                                 </select>
                             </div>
                             <div>
                                 <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Term (months)</label>
-                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.term_months} onChange={e => set('term_months', +e.target.value)} />
+                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', accentColor: 'var(--accent)' }} value={form.term_months} onChange={e => set('term_months', +e.target.value)} />
                             </div>
                         </div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                             <div>
                                 <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Uptime (%)</label>
-                                <input type="number" step="0.1" className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.saas_uptime} onChange={e => set('saas_uptime', +e.target.value)} />
+                                <input type="number" step="0.1" className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', accentColor: 'var(--accent)' }} value={form.saas_uptime} onChange={e => set('saas_uptime', +e.target.value)} />
                             </div>
                             <div>
                                 <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Liability Cap (months)</label>
-                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.saas_liability_cap_months} onChange={e => set('saas_liability_cap_months', +e.target.value)} />
+                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', accentColor: 'var(--accent)' }} value={form.saas_liability_cap_months} onChange={e => set('saas_liability_cap_months', +e.target.value)} />
                             </div>
                             <div>
                                 <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Authorized Users</label>
-                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)' }} value={form.saas_authorized_users} onChange={e => set('saas_authorized_users', +e.target.value)} />
+                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', accentColor: 'var(--accent)' }} value={form.saas_authorized_users} onChange={e => set('saas_authorized_users', +e.target.value)} />
                             </div>
                             <div className="flex items-end pb-1">
                                 <label className="flex items-center gap-2 cursor-pointer">
-                                    <input type="checkbox" checked={form.saas_auto_renewal} onChange={e => set('saas_auto_renewal', e.target.checked)} className="rounded" />
+                                    <input type="checkbox" style={{ accentColor: 'var(--accent)' }} checked={form.saas_auto_renewal} onChange={e => set('saas_auto_renewal', e.target.checked)} className="rounded" />
                                     <span className="text-sm" style={{ color: 'var(--text-primary)' }}>Auto-Renewal</span>
                                 </label>
                             </div>
@@ -318,6 +331,93 @@ export default function StepDetails({ form, set }: StepDetailsProps) {
                                 ))}
                             </div>
                         </div>
+                        <div>
+                            <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Data Processing Regions</label>
+                            <div className="flex flex-wrap gap-2 mt-1">
+                                {['US', 'EU', 'UK', 'India', 'Singapore', 'Australia', 'Canada'].map(rg => (
+                                    <button
+                                        key={rg}
+                                        onClick={() => set('saas_data_regions',
+                                            form.saas_data_regions.includes(rg)
+                                                ? form.saas_data_regions.filter(r => r !== rg)
+                                                : [...form.saas_data_regions, rg]
+                                        )}
+                                        className="px-3 py-1 rounded-full text-xs font-medium border transition-colors"
+                                        style={{
+                                            borderColor: form.saas_data_regions.includes(rg) ? 'var(--accent)' : 'var(--border)',
+                                            backgroundColor: form.saas_data_regions.includes(rg) ? 'var(--accent-glow)' : 'var(--bg-surface)',
+                                            color: form.saas_data_regions.includes(rg) ? 'var(--accent)' : 'var(--text-secondary)',
+                                        }}
+                                    >
+                                        {rg}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MSA-specific fields */}
+            {form.contract_type === 'msa' && (
+                <div className="p-5 rounded-xl border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+                    <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-secondary)' }}>MSA DETAILS</h3>
+                    <div className="space-y-3">
+                        <div>
+                            <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Scope of Services *</label>
+                            <textarea className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)' }} rows={2} value={form.msa_scope_of_services} onChange={e => set('msa_scope_of_services', e.target.value)} placeholder="e.g., Professional consulting services including strategy, implementation, and ongoing support under Statements of Work." />
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                            <div>
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Payment Terms</label>
+                                <select className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)' }} value={form.msa_payment_terms} onChange={e => set('msa_payment_terms', e.target.value)}>
+                                    {['Net 15', 'Net 30', 'Net 45', 'Net 60', 'Milestone-based', 'Monthly retainer'].map(p => <option key={p} value={p}>{p}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Liability Cap (x fees)</label>
+                                <input type="number" step="0.5" className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)' }} value={form.msa_liability_cap_multiplier} onChange={e => set('msa_liability_cap_multiplier', +e.target.value)} placeholder="1.0" />
+                            </div>
+                            <div>
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Term (months)</label>
+                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)' }} value={form.term_months} onChange={e => set('term_months', +e.target.value)} />
+                            </div>
+                        </div>
+                        <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                            The AI drafts a full MSA including warranties, limitation of liability, indemnification, and IP ownership based on your perspective and risk appetite. Individual Statements of Work (SOWs) reference this MSA.
+                        </p>
+                    </div>
+                </div>
+            )}
+
+            {/* Employment-specific fields */}
+            {form.contract_type === 'employment' && (
+                <div className="p-5 rounded-xl border" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
+                    <h3 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-secondary)' }}>EMPLOYMENT DETAILS</h3>
+                    <div className="space-y-3">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div>
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Job Title *</label>
+                                <input className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)' }} value={form.employment_title} onChange={e => set('employment_title', e.target.value)} placeholder="e.g., Senior Software Engineer" />
+                            </div>
+                            <div>
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Base Salary *</label>
+                                <input className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)' }} value={form.employment_base_salary} onChange={e => set('employment_base_salary', e.target.value)} placeholder="e.g., $180,000 per year" />
+                            </div>
+                            <div>
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Reporting Manager</label>
+                                <input className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)' }} value={form.employment_reporting_manager} onChange={e => set('employment_reporting_manager', e.target.value)} placeholder="e.g., VP of Engineering" />
+                            </div>
+                            <div>
+                                <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Work Location</label>
+                                <select className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)' }} value={form.employment_work_location} onChange={e => set('employment_work_location', e.target.value)}>
+                                    {['Office', 'Remote', 'Hybrid'].map(w => <option key={w} value={w}>{w}</option>)}
+                                </select>
+                            </div>
+                        </div>
+                        <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                            The AI drafts confidentiality, IP assignment, non-compete / non-solicitation (jurisdiction-aware), and termination clauses tailored to the selected risk appetite.
+                        </p>
                     </div>
                 </div>
             )}
@@ -342,6 +442,20 @@ export default function StepDetails({ form, set }: StepDetailsProps) {
                     </div>
                 </div>
             </div>
+
+            {missingFields.length > 0 && (
+                <div
+                    role="status"
+                    aria-live="polite"
+                    style={{
+                        color: 'var(--text-muted)',
+                        fontSize: 13,
+                        marginTop: 16,
+                    }}
+                >
+                    Missing required fields: {missingFields.join(', ')}
+                </div>
+            )}
         </div>
     );
 }

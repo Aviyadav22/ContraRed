@@ -1518,7 +1518,16 @@ export interface GenerateRequest {
         liability_cap_months?: number;
         authorized_users?: number;
         compliance_frameworks?: string[];
+        data_regions?: string[];
+        support_tiers?: Record<string, string>;
     };
+    // MSA / other free-form context piped into per-clause prompts
+    negotiation_context?: string;
+    // Employment-specific fields (flat for backend convenience)
+    employee_title?: string;
+    base_salary?: string;
+    reporting_manager?: string;
+    work_location?: string;
 }
 
 export interface GenerateResponse {
@@ -1547,11 +1556,27 @@ export async function getDraftingIntakeSchema(contractType: string): Promise<Int
     return request(`/drafting/intake-schema?contract_type=${encodeURIComponent(contractType)}`);
 }
 
-export async function generateContract(data: GenerateRequest): Promise<GenerateResponse> {
+export async function generateContract(
+    data: GenerateRequest,
+    externalSignal?: AbortSignal,
+): Promise<GenerateResponse> {
     // Contract generation takes 2-5 minutes (AI drafts + reviews all sections).
     // Use a 10-minute timeout instead of the default 2-minute request() timeout.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 600000);
+    // Propagate user-initiated cancellation (e.g. Cancel button) into this fetch.
+    const userAborted = { flag: false };
+    if (externalSignal) {
+        if (externalSignal.aborted) {
+            controller.abort();
+            userAborted.flag = true;
+        } else {
+            externalSignal.addEventListener('abort', () => {
+                userAborted.flag = true;
+                controller.abort();
+            }, { once: true });
+        }
+    }
     try {
         const csrfToken = getCsrfToken();
         const headers: Record<string, string> = {
@@ -1576,6 +1601,9 @@ export async function generateContract(data: GenerateRequest): Promise<GenerateR
     } catch (err) {
         clearTimeout(timeoutId);
         if (err instanceof DOMException && err.name === 'AbortError') {
+            if (userAborted.flag) {
+                throw new DOMException('Generation cancelled by user', 'AbortError');
+            }
             throw new Error('Contract generation timed out after 10 minutes. Please try again.');
         }
         throw err;

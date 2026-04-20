@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { AppLayout } from '@/components/layout';
 import {
@@ -7,6 +7,7 @@ import {
     type GenerateRequest,
     type GenerateResponse,
 } from '@/api/client';
+import { useToast } from '@/contexts/ToastContext';
 import { type DraftingFormData, DEFAULT_FORM } from './types';
 import DraftingStepper from './DraftingStepper';
 import StepContractType from './StepContractType';
@@ -20,16 +21,27 @@ export default function Drafting() {
     const [form, setForm] = useState<DraftingFormData>({ ...DEFAULT_FORM });
     const [result, setResult] = useState<GenerateResponse | null>(null);
     const [error, setError] = useState('');
+    const abortRef = useRef<AbortController | null>(null);
+    const { addToast } = useToast();
 
     const set = (key: keyof DraftingFormData, value: unknown) => setForm(prev => ({ ...prev, [key]: value }));
 
     const generateMutation = useMutation({
-        mutationFn: generateContract,
+        mutationFn: (req: GenerateRequest) => {
+            abortRef.current = new AbortController();
+            return generateContract(req, abortRef.current.signal);
+        },
         onSuccess: (data) => {
             setResult(data);
             setStep(4);
         },
         onError: (err: Error) => {
+            // If the user cancelled, don't surface a scary error — just silently reset.
+            if (err.name === 'AbortError') {
+                setError('');
+                setStep(2);
+                return;
+            }
             setError(err.message || 'Generation failed');
             setStep(2); // go back to review
         },
@@ -70,15 +82,41 @@ export default function Drafting() {
                 liability_cap_months: form.saas_liability_cap_months,
                 authorized_users: form.saas_authorized_users,
                 compliance_frameworks: form.saas_compliance_frameworks.length > 0 ? form.saas_compliance_frameworks : undefined,
+                data_regions: form.saas_data_regions.length > 0 ? form.saas_data_regions : undefined,
             };
+        }
+        if (form.contract_type === 'msa') {
+            // MSA flows into AI via negotiation_context so per-clause prompts
+            // pick up scope, payment terms, and liability-cap multiplier.
+            req.negotiation_context = [
+                form.msa_scope_of_services ? `Scope of Services: ${form.msa_scope_of_services}` : '',
+                form.msa_payment_terms ? `Payment Terms: ${form.msa_payment_terms}` : '',
+                form.msa_liability_cap_multiplier > 0 ? `Liability Cap: ${form.msa_liability_cap_multiplier}x annual fees paid in the 12 months preceding the claim` : '',
+            ].filter(Boolean).join(' | ');
+        }
+        if (form.contract_type === 'employment') {
+            req.employee_title = form.employment_title;
+            req.base_salary = form.employment_base_salary;
+            req.reporting_manager = form.employment_reporting_manager;
+            req.work_location = form.employment_work_location;
         }
         return req;
     };
 
     const handleGenerate = () => {
+        // Guard against rapid double-clicks firing two mutations.
+        if (generateMutation.isPending) return;
         setError('');
         setStep(3);
         generateMutation.mutate(buildRequest());
+    };
+
+    const handleCancelGeneration = () => {
+        // Abort the in-flight request and reset UI to Review step.
+        abortRef.current?.abort();
+        generateMutation.reset();
+        setError('');
+        setStep(2);
     };
 
     const handleDownload = async () => {
@@ -91,8 +129,10 @@ export default function Drafting() {
             a.download = `${result.title.replace(/\s+/g, '_')}.docx`;
             a.click();
             URL.revokeObjectURL(url);
+            addToast('Downloaded contract as .docx', 'success');
         } catch {
             setError('Download failed');
+            addToast('Download failed', 'error');
         }
     };
 
@@ -102,14 +142,47 @@ export default function Drafting() {
         setResult(null);
     };
 
+    // Compute which required fields are empty on the Details step.
+    const getMissingFields = (): string[] => {
+        if (step !== 1) return [];
+        const missing: string[] = [];
+        const party1Label = form.contract_type === 'saas'
+            ? 'Provider name'
+            : form.contract_type === 'msa'
+                ? 'Service Provider name'
+                : form.contract_type === 'employment'
+                    ? 'Company name'
+                    : 'Party 1 name';
+        const party2Label = form.contract_type === 'saas'
+            ? 'Customer name'
+            : form.contract_type === 'msa'
+                ? 'Client name'
+                : form.contract_type === 'employment'
+                    ? 'Employee name'
+                    : 'Party 2 name';
+        if (!form.party_1_name) missing.push(party1Label);
+        if (!form.party_2_name) missing.push(party2Label);
+        if (!form.governing_law) missing.push('Governing Law');
+        if (form.contract_type.startsWith('nda') && !form.nda_purpose) missing.push('Purpose of Disclosure');
+        if (form.contract_type === 'saas') {
+            if (!form.saas_service_description) missing.push('Service Description');
+            if (form.saas_price_amount <= 0) missing.push('Price');
+        }
+        if (form.contract_type === 'msa') {
+            if (!form.msa_scope_of_services) missing.push('Scope of Services');
+        }
+        if (form.contract_type === 'employment') {
+            if (!form.employment_title) missing.push('Job Title');
+            if (!form.employment_base_salary) missing.push('Base Salary');
+        }
+        return missing;
+    };
+
+    const missingFields = getMissingFields();
+
     const canProceed = (): boolean => {
         if (step === 0) return !!form.contract_type;
-        if (step === 1) {
-            if (!form.party_1_name || !form.party_2_name || !form.governing_law) return false;
-            if (form.contract_type.startsWith('nda') && !form.nda_purpose) return false;
-            if (form.contract_type === 'saas' && (!form.saas_service_description || form.saas_price_amount <= 0)) return false;
-            return true;
-        }
+        if (step === 1) return missingFields.length === 0;
         return true;
     };
 
@@ -125,7 +198,7 @@ export default function Drafting() {
 
                 <div className="rounded-xl border p-6 md:p-8" style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}>
                     {step === 0 && <StepContractType form={form} set={set} />}
-                    {step === 1 && <StepDetails form={form} set={set} />}
+                    {step === 1 && <StepDetails form={form} set={set} missingFields={missingFields} />}
                     {step === 2 && <StepReview form={form} error={error} />}
                     {step === 3 && <StepGenerating />}
                     {step === 4 && <StepResults result={result} onDownload={handleDownload} onReset={handleReset} />}
@@ -161,6 +234,23 @@ export default function Drafting() {
                                 Generate Contract
                             </button>
                         )}
+                    </div>
+                )}
+
+                {/* Cancel button during generation */}
+                {step === 3 && (
+                    <div className="flex justify-center mt-6">
+                        <button
+                            onClick={handleCancelGeneration}
+                            className="px-5 py-2.5 rounded-lg text-sm font-medium border transition-colors"
+                            style={{
+                                borderColor: 'var(--border)',
+                                color: 'var(--text-secondary)',
+                                backgroundColor: 'var(--bg-surface)',
+                            }}
+                        >
+                            Cancel Generation
+                        </button>
                     </div>
                 )}
             </div>

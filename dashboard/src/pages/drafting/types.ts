@@ -33,6 +33,16 @@ export interface DraftingFormData {
     saas_liability_cap_months: number;
     saas_authorized_users: number;
     saas_compliance_frameworks: string[];
+    saas_data_regions: string[];
+    // MSA
+    msa_scope_of_services: string;
+    msa_payment_terms: string;
+    msa_liability_cap_multiplier: number;
+    // Employment
+    employment_title: string;
+    employment_base_salary: string;
+    employment_reporting_manager: string;
+    employment_work_location: string;
 }
 
 export const DEFAULT_FORM: DraftingFormData = {
@@ -62,12 +72,20 @@ export const DEFAULT_FORM: DraftingFormData = {
     saas_service_description: '',
     saas_pricing_model: 'per_user_monthly',
     saas_price_amount: 0,
-    saas_billing_frequency: 'monthly',
+    saas_billing_frequency: 'annual',
     saas_auto_renewal: true,
     saas_uptime: 99.9,
     saas_liability_cap_months: 12,
     saas_authorized_users: 10,
     saas_compliance_frameworks: [],
+    saas_data_regions: [],
+    msa_scope_of_services: '',
+    msa_payment_terms: 'Net 30',
+    msa_liability_cap_multiplier: 1,
+    employment_title: '',
+    employment_base_salary: '',
+    employment_reporting_manager: '',
+    employment_work_location: 'Hybrid',
 };
 
 export const STEPS = ['Contract Type', 'Details', 'Review', 'Generating', 'Results'];
@@ -76,6 +94,8 @@ export const CONTRACT_TYPES = [
     { value: 'nda_mutual', label: 'NDA — Mutual', desc: 'Both parties share and protect confidential information equally.' },
     { value: 'nda_unilateral', label: 'NDA — Unilateral', desc: 'One party discloses confidential information to the other.' },
     { value: 'saas', label: 'SaaS Agreement', desc: 'Software-as-a-Service subscription with MSA, SLA, DPA, and Order Form.' },
+    { value: 'msa', label: 'Master Service Agreement', desc: 'Framework agreement for ongoing services, SOWs, and payment terms.' },
+    { value: 'employment', label: 'Employment Agreement', desc: 'Employee terms: role, compensation, IP assignment, confidentiality, and termination.' },
 ];
 
 export const PERSPECTIVES = [

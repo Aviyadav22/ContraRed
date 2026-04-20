@@ -1,4 +1,5 @@
-import { type GenerateResponse } from '@/api/client';
+import { useEffect, useState } from 'react';
+import { getDraftAddinPayload, type GenerateResponse } from '@/api/client';
 
 interface StepResultsProps {
     result: GenerateResponse | null;
@@ -6,7 +7,54 @@ interface StepResultsProps {
     onReset: () => void;
 }
 
+interface PreviewSection {
+    heading: string;
+    content: string;
+}
+
+const PREVIEW_SECTION_COUNT = 2;
+const PREVIEW_CHAR_LIMIT = 700;
+
+function truncate(text: string, max: number): string {
+    if (!text) return '';
+    if (text.length <= max) return text;
+    return text.slice(0, max).trimEnd() + '…';
+}
+
 export default function StepResults({ result, onDownload, onReset }: StepResultsProps) {
+    const [preview, setPreview] = useState<PreviewSection[] | null>(null);
+    const [previewError, setPreviewError] = useState(false);
+    const [previewLoading, setPreviewLoading] = useState(false);
+
+    useEffect(() => {
+        if (!result?.draft_id) return;
+        let cancelled = false;
+        setPreviewLoading(true);
+        setPreviewError(false);
+        getDraftAddinPayload(result.draft_id)
+            .then((payload) => {
+                if (cancelled) return;
+                const sections = (payload?.sections as PreviewSection[] | undefined) ?? [];
+                // Skip very short/empty sections when picking preview candidates.
+                const candidates = sections.filter(s => s?.content && s.content.trim().length > 40);
+                setPreview(
+                    candidates.slice(0, PREVIEW_SECTION_COUNT).map(s => ({
+                        heading: s.heading || '',
+                        content: truncate(s.content, PREVIEW_CHAR_LIMIT),
+                    }))
+                );
+            })
+            .catch(() => {
+                if (!cancelled) setPreviewError(true);
+            })
+            .finally(() => {
+                if (!cancelled) setPreviewLoading(false);
+            });
+        return () => {
+            cancelled = true;
+        };
+    }, [result?.draft_id]);
+
     if (!result) return null;
 
     const scoreColor = (s: number) => s >= 80 ? 'var(--risk-low)' : s >= 60 ? 'var(--risk-high)' : 'var(--accent)';
@@ -46,8 +94,65 @@ export default function StepResults({ result, onDownload, onReset }: StepResults
                 <span>{result.open_items} items for review</span>
             </div>
 
+            {/* Preview */}
+            {!previewError && (
+                <div
+                    className="rounded-xl border p-5 mt-2"
+                    style={{
+                        borderColor: 'var(--border)',
+                        backgroundColor: 'var(--bg-app)',
+                    }}
+                >
+                    <div className="flex items-center justify-between mb-4">
+                        <h4 className="text-sm font-semibold tracking-wide uppercase" style={{ color: 'var(--text-secondary)' }}>
+                            Preview
+                        </h4>
+                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                            First {PREVIEW_SECTION_COUNT} sections · truncated
+                        </span>
+                    </div>
+
+                    {previewLoading && (
+                        <div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+                            <div
+                                className="w-4 h-4 rounded-full border-2 animate-spin"
+                                style={{ borderColor: 'var(--border)', borderTopColor: 'var(--accent)' }}
+                            />
+                            Loading preview…
+                        </div>
+                    )}
+
+                    {!previewLoading && preview && preview.length > 0 && (
+                        <div className="space-y-5">
+                            {preview.map((section, idx) => (
+                                <div key={idx}>
+                                    <h5
+                                        className="text-sm font-semibold mb-2"
+                                        style={{ color: 'var(--text-primary)' }}
+                                    >
+                                        {section.heading}
+                                    </h5>
+                                    <p
+                                        className="text-sm whitespace-pre-wrap leading-relaxed"
+                                        style={{ color: 'var(--text-secondary)' }}
+                                    >
+                                        {section.content}
+                                    </p>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+
+                    {!previewLoading && preview && preview.length === 0 && (
+                        <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                            No preview available. Download the full contract to review.
+                        </p>
+                    )}
+                </div>
+            )}
+
             {/* Actions */}
-            <div className="flex justify-center gap-4 pt-4">
+            <div className="flex flex-wrap justify-center gap-4 pt-4">
                 <button
                     onClick={onDownload}
                     className="px-6 py-3 rounded-xl text-sm font-semibold text-white transition-transform active:scale-[0.98]"

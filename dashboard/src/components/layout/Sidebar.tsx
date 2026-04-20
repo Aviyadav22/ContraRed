@@ -1,4 +1,4 @@
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useTheme } from '@/contexts/ThemeContext';
 import { isAdmin } from '@/api/client';
 import { Tooltip } from '@/components/ui/Tooltip';
@@ -121,7 +121,15 @@ export function Sidebar({
 
   const width = collapsed ? 64 : 240;
 
-  /* ---- styles ---- */
+  /* ---- styles ----
+   *
+   * NOTE: The sidebar is intentionally kept dark in BOTH light and dark themes.
+   * It is a core part of the ContraRed brand identity and provides strong visual
+   * anchoring / contrast against the content area regardless of the active theme.
+   * All sidebar colors below are intentionally hardcoded for this reason — do NOT
+   * replace them with theme tokens unless you explicitly introduce `--sidebar-*`
+   * variants and update the whole file.
+   */
 
   const sidebarStyle: CSSProperties = {
     position: 'fixed',
@@ -135,6 +143,7 @@ export function Sidebar({
     zIndex: 100,
     transition: `width var(--transition-normal)`,
     overflow: 'hidden',
+    borderRight: '1px solid rgba(255,255,255,0.08)',
   };
 
   const sectionLabelStyle: CSSProperties = {
@@ -179,7 +188,7 @@ export function Sidebar({
       <div
         style={style}
         onClick={onClick}
-        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)'; e.currentTarget.style.color = '#CBD5E1'; }}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)'; e.currentTarget.style.color = '#FFFFFF'; }}
         onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = '#94A3B8'; }}
       >
         {icon}
@@ -206,8 +215,8 @@ export function Sidebar({
       justifyContent: collapsed ? 'center' : 'flex-start',
       cursor: 'pointer',
       borderLeft: active ? '3px solid #C0392B' : '3px solid transparent',
-      backgroundColor: active ? 'rgba(192,57,43,0.12)' : 'transparent',
-      color: active ? '#FFFFFF' : '#94A3B8',
+      backgroundColor: active ? 'rgba(192,57,43,0.22)' : 'transparent',
+      color: active ? '#FFFFFF' : '#CBD5E1',
       fontSize: 13,
       fontWeight: active ? 600 : 400,
       whiteSpace: 'nowrap',
@@ -222,12 +231,12 @@ export function Sidebar({
       ? {}
       : {
           onMouseEnter: (e: React.MouseEvent<HTMLDivElement>) => {
-            e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.05)';
-            e.currentTarget.style.color = '#CBD5E1';
+            e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)';
+            e.currentTarget.style.color = '#FFFFFF';
           },
           onMouseLeave: (e: React.MouseEvent<HTMLDivElement>) => {
             e.currentTarget.style.backgroundColor = 'transparent';
-            e.currentTarget.style.color = '#94A3B8';
+            e.currentTarget.style.color = '#CBD5E1';
           },
         };
 
@@ -267,22 +276,47 @@ export function Sidebar({
           minHeight: 56,
         }}
       >
-        <div
-          style={{ display: 'flex', alignItems: 'center', gap: 0, cursor: collapsed ? 'pointer' : 'default' }}
-          onClick={collapsed ? onToggleCollapse : undefined}
-          title={collapsed ? 'Expand sidebar' : undefined}
-        >
-          <span
-            style={{
-              color: '#F8FAFC',
-              fontWeight: 700,
-              fontSize: 18,
-              whiteSpace: 'nowrap',
-            }}
+        {collapsed ? (
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 0, cursor: 'pointer' }}
+            onClick={onToggleCollapse}
+            title="Expand sidebar"
           >
-            <span style={{ color: '#C0392B' }}>C</span>{!collapsed && 'ontraRed'}
-          </span>
-        </div>
+            <span
+              style={{
+                color: '#F8FAFC',
+                fontWeight: 700,
+                fontSize: 18,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span style={{ color: '#C0392B' }}>C</span>
+            </span>
+          </div>
+        ) : (
+          <Link
+            to="/dashboard"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0,
+              textDecoration: 'none',
+              cursor: 'pointer',
+            }}
+            title="Go to dashboard"
+          >
+            <span
+              style={{
+                color: '#F8FAFC',
+                fontWeight: 700,
+                fontSize: 18,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span style={{ color: '#C0392B' }}>C</span>ontraRed
+            </span>
+          </Link>
+        )}
         {!collapsed && (
           <button
             onClick={onToggleCollapse}

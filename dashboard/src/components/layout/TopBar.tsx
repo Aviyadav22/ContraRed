@@ -11,7 +11,6 @@ const routeNames: Record<string, string> = {
   '/drafting': 'Drafting',
   '/playbooks': 'Playbooks',
   '/clause-library': 'Clause Library',
-  '/templates': 'Templates',
   '/compare': 'Compare',
   '/batch-upload': 'Documents',
   '/audit-logs': 'Audit Logs',
@@ -22,11 +21,23 @@ const routeNames: Record<string, string> = {
   '/billing': 'Billing',
   '/marketplace': 'Marketplace',
   '/dpdp': 'DPDP Center',
+  '/compliance': 'Compliance',
+  '/settings/privacy': 'Privacy Settings',
+  '/settings/data-rights': 'Data Rights',
 };
+
+function resolvePageName(pathname: string): string {
+  if (routeNames[pathname]) return routeNames[pathname];
+  // Dynamic routes
+  if (pathname.startsWith('/playbooks/') && pathname.split('/').length > 2) {
+    return 'Playbook Editor';
+  }
+  return 'Page';
+}
 
 export function TopBar({ sidebarWidth }: TopBarProps) {
   const location = useLocation();
-  const pageName = routeNames[location.pathname] || 'Page';
+  const pageName = resolvePageName(location.pathname);
 
   const barStyle: CSSProperties = {
     position: 'fixed',
