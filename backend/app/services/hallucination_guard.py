@@ -116,31 +116,46 @@ class HallucinationGuard:
     Verification cascade:
       1. Exact substring match -> confidence 1.0
       2. Normalized match (case/whitespace) -> confidence 0.99
-      3. Fuzzy match (>=0.80 Levenshtein via rapidfuzz) -> corrected quote, reduced confidence
-      4. No match (<0.70) -> REJECTED (logged as hallucination)
+      3. Short quotes (<40 chars) that reach here -> REJECTED (no fuzzy allowed)
+      4. Two-step fuzzy:
+           - partial_ratio to locate best window
+           - fuzz.ratio on that window for pass/fail (>=0.90 non-deal-breaker,
+             >=0.95 deal-breaker) -> corrected quote, reduced confidence
+      5. No match -> REJECTED (logged as hallucination)
 
     For DEAL-BREAKER rules that fail fuzzy match, the caller can request
     a re-query with explicit "copy verbatim" instruction via `needs_requery`.
     """
 
     # Thresholds
-    FUZZY_PASS_THRESHOLD: float = 0.80   # Minimum ratio to accept with correction
-    FUZZY_REJECT_THRESHOLD: float = 0.70  # Below this -> hard reject
+    # Tightened (Phase 2 investor polish): the AI is the load-bearing system here,
+    # so verification must be strict. We require 0.90 sequence similarity for
+    # non-deal-breaker quotes and 0.95 for deal-breakers. Short quotes (<40 chars)
+    # bypass fuzzy entirely — they must match exactly or via normalization.
+    FUZZY_PASS_THRESHOLD: float = 0.90            # Minimum ratio to accept (non-deal-breaker)
+    FUZZY_DEAL_BREAKER_THRESHOLD: float = 0.95    # Stricter bar for deal-breakers
+    FUZZY_REJECT_THRESHOLD: float = 0.70          # Below this -> hard reject
+    DEGRADED_LOWER_BOUND: float = 0.80            # 0.80-0.90 logged as "degraded" for observability
+    SHORT_QUOTE_MAX_CHARS: int = 40               # Below this length, no fuzzy — exact/normalized only
 
     def __init__(
         self,
         contract_text: str,
-        fuzzy_pass_threshold: float = 0.80,
+        fuzzy_pass_threshold: float = 0.90,
         fuzzy_reject_threshold: float = 0.70,
+        fuzzy_deal_breaker_threshold: float = 0.95,
     ):
         """
         Args:
             contract_text: The full source contract text to verify against.
             fuzzy_pass_threshold: Minimum rapidfuzz ratio to accept (with correction).
             fuzzy_reject_threshold: Below this ratio -> hard reject.
+            fuzzy_deal_breaker_threshold: Stricter threshold applied when the quote
+                relates to a deal-breaker rule.
         """
         self.contract_text = contract_text
         self.FUZZY_PASS_THRESHOLD = fuzzy_pass_threshold
+        self.FUZZY_DEAL_BREAKER_THRESHOLD = fuzzy_deal_breaker_threshold
         self.FUZZY_REJECT_THRESHOLD = fuzzy_reject_threshold
 
         # Pre-compute normalized version for stage 2
@@ -210,19 +225,64 @@ class HallucinationGuard:
                 correction_applied=bool(actual_segment and actual_segment != clean_quote),
             )
 
-        # --- Stage 3: Fuzzy match (rapidfuzz) ---
-        # For short quotes (<30 chars), use stricter matching to avoid false positives
-        if len(normalized_quote) < 30:
-            best_match, best_score, best_segment = self._fuzzy_search(
-                normalized_quote, scorer=fuzz.ratio, score_cutoff=85
+        # --- Short-quote guard: no fuzzy matching for quotes <40 chars ---
+        # Short phrases (e.g., "indemnify and hold harmless") can share enough
+        # tokens with unrelated contract text to fuzzy-match. Require exact or
+        # normalized-exact only. If we reach this point, neither matched.
+        if len(normalized_quote) < self.SHORT_QUOTE_MAX_CHARS:
+            self.stats.rejected += 1
+            logger.warning(
+                "Short-quote hallucination rejected (len=%d, threshold=%d). "
+                "Quote: '%.80s'",
+                len(normalized_quote),
+                self.SHORT_QUOTE_MAX_CHARS,
+                clean_quote,
             )
-        else:
-            best_match, best_score, best_segment = self._fuzzy_search(normalized_quote)
+            return VerificationResult(
+                original_quote=quote,
+                verified_quote="",
+                confidence=0.0,
+                status="rejected",
+                matched_segment="",
+                similarity_score=0.0,
+                correction_applied=False,
+            )
 
-        if best_score >= self.FUZZY_PASS_THRESHOLD * 100:
+        # --- Stage 3: Two-step fuzzy match (rapidfuzz) ---
+        # Step 3a: Use fuzz.partial_ratio to LOCATE the best-matching window.
+        # Step 3b: Re-score that anchored window with fuzz.ratio (full sequence
+        # similarity) for the actual pass/fail decision. partial_ratio alone is
+        # too permissive — it rewards any substring overlap, which the AI can
+        # exploit by paraphrasing while keeping a few key words.
+        best_match, best_score, best_segment = self._fuzzy_search(normalized_quote)
+
+        # Re-score with full sequence ratio on the anchored segment.
+        if best_segment:
+            anchored_score = fuzz.ratio(normalized_quote, _normalize_for_comparison(best_segment))
+        else:
+            anchored_score = 0.0
+
+        # Pick the relevant pass threshold based on deal-breaker status.
+        pass_threshold = (
+            self.FUZZY_DEAL_BREAKER_THRESHOLD if is_deal_breaker else self.FUZZY_PASS_THRESHOLD
+        )
+
+        # Observability: log "degraded" range (would-pass at old threshold but
+        # below current threshold). Useful for tuning in production.
+        if self.DEGRADED_LOWER_BOUND * 100 <= anchored_score < pass_threshold * 100:
+            logger.debug(
+                "Fuzzy match downgraded to 'degraded' (anchored_score=%.1f, "
+                "threshold=%.2f, deal_breaker=%s). Quote: '%.80s'",
+                anchored_score,
+                pass_threshold,
+                is_deal_breaker,
+                clean_quote,
+            )
+
+        if anchored_score >= pass_threshold * 100:
             # Fuzzy match passed - correct the quote to the actual document text
             corrected = best_segment
-            confidence = round(best_score / 100.0 * 0.95, 3)  # Scale down slightly
+            confidence = round(anchored_score / 100.0 * 0.95, 3)  # Scale down slightly
             self.stats.fuzzy_corrected += 1
             return VerificationResult(
                 original_quote=quote,
@@ -230,16 +290,19 @@ class HallucinationGuard:
                 confidence=confidence,
                 status="fuzzy_corrected",
                 matched_segment=corrected,
-                similarity_score=round(best_score / 100.0, 3),
+                similarity_score=round(anchored_score / 100.0, 3),
                 correction_applied=True,
             )
 
         # --- Stage 4: Rejection ---
         self.stats.rejected += 1
         logger.warning(
-            "Hallucination detected: quote not found in contract (best_score=%.1f). "
+            "Hallucination detected: quote not found in contract "
+            "(partial_locate=%.1f, anchored_ratio=%.1f, threshold=%.2f). "
             "Quote: '%.80s...'",
             best_score,
+            anchored_score,
+            pass_threshold,
             clean_quote,
         )
 
@@ -249,7 +312,9 @@ class HallucinationGuard:
             confidence=0.0,
             status="rejected",
             matched_segment="",
-            similarity_score=round(best_score / 100.0, 3) if best_score > 0 else 0.0,
+            # Report the stricter anchored ratio (not partial_ratio) — it better
+            # reflects actual similarity and is what gated the pass/fail decision.
+            similarity_score=round(anchored_score / 100.0, 3) if anchored_score > 0 else 0.0,
             correction_applied=False,
         )
 

@@ -4,7 +4,20 @@ import { Badge, TextInput, SelectInput } from '@/components/ui';
 import { RiskCard } from './RiskCard';
 import { BulkActions } from './BulkActions';
 import type { RiskFilter, FixState, RiskLevelFilter, SortMode } from './types';
-import { ChevronDown, ChevronUp, Shield } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronUp, Shield } from 'lucide-react';
+
+const bannerStyle: CSSProperties = {
+    backgroundColor: 'var(--risk-high-bg)',
+    border: '1px solid var(--risk-high-border)',
+    color: 'var(--risk-high)',
+    padding: 12,
+    borderRadius: 'var(--radius-md)',
+    fontSize: 13,
+    lineHeight: 1.5,
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: 8,
+};
 
 interface Props {
     analysis: AnalysisResult;
@@ -59,8 +72,52 @@ export function AnalysisPanel({
     const [summaryExpanded, setSummaryExpanded] = useState(false);
     const appliedCount = Array.from(fixStates.values()).filter(s => s === 'applied').length;
 
+    // AI-first philosophy: when the backend could not use AI, the user must
+    // see this clearly — not be left to guess why the findings look thin.
+    const aiDown = analysis.ai_used === false;
+    // Partial pipeline: AI ran but some stages failed/timed out.
+    const partialIncompleteNoFindings = analysis.pipeline_partial && analysis.total_risks === 0 && !aiDown;
+    const partialWithFindings = analysis.pipeline_partial && analysis.total_risks > 0 && !aiDown;
+
     return (
         <div style={panelStyle}>
+            {/* AI-down banner — highest priority, takes over if AI is offline */}
+            {aiDown && (
+                <div style={bannerStyle} role="alert">
+                    <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <div>
+                        <div style={{ fontWeight: 700, marginBottom: 2 }}>
+                            AI analysis unavailable — showing rule-engine findings only.
+                        </div>
+                        <div>
+                            Risk explanations and automatic fixes may be limited. Please retry.
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Partial pipeline with zero findings — equally loud, same style */}
+            {partialIncompleteNoFindings && (
+                <div style={bannerStyle} role="alert">
+                    <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <div style={{ fontWeight: 700 }}>
+                        Analysis incomplete — no findings to report. Please retry.
+                    </div>
+                </div>
+            )}
+
+            {/* Partial pipeline with findings — quieter warning so the user knows results may be thin */}
+            {partialWithFindings && (
+                <div style={{
+                    ...bannerStyle,
+                    fontWeight: 500,
+                    fontSize: 12,
+                }}>
+                    <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <span>Some analysis stages did not complete. Results may be incomplete.</span>
+                </div>
+            )}
+
             {/* Risk Summary Header */}
             <div style={{
                 display: 'flex',
@@ -200,6 +257,7 @@ export function AnalysisPanel({
                         onRevertFix={() => onRevertFix(risk.id)}
                         onHighlight={() => onHighlightRisk(risk.id)}
                         isActive={activeRiskId === risk.id}
+                        aiDown={aiDown}
                     />
                 ))}
             </div>

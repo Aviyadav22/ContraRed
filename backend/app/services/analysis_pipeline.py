@@ -196,6 +196,11 @@ class PipelineResult:
     total_duration_seconds: float = 0.0
     total_tokens_used: int = 0
     partial: bool = False  # True if pipeline degraded gracefully
+    # True only when the AI stages (risk assessment, enrichment) actually executed.
+    # False means the pipeline fell back to rule-engine-only output — the user
+    # needs to see a banner about it. Defaults to True; the pipeline flips this
+    # to False when AIServiceUnavailable or a stage-3 exception forces fallback.
+    ai_used: bool = True
     # Phase 5: Scope analysis and coverage report
     scope_analysis: Optional[Dict[str, Any]] = None
     coverage_report: Optional[Dict[str, Any]] = None
@@ -232,6 +237,7 @@ class PipelineResult:
             "total_duration_seconds": round(self.total_duration_seconds, 3),
             "total_tokens_used": self.total_tokens_used,
             "partial": self.partial,
+            "ai_used": self.ai_used,
         }
         if self.scope_analysis:
             d["scope_analysis"] = self.scope_analysis
@@ -358,6 +364,7 @@ class AnalysisPipeline:
         stage_metrics: List[StageMetrics] = []
         total_tokens = 0
         partial = False
+        ai_used = True  # Flipped to False if Stage 3 (AI risk assessment) falls back
         executive_summary: List[str] = []
         final_redlines: List[FinalRedline] = []
         hallucination_stats: Dict[str, Any] = {}
@@ -372,6 +379,7 @@ class AnalysisPipeline:
                 stage_metrics=[],
                 total_duration_seconds=time.monotonic() - pipeline_start,
                 partial=True,
+                ai_used=False,
             )
 
         # Check for non-English text
@@ -408,6 +416,7 @@ class AnalysisPipeline:
                 stage_metrics=stage_metrics,
                 total_duration_seconds=time.monotonic() - pipeline_start,
                 partial=True,
+                ai_used=False,
             )
 
         # ---- Stage 2: CLASSIFICATION (rule engine, CPU-bound → thread pool) ----
@@ -520,6 +529,7 @@ class AnalysisPipeline:
             logger.warning("AI service unavailable, falling back to rule-engine-only results")
             stage_metrics.append(StageMetrics(stage_name="risk_assessment", error="AI unavailable"))
             partial = True
+            ai_used = False  # Rule-engine-only — frontend must show AI-down banner
             # Convert rule matches to raw redlines as fallback
             raw_redlines = self._rule_matches_to_raw_redlines(
                 classification.rule_matches, playbook_rules
@@ -529,6 +539,7 @@ class AnalysisPipeline:
             logger.error("Pipeline Stage 3 (risk_assessment) failed: %s", e)
             stage_metrics.append(StageMetrics(stage_name="risk_assessment", error=str(e)))
             partial = True
+            ai_used = False  # Rule-engine-only — frontend must show AI-down banner
             raw_redlines = self._rule_matches_to_raw_redlines(
                 classification.rule_matches, playbook_rules
             )
@@ -543,6 +554,7 @@ class AnalysisPipeline:
                 total_duration_seconds=time.monotonic() - pipeline_start,
                 total_tokens_used=total_tokens,
                 partial=partial,
+                ai_used=ai_used,
             )
 
         # ---- Stage 4: VERIFICATION (hallucination guard, CPU-bound → thread pool) ----
@@ -685,6 +697,7 @@ class AnalysisPipeline:
             total_duration_seconds=total_duration,
             total_tokens_used=total_tokens,
             partial=partial,
+            ai_used=ai_used,
             scope_analysis=scope_data,
             coverage_report=coverage_data,
             jurisdiction_code=detected_jurisdiction,

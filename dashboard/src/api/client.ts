@@ -123,6 +123,8 @@ export interface RedlineItem {
     suggested_fix?: string;
     fix_edits?: Array<{ find: string; replace: string }>;
     fix_reasoning?: string;
+    fix_verified?: boolean;
+    fix_warnings?: string[];
     redline_type: 'violation' | 'missing';
     confidence?: number;
     confidence_level?: string;
@@ -145,6 +147,7 @@ export interface AnalysisResult {
     jurisdiction?: string;
     jurisdiction_name?: string;
     pipeline_partial: boolean;
+    ai_used?: boolean;
     hallucination_stats?: Record<string, unknown>;
     compliance_scores?: Record<string, Record<string, unknown>>;
 }

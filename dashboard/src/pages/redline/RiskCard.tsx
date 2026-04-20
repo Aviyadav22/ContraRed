@@ -34,12 +34,14 @@ interface Props {
     onRevertFix: () => void;
     onHighlight: () => void;
     isActive: boolean;
+    // When true, the AI backend is unavailable — disable fix generation.
+    aiDown?: boolean;
 }
 
 export function RiskCard({
     risk, fixState, generatedFix,
     onGenerateFix, onApplyFix, onRevertFix, onHighlight,
-    isActive,
+    isActive, aiDown,
 }: Props) {
     const [expanded, setExpanded] = useState(false);
 
@@ -163,7 +165,12 @@ export function RiskCard({
                     {/* Fix section */}
                     <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
                         {fixState === 'idle' && (
-                            <Button variant="secondary" onClick={onGenerateFix}>
+                            <Button
+                                variant="secondary"
+                                onClick={onGenerateFix}
+                                disabled={aiDown}
+                                title={aiDown ? 'AI analysis is unavailable — fix generation is disabled.' : undefined}
+                            >
                                 <Wand2 size={14} style={{ marginRight: 4 }} />
                                 Generate Fix
                             </Button>
@@ -188,7 +195,14 @@ export function RiskCard({
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                                 <AlertTriangle size={14} style={{ color: 'var(--risk-critical)' }} />
                                 <span style={{ fontSize: 13, color: 'var(--risk-critical)' }}>Fix generation failed</span>
-                                <Button variant="ghost" onClick={onGenerateFix}>Retry</Button>
+                                <Button
+                                    variant="ghost"
+                                    onClick={onGenerateFix}
+                                    disabled={aiDown}
+                                    title={aiDown ? 'AI analysis is unavailable — retry is disabled.' : undefined}
+                                >
+                                    Retry
+                                </Button>
                             </div>
                         )}
 
@@ -208,8 +222,35 @@ export function RiskCard({
                                     </div>
                                 )}
 
-                                {/* Warnings */}
-                                {generatedFix.fix_warnings && generatedFix.fix_warnings.length > 0 && (
+                                {/* Unverified fix warning — AI "find" text may not exist in source */}
+                                {generatedFix.fix_verified === false && (
+                                    <div style={{
+                                        fontSize: 12,
+                                        color: 'var(--risk-high)',
+                                        backgroundColor: 'var(--risk-high-bg)',
+                                        border: '1px solid var(--risk-high-border)',
+                                        borderRadius: 'var(--radius-sm)',
+                                        padding: '8px 10px',
+                                        display: 'flex',
+                                        flexDirection: 'column',
+                                        gap: 4,
+                                    }}>
+                                        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 6, fontWeight: 600 }}>
+                                            <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 2 }} />
+                                            <span>Unverified — AI's "find" text may not exist in the source. Review before applying.</span>
+                                        </div>
+                                        {generatedFix.fix_warnings && generatedFix.fix_warnings.length > 0 && (
+                                            <ul style={{ margin: '4px 0 0 18px', padding: 0, lineHeight: 1.5 }}>
+                                                {generatedFix.fix_warnings.map((w, i) => (
+                                                    <li key={i}>{w}</li>
+                                                ))}
+                                            </ul>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Non-blocking warnings when fix is verified but has soft warnings */}
+                                {generatedFix.fix_verified !== false && generatedFix.fix_warnings && generatedFix.fix_warnings.length > 0 && (
                                     <div style={{ fontSize: 12, color: 'var(--risk-high)', display: 'flex', alignItems: 'flex-start', gap: 4 }}>
                                         <AlertTriangle size={12} style={{ flexShrink: 0, marginTop: 2 }} />
                                         <span>{generatedFix.fix_warnings.join('. ')}</span>

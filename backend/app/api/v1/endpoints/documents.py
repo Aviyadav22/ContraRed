@@ -135,6 +135,9 @@ class AnalysisResult(BaseModel):
     jurisdiction: Optional[str] = None
     jurisdiction_name: Optional[str] = None
     pipeline_partial: bool = False
+    # True only when AI stages actually executed. False -> rule-engine fallback,
+    # and the frontend must show an AI-down banner. Defaults to True (AI-first).
+    ai_used: bool = True
     source_type: str = "text"
     paragraph_hashes: Optional[Dict[str, str]] = None
     hallucination_stats: Optional[dict] = None  # Verification stage stats (source trail)
@@ -566,6 +569,7 @@ async def analyze_document(
             risk_summary=risk_summary,
             tokens_used=pipeline_result.total_tokens_used,
             pipeline_partial=pipeline_result.partial,
+            ai_used=pipeline_result.ai_used,
             jurisdiction=jurisdiction_code,
             jurisdiction_name=getattr(pipeline_result, 'jurisdiction_name', None),
             hallucination_stats=pipeline_result.hallucination_stats or None,
@@ -2353,6 +2357,7 @@ async def analyze_file(
             tokens_used=pipeline_result.total_tokens,
             source_type="docx",
             pipeline_partial=pipeline_result.partial,
+            ai_used=pipeline_result.ai_used,
             paragraph_hashes=hash_map,
             risks=[
                 RedlineItem(
