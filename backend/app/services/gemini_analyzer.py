@@ -68,19 +68,49 @@ def _sanitize_for_prompt(text: str, max_length: int = 50000) -> str:
 
 
 def _strip_markdown_fences(text: str) -> str:
-    """Remove ```json and ``` markdown fences from AI responses.
+    """Extract the JSON payload from an AI response, tolerating any wrapping.
 
-    Gemini sometimes wraps JSON output in markdown code fences even when
-    instructed not to.  This helper normalises that before JSON parsing.
+    Gemini sometimes wraps JSON output in markdown code fences (```json ... ```)
+    even when instructed not to, and occasionally adds prose before or after
+    the fenced block ("Here is the fix: ... ```json ... ``` Hope this helps!").
+    This helper handles all of these variants:
+
+      1. Bare JSON (no fences).
+      2. Fenced with ```json\\n ... \\n```.
+      3. Fenced with ``` ... ```.
+      4. Case variants (```JSON, ```Json).
+      5. Prose before and/or after a fenced block.
+      6. Unterminated fences (missing trailing ```).
+
+    If no valid JSON object/array can be isolated, returns the input stripped.
     """
     cleaned = text.strip()
-    if cleaned.startswith("```json"):
-        cleaned = cleaned[7:]
-    elif cleaned.startswith("```"):
-        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-    if cleaned.endswith("```"):
-        cleaned = cleaned[:-3]
-    return cleaned.strip()
+
+    # 1. Prefer content inside a fenced block anywhere in the response.
+    fence_match = re.search(
+        r"```(?:json|JSON|Json)?\s*\n?(.*?)(?:\n?```|\Z)",
+        cleaned,
+        re.DOTALL,
+    )
+    if fence_match:
+        inner = fence_match.group(1).strip()
+        if inner:
+            return inner
+
+    # 2. Fall back to the substring from the first '{' or '[' to the matching
+    #    last '}' or ']' — handles responses with leading/trailing prose.
+    first_obj = cleaned.find("{")
+    first_arr = cleaned.find("[")
+    starts = [i for i in (first_obj, first_arr) if i >= 0]
+    if starts:
+        start = min(starts)
+        end_obj = cleaned.rfind("}")
+        end_arr = cleaned.rfind("]")
+        end = max(end_obj, end_arr)
+        if end > start:
+            return cleaned[start : end + 1].strip()
+
+    return cleaned
 
 
 def _apply_edits(original_text: str, edits: list) -> tuple:
@@ -836,13 +866,29 @@ class GeminiAnalyzer:
         except asyncio.TimeoutError:
             raise AIServiceTimeout()
         except json.JSONDecodeError:
-            # If JSON parsing fails, try to use raw text as fix
-            logger.warning("Failed to parse fix generation JSON, using raw text")
-            raw = response_text.strip()
+            # Parser still failed after fence stripping — surface the cleanest
+            # version of the text we can, without backticks or preamble.
+            logger.warning("Failed to parse fix generation JSON, using stripped raw text")
+            raw = _strip_markdown_fences(response_text).strip()
+            # If it looks like it might still be JSON-shaped, attempt one more parse
+            if raw.startswith("{") or raw.startswith("["):
+                try:
+                    data = json.loads(raw)
+                    reasoning = data.get("reasoning", "")
+                    fix_text = data.get("fix_text", "").strip()
+                    if fix_text:
+                        return {
+                            "fix_text": fix_text,
+                            "fix_edits": [],
+                            "reasoning": reasoning,
+                        }
+                except json.JSONDecodeError:
+                    pass
             if raw:
                 return {
                     "fix_text": raw,
-                    "reasoning": "Generated fix (raw format — JSON parsing failed).",
+                    "fix_edits": [],
+                    "reasoning": "The model returned unstructured text. Review before applying.",
                 }
             raise AIServiceError("Failed to parse AI response.", "ai_parse_error")
         except Exception as e:
