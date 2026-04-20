@@ -925,6 +925,113 @@ _mutual_signature_blocks = _clause(
 )
 
 # ===================================================================
+#  NDA shared metadata  — role discipline, forbidden terms, mandates
+#  These feed the Draft Agent's prompt builder and coherence detectors
+#  via playbook lookup. Backward-compatible: agent falls back to its
+#  hardcoded defaults when a playbook omits these keys.
+# ===================================================================
+
+_NDA_FORBIDDEN_TERMS: List[str] = [
+    # SaaS vocabulary — NEVER defined in an NDA
+    "Provider", "Customer", "Service Provider", "Client",
+    "Subscription", "Subscription Services", "Subscription Fees",
+    "SaaS", "Order Form", "Service Fees", "Support Tier",
+    # Employment vocabulary
+    "Employer", "Employee",
+    # MSA vocabulary
+    "Statement of Work", "SOW", "Deliverables",
+]
+
+_NDA_COMMON_DETECTORS: List[Dict[str, Any]] = [
+    # Generic detectors resolved by type-name in draft_agent._detect_defects.
+    # Keeping them as data (not callables) so playbooks stay pure-Python dicts.
+    {"type": "forbidden_terms"},
+    {"type": "truncated_clause"},
+    {"type": "entity_jurisdiction_mismatch"},
+    {"type": "nested_quote_duplication"},
+]
+
+_NDA_MUTUAL_DIRECTIVES: List[str] = [
+    # Anti-leak: forbid SaaS/Employment/MSA vocabulary
+    "This is a NON-DISCLOSURE AGREEMENT. The ONLY defined role terms are "
+    "'Disclosing Party' and 'Receiving Party'. NEVER use 'Provider', "
+    "'Customer', 'Service Provider', 'Client', 'Subscription', 'SaaS', "
+    "'Order Form', 'Employer', 'Employee', or any other role label — they "
+    "are not defined in this Agreement and referencing them is a drafting "
+    "defect.",
+    # Mutual nature
+    "This is a MUTUAL NDA. Every confidentiality obligation, remedy, and "
+    "carve-out applies symmetrically: each Party is BOTH a Disclosing Party "
+    "(when it shares Confidential Information) AND a Receiving Party (when "
+    "it receives Confidential Information). Do NOT draft asymmetric "
+    "obligations that favor one side.",
+    # Recitals discipline — the single biggest source of narrative drift
+    "Recitals MUST describe the business Purpose supplied in the NDA "
+    "context block verbatim. Do NOT invent a SaaS-evaluation, procurement, "
+    "vendor-assessment, or subscription narrative. The recitals should "
+    "read: 'The Parties wish to discuss [Purpose] and, in connection with "
+    "those discussions, may disclose Confidential Information to each "
+    "other.' Nothing more.",
+    # No cross-contamination from other doc types
+    "Do NOT reference Subscription Services, Fees, Order Forms, SOWs, "
+    "Deliverables, service-level credits, or any commercial-deal concept. "
+    "If such content appears in the reference seed, OMIT it. An NDA covers "
+    "confidentiality only.",
+    # IP discipline (fixes the 'Provider owns IP' leak in Mutual NDA)
+    "In a Mutual NDA, neither Party grants the other any license or "
+    "ownership in its intellectual property merely by disclosing "
+    "Confidential Information. The No License clause must be SYMMETRIC — "
+    "both Parties retain their own IP; disclosure does not transfer "
+    "rights. Do NOT state or imply that one Party owns pre-existing IP "
+    "that the other does not.",
+]
+
+_NDA_UNILATERAL_DIRECTIVES: List[str] = [
+    "This is a UNILATERAL NDA. The ONLY defined role terms are "
+    "'Disclosing Party' (the party sharing Confidential Information) and "
+    "'Receiving Party' (the party receiving it). NEVER use 'Provider', "
+    "'Customer', 'Service Provider', 'Client', 'Subscription', 'SaaS', "
+    "'Employer', 'Employee', or any other role label.",
+    "Obligations flow ONE WAY: only the Receiving Party owes confidentiality "
+    "obligations to the Disclosing Party. Do NOT add symmetric obligations.",
+    "Recitals MUST describe the business Purpose supplied in the NDA "
+    "context block verbatim. Do NOT invent a SaaS-evaluation, procurement, "
+    "vendor-assessment, or subscription narrative.",
+    "Do NOT reference Subscription Services, Fees, Order Forms, SOWs, "
+    "or any commercial-deal concept. If such content appears in the "
+    "reference seed, OMIT it.",
+]
+
+# Per-clause mandates: apply in addition to the playbook-wide directives
+# above, but only when the matching clause_type is being drafted.
+_NDA_CLAUSE_DIRECTIVES: Dict[str, List[str]] = {
+    "recitals": [
+        "Keep the recitals to 2–4 short 'WHEREAS' paragraphs. State ONLY: "
+        "(1) who the Parties are, (2) that they wish to discuss the "
+        "Purpose specified in the NDA context, and (3) that they may "
+        "disclose Confidential Information to each other in connection "
+        "with those discussions. Do NOT narrate any business relationship, "
+        "commercial arrangement, or evaluation scenario beyond the stated "
+        "Purpose."
+    ],
+    "no_license": [
+        "This clause must state (a) that no license or ownership in "
+        "Confidential Information is granted by disclosure, and (b) that "
+        "each Party's pre-existing intellectual property remains its own. "
+        "Frame both statements SYMMETRICALLY between the Parties. Do NOT "
+        "assert that one Party owns specific IP that the other does not."
+    ],
+    "permitted_disclosures": [
+        "Every permitted-disclosure carve-out must be a COMPLETE English "
+        "sentence with matched parentheses and quotes. Common incomplete "
+        "pattern to AVOID: 'Receiving Party may disclose to advisors who "
+        "are bound by confidentiality obligations no less protective of "
+        "the disclosing party (' — always close parenthetical phrases and "
+        "finish the sentence."
+    ],
+}
+
+# ===================================================================
 #  MUTUAL NDA PLAYBOOK  (assembled)
 # ===================================================================
 
@@ -933,6 +1040,16 @@ NDA_MUTUAL_PLAYBOOK: Dict[str, Any] = {
     "name": "Mutual Non-Disclosure Agreement",
     "jurisdiction": "{{governing_law}}",
     "section_order": list(_SECTION_ORDER),
+    # --- NEW: declarative metadata consumed by the Draft Agent ---
+    "roles": {
+        "disclosing_party": "Disclosing Party",
+        "receiving_party": "Receiving Party",
+    },
+    "forbidden_terms": list(_NDA_FORBIDDEN_TERMS),
+    "mandatory_directives": list(_NDA_MUTUAL_DIRECTIVES),
+    "clause_mandatory_directives": dict(_NDA_CLAUSE_DIRECTIVES),
+    "detectors": list(_NDA_COMMON_DETECTORS),
+    # -------------------------------------------------------------
     "clauses": [
         _mutual_preamble,
         _mutual_recitals,
@@ -1129,6 +1246,16 @@ NDA_UNILATERAL_PLAYBOOK: Dict[str, Any] = {
     "name": "Unilateral Non-Disclosure Agreement",
     "jurisdiction": "{{governing_law}}",
     "section_order": list(_SECTION_ORDER),
+    # --- NEW: declarative metadata consumed by the Draft Agent ---
+    "roles": {
+        "disclosing_party": "Disclosing Party",
+        "receiving_party": "Receiving Party",
+    },
+    "forbidden_terms": list(_NDA_FORBIDDEN_TERMS),
+    "mandatory_directives": list(_NDA_UNILATERAL_DIRECTIVES),
+    "clause_mandatory_directives": dict(_NDA_CLAUSE_DIRECTIVES),
+    "detectors": list(_NDA_COMMON_DETECTORS),
+    # -------------------------------------------------------------
     "clauses": [
         _uni_preamble,
         _uni_recitals,

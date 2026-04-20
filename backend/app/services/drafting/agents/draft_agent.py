@@ -146,6 +146,63 @@ def _strip_leading_heading(text: str, heading: str = "") -> str:
     return text
 
 
+# ---------------------------------------------------------------------------
+# Entity-type ↔ jurisdiction heuristics for D10
+# ---------------------------------------------------------------------------
+
+# Jurisdiction-EXCLUSIVE entity-type markers: tokens that are characteristic
+# of one country and essentially never appear in legitimate entities from a
+# different country. Ambiguous suffixes like "Ltd" or "Limited" (valid in
+# IN/GB/SG/CA/HK alike) are intentionally omitted — we only want to flag
+# obvious mismatches such as "Pvt. Ltd." paired with a New York address.
+_JURISDICTION_EXCLUSIVE: Dict[str, List[str]] = {
+    "IN": ["pvt. ltd", "pvt ltd", "private limited", "opc pvt"],
+    "DE": ["gmbh", "ag aktiengesellschaft", "aktiengesellschaft"],
+    "FR": ["sarl", "sasu", "eurl"],
+    "AU": ["pty ltd", "pty. ltd", "pty limited", "pty. limited"],
+    "BR": ["ltda"],
+    "JP": ["k.k.", "godo kaisha", "kabushiki kaisha"],
+    "SG": ["pte ltd", "pte. ltd"],
+    "AE": ["pjsc", "fz llc", "fze"],
+    "US": [],   # "Inc."/"LLC"/"Corp." are unique-ish but also appear globally
+    "GB": [],   # "Plc" is UK-only but rare enough to skip
+}
+
+
+def _detect_entity_jurisdiction_mismatches(
+    preamble_text: str,
+    context: Dict[str, Any],
+) -> List[str]:
+    """Flag obvious entity-type ↔ jurisdiction mismatches.
+
+    Strategy: for each party, check whether its entity_type string contains
+    a marker EXCLUSIVE to a country other than its declared jurisdiction.
+    We deliberately ignore ambiguous suffixes ("Ltd", "Limited") because
+    they are valid in many jurisdictions.
+    """
+    issues: List[str] = []
+    for party_key in ("party_1", "party_2"):
+        party = context.get(party_key, {}) or {}
+        entity = (party.get("entity_type") or "").strip().lower()
+        jur = (party.get("jurisdiction") or "").strip().upper()
+        if not entity or not jur:
+            continue
+        country = jur.split("-", 1)[0]
+        for other_country, markers in _JURISDICTION_EXCLUSIVE.items():
+            if other_country == country or not markers:
+                continue
+            hit = next((m for m in markers if m in entity), None)
+            if hit:
+                issues.append(
+                    f"{party.get('name') or party_key} is marked "
+                    f"'{party.get('entity_type')}' (the '{hit}' marker is "
+                    f"characteristic of {other_country}) but the declared "
+                    f"jurisdiction is {jur}"
+                )
+                break
+    return issues
+
+
 class DraftAgent:
     """AI-first drafting agent — builds a RawDraft from a request and playbook."""
 
@@ -186,8 +243,19 @@ class DraftAgent:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _build_context(req: DraftRequest) -> Dict[str, Any]:
-        """Build structured context passed into every clause-generation prompt."""
+    def _build_context(
+        req: DraftRequest,
+        playbook: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Build structured context passed into every clause-generation prompt.
+
+        When *playbook* supplies declarative metadata (``roles``,
+        ``forbidden_terms``, ``mandatory_directives``, ``clause_mandatory_directives``,
+        ``detectors``) those values override the hardcoded defaults below.
+        This keeps doc-type-specific rules (e.g. NDA must not use
+        "Provider/Customer") inside each playbook instead of leaking into
+        the shared prompt template.
+        """
         eff_date = (
             req.effective_date.isoformat()
             if req.effective_date
@@ -293,6 +361,42 @@ class DraftAgent:
                 "reporting_manager": getattr(req, "reporting_manager", None),
                 "work_location": getattr(req, "work_location", None),
             }
+
+        # ------------------------------------------------------------------
+        # Playbook-driven metadata (doc-type-specific rules).
+        # When the playbook declares any of these keys, they override the
+        # hardcoded defaults above. Absence = current behavior unchanged
+        # (backward-compatible for SaaS / MSA / Employment playbooks that
+        # have not yet been migrated).
+        # ------------------------------------------------------------------
+        # Track provenance of ``ctx["roles"]``. The legacy hardcoded switch
+        # above stores PARTY NAMES as the values (e.g. saas → {"provider":
+        # "Acme Corp."}), whereas the new playbook convention stores ROLE
+        # LABELS (e.g. nda_mutual → {"disclosing_party": "Disclosing
+        # Party"}). Downstream code needs to know which is which so the
+        # "Use X and Y" instruction uses role labels, not party names.
+        ctx["_roles_from_playbook"] = False
+        if playbook:
+            pb_roles = playbook.get("roles")
+            if pb_roles:
+                # Playbook roles WIN over the hardcoded switch above. Keys
+                # are snake_case labels (e.g. "disclosing_party"), values
+                # are the human-readable role term shown to the AI.
+                ctx["roles"] = dict(pb_roles)
+                ctx["_roles_from_playbook"] = True
+            ctx["forbidden_terms"] = list(playbook.get("forbidden_terms", []))
+            ctx["mandatory_directives"] = list(
+                playbook.get("mandatory_directives", [])
+            )
+            ctx["clause_mandatory_directives"] = dict(
+                playbook.get("clause_mandatory_directives", {})
+            )
+            ctx["detectors"] = list(playbook.get("detectors", []))
+        else:
+            ctx.setdefault("forbidden_terms", [])
+            ctx.setdefault("mandatory_directives", [])
+            ctx.setdefault("clause_mandatory_directives", {})
+            ctx.setdefault("detectors", [])
 
         return ctx
 
@@ -674,11 +778,27 @@ class DraftAgent:
                     "(Lei Geral de Proteção de Dados)."
                 )
 
-        if universal_directives:
+        # Playbook-level directives (doc-type-specific: e.g. "This is an NDA,
+        # never use 'Provider/Customer'"). Always injected before the output
+        # instructions so they compete on equal footing with seed text.
+        playbook_mandates: List[str] = list(context.get("mandatory_directives", []))
+
+        # Per-clause mandates from the playbook, keyed by clause_type.
+        clause_mandates_map = context.get("clause_mandatory_directives", {}) or {}
+        per_clause_mandates: List[str] = list(
+            clause_mandates_map.get(clause_type, [])
+        )
+
+        if universal_directives or playbook_mandates or per_clause_mandates:
+            all_mandates = [
+                *playbook_mandates,       # doc-type scope (e.g. NDA-wide)
+                *per_clause_mandates,     # clause-scope override
+                *universal_directives,    # user-picked knobs (GL, dispute, DPA)
+            ]
             universal_clause_directive = (
-                "\n\nJurisdictional mandates (override any conflicting seed "
+                "\n\nMandatory directives (override any conflicting seed "
                 "language):\n- "
-                + "\n- ".join(universal_directives)
+                + "\n- ".join(all_mandates)
             )
 
         saas_block = ""
@@ -797,25 +917,60 @@ class DraftAgent:
             f"\nPlaybook drafting notes: {drafting_notes}" if drafting_notes else ""
         )
 
-        # Collect MANDATORY overrides (user-selected knobs) and put them right
-        # before the output instructions where the model pays the most attention.
-        # Universal directives (governing law, dispute resolution, DPA
-        # jurisdiction) go first because they are the highest-risk silent
-        # failures — the AI can produce a clean-looking Delaware / GDPR clause
-        # that completely ignores the user's selection.
+        # Collect MANDATORY overrides (playbook + user-selected knobs) and
+        # put them right before the output instructions where the model pays
+        # the most attention.
+        # Order: playbook doc-type mandates → user-selected knobs (GL,
+        # dispute, DPA) → SaaS/Employment knobs. Playbook comes first because
+        # doc-type identity is the most fundamental constraint — if an NDA
+        # accidentally inherits SaaS seed text, the anti-leak mandate must
+        # win.
         mandatory_overrides = ""
-        for block in (universal_clause_directive, saas_clause_directive, employment_clause_directive):
-            if block and "MANDATORY" in block:
+        for block in (
+            universal_clause_directive,
+            saas_clause_directive,
+            employment_clause_directive,
+        ):
+            if block and ("MANDATORY" in block or "Mandatory directives" in block):
                 mandatory_overrides += block
         mandatory_overrides_section = (
-            f"\n\n=== CRITICAL USER-SPECIFIED OVERRIDES (HIGHEST PRIORITY) ==="
+            f"\n\n=== CRITICAL OVERRIDES (HIGHEST PRIORITY) ==="
             f"{mandatory_overrides}\n"
             f"These overrides take ABSOLUTE priority over any conflicting guidance in the "
             f"reference seed, tier posture, or playbook notes above. If the seed text "
-            f"uses a different value (e.g. a different cap or framework list), you MUST "
-            f"override it to honor the user's explicit choice.\n"
+            f"uses a different value (e.g. a different cap, framework list, or role "
+            f"label), you MUST override it to honor these directives.\n"
             f"==============================================================\n"
         ) if mandatory_overrides else ""
+
+        # Role labels used in the output instructions. Only safe to iterate
+        # ``roles.values()`` when the playbook itself supplied them — the
+        # legacy hardcoded switch in ``_build_context`` stored party NAMES
+        # as values (e.g. {"provider": "Acme Corp."}). For those cases we
+        # keep the historical Provider/Customer wording to preserve SaaS/MSA/
+        # Employment behavior until those playbooks are migrated.
+        if roles and context.get("_roles_from_playbook"):
+            role_labels_for_prompt = " and ".join(
+                f"'{v}'" for v in roles.values()
+            )
+        else:
+            role_labels_for_prompt = "'Provider' and 'Customer'"
+
+        # Forbidden-term instruction (playbook-driven). Only emitted when
+        # the playbook declares forbidden terms, so SaaS/MSA/Employment are
+        # untouched.
+        forbidden_terms_list = context.get("forbidden_terms", []) or []
+        forbidden_block = ""
+        if forbidden_terms_list:
+            forbidden_block = (
+                "\n"
+                "F. FORBIDDEN TERMS (this contract type does not define them):\n"
+                f"   - Do NOT use any of the following terms anywhere in the "
+                f"clause body: {', '.join(repr(t) for t in forbidden_terms_list)}.\n"
+                "   - If the reference seed uses one of these terms, REPLACE it "
+                "with the correct role label from the roles block above, or "
+                "REMOVE the sentence if no correct substitution exists.\n"
+            )
 
         prompt = (
             f"You are a senior contract attorney drafting a single clause of a "
@@ -851,14 +1006,16 @@ class DraftAgent:
             "   - No markdown. No ``` fences. No preamble like 'Here is...'.\n"
             "\n"
             "B. DEFINED-TERM DISCIPLINE (strict):\n"
-            "   - Use 'Provider' and 'Customer' (or the equivalent role labels "
-            "shown in the roles block above) throughout the clause body. These "
-            "are the defined terms for this contract.\n"
+            f"   - Use {role_labels_for_prompt} (the role labels shown in the "
+            "roles block above) throughout the clause body. These are the "
+            "ONLY defined role terms for this contract — use no others.\n"
             "   - Do NOT use the parties' literal company names in the body of "
             "ordinary clauses. The party names belong ONLY in the Preamble "
             "and Signature Blocks.\n"
             "   - Wrap first-use defined terms in double quotes (e.g. "
-            '"Confidential Information"), then use them unquoted afterwards.\n'
+            '"Confidential Information"), then use them unquoted afterwards. '
+            "Do NOT nest quotes inside already-quoted defined terms (never "
+            'write `"Receiving "Party""` — write `"Receiving Party"`).\n'
             "\n"
             "C. SUB-NUMBERING DISCIPLINE:\n"
             "   - Do NOT prefix sub-paragraphs with numeric labels like '12.1', "
@@ -883,8 +1040,12 @@ class DraftAgent:
             "full operative sentence.\n"
             "   - All dates, names, amounts from the deal context must be used "
             "verbatim — never substitute '[Date]', 'XXX', '[Amount]', etc.\n"
-            "   - If a CRITICAL USER-SPECIFIED OVERRIDE block appears above, "
+            "   - Every sentence must be grammatically complete. Close every "
+            "opened parenthesis and quotation mark. Never end a clause "
+            "mid-phrase.\n"
+            "   - If a CRITICAL OVERRIDES block appears above, "
             "those values are non-negotiable — use them verbatim.\n"
+            f"{forbidden_block}"
         )
 
         return prompt
@@ -1174,11 +1335,14 @@ class DraftAgent:
                         "for an India-to-India processing relationship."
                     )
 
-        # D6: Governing law mismatch in the Dispute Resolution clause.
+        # D6: Governing law mismatch.
         # The user's requested governing_law must appear in this clause —
         # otherwise the AI has silently substituted Delaware / California
-        # defaults from the seed.
-        if section.clause_type == "dispute_resolution":
+        # defaults from the seed, or truncated the phrase (e.g. producing
+        # "governed by ... the Ney York" instead of "the laws of New York").
+        # Fires on both combined "governing_law" clauses (common in NDAs)
+        # and standalone "dispute_resolution" clauses (common in SaaS/MSA).
+        if section.clause_type in {"dispute_resolution", "governing_law"}:
             expected_gl = (context.get("governing_law") or "").strip()
             if expected_gl:
                 # Escape regex-unsafe characters in the expected value.
@@ -1210,11 +1374,40 @@ class DraftAgent:
                         f"{expected_gl}. Do NOT substitute "
                         f"{', '.join(set(wrong_hits)) or 'Delaware or another default US state'}."
                     )
+                # "Laws of" completeness check. The AI occasionally truncates
+                # the canonical phrase (e.g. produces "governed by and
+                # construed in accordance with the Ney York." instead of
+                # "the laws of New York"). If the phrase "governed by"
+                # appears anywhere in the clause, the words "laws of" must
+                # appear within a reasonable window afterward — otherwise
+                # the clause is malformed.
+                if re.search(r"\bgoverned\s+by\b", text, re.IGNORECASE):
+                    # Look for "laws of" within 80 chars after "governed by".
+                    after_gb = re.split(
+                        r"\bgoverned\s+by\b", text, maxsplit=1, flags=re.IGNORECASE
+                    )
+                    if len(after_gb) == 2 and not re.search(
+                        r"\blaws?\s+of\b", after_gb[1][:120], re.IGNORECASE
+                    ):
+                        defects.append(
+                            "Governing-law clause is malformed: the phrase "
+                            "'governed by' is not followed by 'laws of "
+                            f"{expected_gl}' within a reasonable window. "
+                            "The canonical form is 'This Agreement shall be "
+                            f"governed by and construed in accordance with "
+                            f"the laws of {expected_gl}, without regard to "
+                            "its conflict-of-laws principles.' Rewrite the "
+                            "clause to include the full 'laws of "
+                            f"{expected_gl}' phrase and verify the "
+                            "jurisdiction name is spelled correctly."
+                        )
 
         # D7: Dispute-resolution method mismatch. If user selected
         # "arbitration" but the clause describes "litigation" as the primary
-        # mechanism (or vice versa), flag for repair.
-        if section.clause_type == "dispute_resolution":
+        # mechanism (or vice versa), flag for repair. Also fires on combined
+        # "governing_law" clauses (common in NDAs) since they usually
+        # bundle the dispute-resolution mechanism.
+        if section.clause_type in {"dispute_resolution", "governing_law"}:
             expected_method = (context.get("dispute_resolution") or "").lower().strip()
             if expected_method:
                 # Detect the dominant mechanism actually described in the clause.
@@ -1247,6 +1440,121 @@ class DraftAgent:
                         "reference mediation. Rewrite to include a mediation "
                         "escalation stage."
                     )
+
+        # ------------------------------------------------------------------
+        # Playbook-driven detectors. These only fire when the playbook
+        # declares the corresponding detector entry, so SaaS/MSA/Employment
+        # playbooks that haven't been migrated keep their current behavior.
+        # ------------------------------------------------------------------
+        playbook_detectors = context.get("detectors", []) or []
+        declared_types = {d.get("type") for d in playbook_detectors if isinstance(d, dict)}
+
+        # D9: Forbidden-terms leak (e.g., "Provider/Customer" inside an NDA).
+        # The preamble and signature blocks can legitimately name parties, so
+        # we skip them; recitals can too (party narrative). Only the operative
+        # body is strictly policed.
+        forbidden_terms = context.get("forbidden_terms", []) or []
+        if "forbidden_terms" in declared_types and forbidden_terms:
+            if section.clause_type not in {"preamble", "signature_blocks"}:
+                leaked: List[str] = []
+                for term in forbidden_terms:
+                    if not term:
+                        continue
+                    # Word-boundary match, case-sensitive (SaaS role labels
+                    # are capitalized defined terms; matching "Customer" but
+                    # not "customer-facing" as an adjective).
+                    if re.search(rf"\b{re.escape(term)}\b", text):
+                        leaked.append(term)
+                if leaked:
+                    defects.append(
+                        f"This clause contains role/concept terms that are NOT "
+                        f"defined in this contract type: {', '.join(repr(t) for t in leaked)}. "
+                        "These appear to have leaked from a different contract "
+                        "template (SaaS, Employment, or MSA). Replace them with "
+                        "the role labels declared in the roles block "
+                        "(Disclosing Party / Receiving Party for NDAs), or "
+                        "remove the affected sentences if no correct "
+                        "substitution exists."
+                    )
+
+        # D10: Entity-type ↔ jurisdiction mismatch. An Indian 'Pvt. Ltd.' is
+        # not a US entity; a 'New York'-based party should not be labeled
+        # 'Pvt. Ltd.' in the preamble. Only fires on the preamble (where
+        # entity types appear) to avoid noise.
+        if (
+            "entity_jurisdiction_mismatch" in declared_types
+            and section.clause_type == "preamble"
+        ):
+            mismatches = _detect_entity_jurisdiction_mismatches(text, context)
+            if mismatches:
+                defects.append(
+                    "Entity-type / jurisdiction mismatch in the preamble: "
+                    + "; ".join(mismatches)
+                    + ". Rewrite so each Party's entity-type suffix matches its "
+                    "jurisdiction (e.g. an Indian entity is 'Pvt. Ltd.' or "
+                    "'Private Limited'; a New York entity is 'Inc.', 'LLC', "
+                    "'Corp.', etc. — not 'Pvt. Ltd.')."
+                )
+
+        # D11: Truncated / incomplete clause. Open parenthesis with no close,
+        # open double-quote with no close, or body ending mid-sentence without
+        # terminal punctuation. Indicates the AI was cut off or the seed was
+        # copied partially.
+        if "truncated_clause" in declared_types and text:
+            trunc_issues: List[str] = []
+            # Unbalanced parens
+            if text.count("(") != text.count(")"):
+                trunc_issues.append(
+                    f"unbalanced parentheses ({text.count('(')} open vs "
+                    f"{text.count(')')} close)"
+                )
+            # Unbalanced straight quotes
+            if text.count('"') % 2 != 0:
+                trunc_issues.append("unbalanced double quotes")
+            # Ends mid-sentence (no terminal punctuation within last 3 chars,
+            # ignoring trailing whitespace)
+            stripped_tail = text.rstrip()
+            if stripped_tail and stripped_tail[-1] not in ".!?\"')]}\u201d":
+                # Allow closing bracket/brace/quote as legitimate enders
+                trunc_issues.append("body ends without terminal punctuation")
+            if trunc_issues:
+                defects.append(
+                    "Clause appears truncated or incomplete: "
+                    + ", ".join(trunc_issues)
+                    + ". Rewrite the clause so every sentence is complete, "
+                    "every parenthetical is closed, and every quotation mark "
+                    "is balanced."
+                )
+
+        # D12: Nested / duplicated quotes around defined terms.
+        # Common AI defect: `"Receiving "Party""` (a defined term that was
+        # already quoted got quoted again when nested inside another phrase).
+        # Matches both straight (") and Unicode smart (\u201c \u201d) quotes
+        # because Word/rendering pipelines frequently convert one to the
+        # other, and the AI itself mixes them within a single clause.
+        if "nested_quote_duplication" in declared_types and text:
+            # Any "double-quote-ish" character: straight, smart-left, smart-right.
+            _QUOTE_CLASS = r'[\"\u201c\u201d]'
+            # Pattern: Qword Qword Q  — three quote characters with two
+            # capitalised tokens in between (e.g. "Receiving "Party"").
+            nested_pattern = (
+                _QUOTE_CLASS
+                + r"[A-Z][a-z]+\s+"
+                + _QUOTE_CLASS
+                + r"[A-Z][a-z]+"
+                + _QUOTE_CLASS
+                + r"{1,2}"
+            )
+            nested_quote_hits = re.findall(nested_pattern, text)
+            if nested_quote_hits:
+                defects.append(
+                    "Clause contains nested / duplicated defined-term quotes "
+                    f"(example: {nested_quote_hits[0]!r}). Rewrite so each "
+                    "defined term is wrapped in a single pair of double quotes "
+                    "on first use (e.g. `\"Receiving Party\"`) and unquoted "
+                    "thereafter. Use the same quote style (either all straight "
+                    "or all curly) consistently throughout the clause."
+                )
 
         # D8: Survival list in Effects of Termination must include the key
         # post-termination provisions: Confidentiality (9), Limitation of
@@ -1304,14 +1612,46 @@ class DraftAgent:
         p1 = context.get("party_1", {})
         p2 = context.get("party_2", {})
         roles = context.get("roles", {})
-        roles_line = ", ".join(f"{k.replace('_',' ').title()} = {v}"
-                               for k, v in roles.items()) or f"Provider = {p1.get('name')}, Customer = {p2.get('name')}"
+        if roles:
+            roles_line = ", ".join(
+                f"{k.replace('_',' ').title()} = {v}" for k, v in roles.items()
+            )
+        else:
+            roles_line = (
+                f"Provider = {p1.get('name')}, Customer = {p2.get('name')}"
+            )
+        # Same provenance gate as _build_clause_prompt: only treat
+        # roles.values() as role LABELS when the playbook supplied them.
+        if roles and context.get("_roles_from_playbook"):
+            role_labels_only = ", ".join(f"'{v}'" for v in roles.values())
+        else:
+            role_labels_only = "'Provider' and 'Customer'"
+
+        # Playbook doc-type directives (e.g., "This is an NDA, never use
+        # Provider/Customer"). Injected into the repair prompt so fixes do
+        # not re-introduce the same leak.
+        playbook_mandates = context.get("mandatory_directives", []) or []
+        forbidden_terms = context.get("forbidden_terms", []) or []
+        pb_block = ""
+        if playbook_mandates:
+            pb_block += (
+                "\nDoc-type mandates (must be respected):\n- "
+                + "\n- ".join(playbook_mandates)
+                + "\n"
+            )
+        if forbidden_terms:
+            pb_block += (
+                "\nForbidden terms (never use these in the rewritten clause): "
+                + ", ".join(repr(t) for t in forbidden_terms)
+                + ".\n"
+            )
 
         prompt = (
             f"You are repairing a defective clause in a {context.get('contract_type','').replace('_',' ').upper()}.\n\n"
             f"Clause heading: **{section.heading}** (type: {section.clause_type})\n"
             f"Jurisdiction: {context.get('jurisdiction', '(unspecified)')}\n"
-            f"Defined roles: {roles_line}\n\n"
+            f"Defined roles: {roles_line}\n"
+            f"{pb_block}\n"
             f"The current clause body has these defects that MUST be fixed:\n"
             f"{defect_list}\n\n"
             f"Current (defective) clause body:\n---\n{section.content}\n---\n\n"
@@ -1319,13 +1659,15 @@ class DraftAgent:
             "number, no markdown fences, no preamble. Start directly with the first "
             "word of the operative text.\n\n"
             "Rules:\n"
-            "- Use the defined role terms (Provider, Customer, etc.) — NOT the "
+            f"- Use ONLY the defined role terms ({role_labels_only}) — NOT the "
             "parties' literal company names — throughout the body. Names belong "
             "only in the Preamble / Signature Block.\n"
             "- Use (a), (b), (c) for sub-parts, not '12.1', '12.2'.\n"
             "- Refer to other clauses by NAME ('the Confidentiality Section', "
             "'Exhibit A') never by number ('Section 5').\n"
             "- Never start the body with an orphan 'Section N' reference.\n"
+            "- Every sentence must be complete: close every parenthesis, "
+            "balance every quotation mark, end with terminal punctuation.\n"
             "- Preserve the substantive legal positions — do not soften or remove "
             "protections, caps, or carve-outs that the current text has.\n"
         )
@@ -1453,7 +1795,7 @@ class DraftAgent:
         """
         start = time.monotonic()
 
-        context = self._build_context(req)
+        context = self._build_context(req, playbook)
         placeholders = self._build_placeholders(req)
 
         clause_list: List[Dict[str, Any]] = playbook.get("clauses", [])
