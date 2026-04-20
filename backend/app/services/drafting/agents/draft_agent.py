@@ -566,6 +566,121 @@ class DraftAgent:
                     + "\n- ".join(emp_directives)
                 )
 
+        # Universal MANDATORY directives — apply to ALL contract types.
+        # These force the AI to honor user-selected jurisdiction, governing
+        # law, dispute-resolution method, and venue in the clauses where
+        # they appear. Without these, the AI echoes Delaware/litigation
+        # defaults baked into SaaS seed templates regardless of user input.
+        universal_clause_directive = ""
+        universal_directives: List[str] = []
+        gl_value = context.get("governing_law", "") or ""
+        dr_value = context.get("dispute_resolution", "") or ""
+        venue_value = context.get("venue", "") or ""
+        jurisdiction_value = context.get("jurisdiction", "") or ""
+
+        if clause_type in ("dispute_resolution", "governing_law"):
+            if gl_value:
+                universal_directives.append(
+                    f"MANDATORY: The governing law of this Agreement is "
+                    f"exactly '{gl_value}'. Use this phrase verbatim. Do NOT "
+                    f"substitute Delaware, California, New York, or any other "
+                    f"jurisdiction. The clause must read that the Agreement is "
+                    f"governed by the laws of {gl_value}."
+                )
+            if dr_value:
+                # Normalise so the directive reads cleanly
+                method = dr_value.lower().strip()
+                method_sentence = {
+                    "arbitration": (
+                        "Disputes MUST be resolved by binding arbitration. "
+                        "Do NOT use litigation or court proceedings as the "
+                        "primary mechanism. Equitable / injunctive relief may "
+                        "still be sought in a court but the substantive "
+                        "dispute goes to arbitration."
+                    ),
+                    "litigation": (
+                        "Disputes MUST be resolved by litigation in a court "
+                        "of competent jurisdiction. Do NOT default to "
+                        "arbitration."
+                    ),
+                    "mediation": (
+                        "Disputes MUST first be escalated to mediation, "
+                        "followed by the agreed formal mechanism if unresolved."
+                    ),
+                }.get(method, (
+                    f"Disputes MUST be resolved by {method}. Do NOT substitute "
+                    "a different mechanism."
+                ))
+                universal_directives.append(f"MANDATORY: {method_sentence}")
+            if venue_value:
+                universal_directives.append(
+                    f"MANDATORY: The venue / seat MUST be '{venue_value}'. "
+                    f"Do NOT substitute Wilmington, Delaware or any other "
+                    f"default."
+                )
+
+        # DPA-specific jurisdictional directive (belt-and-suspenders alongside
+        # the coherence pass D5).
+        if clause_type == "dpa":
+            j = jurisdiction_value.upper()
+            j_prefix = j.split("-", 1)[0]
+            if j_prefix == "IN":
+                universal_directives.append(
+                    "MANDATORY: This is an India-to-India data processing "
+                    "relationship. Write this DPA under the Digital Personal "
+                    "Data Protection Act 2023 (DPDP Act). Use DPDP "
+                    "terminology: 'Data Fiduciary' = Customer, 'Data "
+                    "Processor' = Provider, 'Data Principal' = individual. "
+                    "Do NOT reference GDPR, Regulation (EU) 2016/679, the "
+                    "EEA, EU Standard Contractual Clauses, or any other "
+                    "European instrument — those are the wrong framework for "
+                    "this deal."
+                )
+            elif j_prefix == "EU" or j_prefix in {"DE", "FR", "NL", "IE", "ES", "IT"}:
+                universal_directives.append(
+                    "MANDATORY: Write this DPA under the EU GDPR (Regulation "
+                    "(EU) 2016/679). Use GDPR roles: 'Controller' = "
+                    "Customer, 'Processor' = Provider. Reference Article 28 "
+                    "requirements. International transfers outside the EEA "
+                    "must use the 2021 EU Standard Contractual Clauses."
+                )
+            elif j == "US-CA":
+                universal_directives.append(
+                    "MANDATORY: This DPA is for a California deal. Write it "
+                    "under the CCPA / CPRA. Use CCPA roles: Customer is the "
+                    "'Business', Provider is the 'Service Provider'. Do NOT "
+                    "reference GDPR, EEA, or EU-specific instruments."
+                )
+            elif j_prefix == "GB":
+                universal_directives.append(
+                    "MANDATORY: Write this DPA under the UK GDPR and Data "
+                    "Protection Act 2018. International transfers must use the "
+                    "UK International Data Transfer Agreement (IDTA) or the "
+                    "UK Addendum to the 2021 EU SCCs."
+                )
+            elif j_prefix == "SG":
+                universal_directives.append(
+                    "MANDATORY: Write this DPA under the Singapore Personal "
+                    "Data Protection Act (PDPA)."
+                )
+            elif j_prefix == "AU":
+                universal_directives.append(
+                    "MANDATORY: Write this DPA under the Australian Privacy "
+                    "Act 1988 and the Australian Privacy Principles."
+                )
+            elif j == "BR":
+                universal_directives.append(
+                    "MANDATORY: Write this DPA under the Brazilian LGPD "
+                    "(Lei Geral de Proteção de Dados)."
+                )
+
+        if universal_directives:
+            universal_clause_directive = (
+                "\n\nJurisdictional mandates (override any conflicting seed "
+                "language):\n- "
+                + "\n- ".join(universal_directives)
+            )
+
         saas_block = ""
         saas_clause_directive = ""
         if "saas" in context:
@@ -684,8 +799,12 @@ class DraftAgent:
 
         # Collect MANDATORY overrides (user-selected knobs) and put them right
         # before the output instructions where the model pays the most attention.
+        # Universal directives (governing law, dispute resolution, DPA
+        # jurisdiction) go first because they are the highest-risk silent
+        # failures — the AI can produce a clean-looking Delaware / GDPR clause
+        # that completely ignores the user's selection.
         mandatory_overrides = ""
-        for block in (saas_clause_directive, employment_clause_directive):
+        for block in (universal_clause_directive, saas_clause_directive, employment_clause_directive):
             if block and "MANDATORY" in block:
                 mandatory_overrides += block
         mandatory_overrides_section = (
@@ -1053,6 +1172,115 @@ class DraftAgent:
                         "Data Principal = individual). Do NOT reference GDPR, EEA, "
                         "EU SCCs, or EU 2016/679 — these are the wrong framework "
                         "for an India-to-India processing relationship."
+                    )
+
+        # D6: Governing law mismatch in the Dispute Resolution clause.
+        # The user's requested governing_law must appear in this clause —
+        # otherwise the AI has silently substituted Delaware / California
+        # defaults from the seed.
+        if section.clause_type == "dispute_resolution":
+            expected_gl = (context.get("governing_law") or "").strip()
+            if expected_gl:
+                # Escape regex-unsafe characters in the expected value.
+                pattern = re.escape(expected_gl)
+                mentions_expected = bool(re.search(pattern, text, re.IGNORECASE))
+                # Common wrong defaults the AI might slip into
+                WRONG_LAW_DEFAULTS = [
+                    r"\bState of Delaware\b",
+                    r"\bDelaware\b",
+                    r"\bState of California\b",
+                    r"\bCalifornia\b",
+                    r"\bState of New York\b",
+                    r"\bNew York\b",
+                ]
+                wrong_hits = []
+                for wrong_pat in WRONG_LAW_DEFAULTS:
+                    # Only flag the wrong default if it ISN'T the expected value
+                    # (so "Delaware" is only wrong when expected != Delaware)
+                    bare = re.sub(r"\\b|\\s", "", wrong_pat).lower()
+                    bare = re.sub(r"state of ", "", bare)
+                    if bare not in expected_gl.lower():
+                        if re.search(wrong_pat, text):
+                            wrong_hits.append(bare)
+                if not mentions_expected or wrong_hits:
+                    defects.append(
+                        f"The user specified '{expected_gl}' as the governing "
+                        f"law. The clause must be governed by {expected_gl} "
+                        f"and the venue / seat should be a city in "
+                        f"{expected_gl}. Do NOT substitute "
+                        f"{', '.join(set(wrong_hits)) or 'Delaware or another default US state'}."
+                    )
+
+        # D7: Dispute-resolution method mismatch. If user selected
+        # "arbitration" but the clause describes "litigation" as the primary
+        # mechanism (or vice versa), flag for repair.
+        if section.clause_type == "dispute_resolution":
+            expected_method = (context.get("dispute_resolution") or "").lower().strip()
+            if expected_method:
+                # Detect the dominant mechanism actually described in the clause.
+                # Look for structural cues — "shall be determined by binding
+                # arbitration" vs. "either Party may initiate litigation".
+                arb_hits = len(re.findall(r"\b(binding\s+)?arbitration\b", text, re.IGNORECASE))
+                lit_hits = len(re.findall(r"\b(?:litigation|initiate\s+(?:an?\s+)?action\s+in\s+(?:the\s+)?courts?|file\s+a\s+lawsuit)\b", text, re.IGNORECASE))
+                # "Courts of … jurisdiction" language is ambiguous (could be
+                # for equitable relief only), so we look for an emphatic
+                # litigation-as-primary signal.
+                if expected_method == "arbitration" and lit_hits > arb_hits and arb_hits == 0:
+                    defects.append(
+                        "User selected ARBITRATION as the dispute-resolution "
+                        "mechanism, but the clause describes litigation as the "
+                        "primary mechanism. Rewrite so disputes are resolved by "
+                        "binding arbitration (the user's choice). Courts may "
+                        "still be mentioned for injunctive / equitable relief "
+                        "only."
+                    )
+                elif expected_method == "litigation" and arb_hits > 0 and lit_hits == 0:
+                    defects.append(
+                        "User selected LITIGATION as the dispute-resolution "
+                        "mechanism, but the clause describes binding arbitration. "
+                        "Rewrite so disputes are resolved in court."
+                    )
+                elif expected_method == "mediation" and arb_hits + lit_hits > 0 and not re.search(r"\bmediation\b", text, re.IGNORECASE):
+                    defects.append(
+                        "User selected MEDIATION as the primary dispute-"
+                        "resolution mechanism but the clause does not "
+                        "reference mediation. Rewrite to include a mediation "
+                        "escalation stage."
+                    )
+
+        # D8: Survival list in Effects of Termination must include the key
+        # post-termination provisions: Confidentiality (9), Limitation of
+        # Liability (13), Dispute Resolution (17). Missing these creates
+        # material legal exposure.
+        if section.clause_type == "effects_of_termination":
+            # Look for an explicit "sections ... shall survive" style list
+            survival_match = re.search(
+                r"survival|shall\s+survive|survive\s+(?:the\s+)?(?:expiration|termination)",
+                text,
+                re.IGNORECASE,
+            )
+            if survival_match:
+                # Check that critical clause types are mentioned by name or number
+                # (we can't know the exact numbers, so check by keyword).
+                confidentiality_ref = bool(re.search(r"confidentialit", text, re.IGNORECASE))
+                liability_ref = bool(re.search(r"(limitation\s+of\s+liability|liability\s+cap|limit)", text, re.IGNORECASE))
+                dispute_ref = bool(re.search(r"dispute|arbitration|governing\s+law", text, re.IGNORECASE))
+                missing = []
+                if not confidentiality_ref:
+                    missing.append("Confidentiality")
+                if not liability_ref:
+                    missing.append("Limitation of Liability")
+                if not dispute_ref:
+                    missing.append("Dispute Resolution / Governing Law")
+                if missing:
+                    defects.append(
+                        "The survival list in this Effects of Termination "
+                        f"clause does not reference {', '.join(missing)}. "
+                        "Without surviving these sections post-termination, "
+                        "the liability cap, confidentiality obligations, and "
+                        "dispute mechanism no longer apply — a material legal "
+                        "defect. Rewrite to include these sections by name in "
+                        "the survival list."
                     )
 
         return defects

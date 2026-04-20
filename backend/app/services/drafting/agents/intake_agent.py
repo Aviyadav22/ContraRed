@@ -59,6 +59,58 @@ JURISDICTION_TO_GOVERNING_LAW: Dict[str, str] = {
     "IN": "India",
     "GB": "England and Wales",
     "SG": "Singapore",
+    "AE": "United Arab Emirates",
+    "SA": "Saudi Arabia",
+    "AU": "Australia",
+    "DE": "Germany",
+    "FR": "France",
+    "CA-ON": "Ontario, Canada",
+    "CA-BC": "British Columbia, Canada",
+    "BR": "Brazil",
+    "HK": "Hong Kong",
+    "JP": "Japan",
+}
+
+# Inverse mapping used when the user typed a governing_law string like
+# "India" or "Delaware" and we need to derive the canonical jurisdiction code.
+_GOVERNING_LAW_TO_JURISDICTION: Dict[str, str] = {
+    "delaware": "US-DE",
+    "california": "US-CA",
+    "new york": "US-NY",
+    "texas": "US-TX",
+    "india": "IN",
+    "indian": "IN",
+    "england and wales": "GB",
+    "england": "GB",
+    "uk": "GB",
+    "united kingdom": "GB",
+    "singapore": "SG",
+    "uae": "AE",
+    "united arab emirates": "AE",
+    "saudi arabia": "SA",
+    "australia": "AU",
+    "germany": "DE",
+    "france": "FR",
+    "ontario": "CA-ON",
+    "british columbia": "CA-BC",
+    "brazil": "BR",
+    "hong kong": "HK",
+    "japan": "JP",
+}
+
+# Compliance-framework ↔ jurisdiction hints.
+# User-selected frameworks are a strong signal of the intended jurisdiction.
+_FRAMEWORK_TO_JURISDICTION: Dict[str, str] = {
+    "DPDP": "IN",
+    "GDPR": "EU",
+    "UK GDPR": "GB",
+    "CCPA": "US-CA",
+    "CPRA": "US-CA",
+    "HIPAA": "US",
+    "PIPEDA": "CA-ON",
+    "LGPD": "BR",
+    "PDPA": "SG",   # Singapore (also used by Thailand, Malaysia — Singapore is the common case)
+    "Privacy Act": "AU",
 }
 
 
@@ -100,8 +152,19 @@ class IntakeAgent:
         party_1 = PartyInfo(**raw["party_1"])
         party_2 = PartyInfo(**raw["party_2"])
 
+        # Jurisdiction derivation (fixes the "user typed India but jurisdiction
+        # stayed US-DE" bug).  We take the explicit request value as a starting
+        # point but upgrade it when other signals (party jurisdictions,
+        # governing law, compliance frameworks) unambiguously point elsewhere.
+        jurisdiction = self._derive_jurisdiction(
+            raw_jurisdiction=raw.get("jurisdiction", ""),
+            party_1_jurisdiction=party_1.jurisdiction,
+            party_2_jurisdiction=party_2.jurisdiction,
+            governing_law_text=raw.get("governing_law", ""),
+            saas_details=raw.get("saas_details") or {},
+        )
+
         # Infer governing_law from jurisdiction when not provided
-        jurisdiction = raw.get("jurisdiction", "")
         governing_law = raw.get("governing_law") or self._infer_governing_law(jurisdiction)
 
         # Build optional detail blocks
@@ -145,6 +208,73 @@ class IntakeAgent:
     @staticmethod
     def _infer_governing_law(jurisdiction: str) -> str:
         return JURISDICTION_TO_GOVERNING_LAW.get(jurisdiction, jurisdiction)
+
+    @staticmethod
+    def _derive_jurisdiction(
+        raw_jurisdiction: str,
+        party_1_jurisdiction: str,
+        party_2_jurisdiction: str,
+        governing_law_text: str,
+        saas_details: Dict[str, Any],
+    ) -> str:
+        """Derive the contract's jurisdiction from all user-supplied signals.
+
+        The frontend has a single ``form.jurisdiction`` field that defaults to
+        ``US-DE`` and — historically — had no user-facing widget.  Users who
+        filled in "India" for governing law, selected both parties as Indian
+        entities, and ticked DPDP in compliance frameworks still ended up with
+        ``context.jurisdiction = US-DE``, which suppressed the DPDP repair
+        path in the coherence pass and kept the DPA GDPR-flavoured.
+
+        This method collects all of those signals and returns the best guess
+        at the contract's governing jurisdiction:
+
+            1. Explicit ``jurisdiction`` from the request, if non-default.
+            2. If both parties share a country-level jurisdiction, use that.
+            3. If governing_law text matches a known jurisdiction, use it.
+            4. If the compliance frameworks list uniquely implies a region,
+               use that.
+            5. Otherwise fall back to the raw request value (or ``US-DE``).
+        """
+        # 1. Respect an explicit non-default jurisdiction.
+        if raw_jurisdiction and raw_jurisdiction != "US-DE":
+            return raw_jurisdiction
+
+        # 2. Party-level agreement.  Use the country prefix so that e.g.
+        #    "IN-MH" and "IN-DL" both collapse to "IN".
+        def _country(code: str) -> str:
+            return code.split("-", 1)[0] if code else ""
+
+        p1_country = _country(party_1_jurisdiction)
+        p2_country = _country(party_2_jurisdiction)
+        if p1_country and p1_country == p2_country and p1_country != "US":
+            # Both parties agree on a non-US country — good derivation.
+            # Preserve the sub-region if party_1 carries one (e.g. IN-DL).
+            return party_1_jurisdiction or p1_country
+
+        # 3. Governing-law text lookup.
+        gl_key = (governing_law_text or "").strip().lower()
+        for keyword, code in _GOVERNING_LAW_TO_JURISDICTION.items():
+            if keyword in gl_key:
+                return code
+
+        # 4. Compliance-framework signal.  If the user selected DPDP it is
+        #    effectively a declaration that this is an India deal; similarly
+        #    for GDPR (EU), CCPA (California), etc.
+        frameworks = saas_details.get("compliance_frameworks") or []
+        framework_votes: Dict[str, int] = {}
+        for fw in frameworks:
+            target = _FRAMEWORK_TO_JURISDICTION.get(fw)
+            if target:
+                framework_votes[target] = framework_votes.get(target, 0) + 1
+        if framework_votes:
+            # If there is a single unambiguous winner, use it.
+            best = max(framework_votes.items(), key=lambda kv: kv[1])
+            if list(framework_votes.values()).count(best[1]) == 1:
+                return best[0]
+
+        # 5. Last resort — keep the raw value (which may be US-DE default).
+        return raw_jurisdiction or "US-DE"
 
     @staticmethod
     def _build_nda_details(raw: dict, contract_type: str):

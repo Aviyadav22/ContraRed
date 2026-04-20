@@ -9,6 +9,82 @@ import {
 } from '@/api/client';
 import { useToast } from '@/contexts/ToastContext';
 import { type DraftingFormData, DEFAULT_FORM } from './types';
+
+// Framework hint → contract jurisdiction code. User-selected compliance
+// frameworks are a strong signal for the contract jurisdiction.
+const FRAMEWORK_JURISDICTION_HINT: Record<string, string> = {
+    DPDP: 'IN',
+    GDPR: 'EU',
+    CCPA: 'US-CA',
+    CPRA: 'US-CA',
+    HIPAA: 'US',
+    LGPD: 'BR',
+    PDPA: 'SG',
+};
+
+// Keywords in governing-law text → canonical jurisdiction code.
+const GOVERNING_LAW_HINT: Record<string, string> = {
+    india: 'IN',
+    indian: 'IN',
+    delaware: 'US-DE',
+    california: 'US-CA',
+    'new york': 'US-NY',
+    texas: 'US-TX',
+    england: 'GB',
+    uk: 'GB',
+    'united kingdom': 'GB',
+    singapore: 'SG',
+    germany: 'DE',
+    france: 'FR',
+    australia: 'AU',
+    uae: 'AE',
+    'united arab emirates': 'AE',
+};
+
+/**
+ * Derive the contract's jurisdiction from the user's inputs.
+ * Priority: explicit non-default value > matching party jurisdictions >
+ * governing-law text lookup > compliance-framework signal > default.
+ *
+ * Fixes the PatentOS bug where users who set both parties to IN, typed
+ * "India" as governing law, and selected DPDP still ended up with the
+ * contract's internal jurisdiction defaulting to US-DE, which suppressed
+ * the DPDP-DPA repair path in the backend coherence pass.
+ */
+function deriveJurisdiction(form: DraftingFormData): string {
+    // 1. Respect an explicit non-default jurisdiction choice.
+    if (form.jurisdiction && form.jurisdiction !== 'US-DE') {
+        return form.jurisdiction;
+    }
+    // 2. Both parties share a non-US country.
+    const country = (code: string) => (code || '').split('-')[0];
+    const p1 = country(form.party_1_jurisdiction);
+    const p2 = country(form.party_2_jurisdiction);
+    if (p1 && p1 === p2 && p1 !== 'US') {
+        return form.party_1_jurisdiction;
+    }
+    // 3. Governing-law text lookup.
+    const gl = (form.governing_law || '').toLowerCase();
+    for (const [kw, code] of Object.entries(GOVERNING_LAW_HINT)) {
+        if (gl.includes(kw)) return code;
+    }
+    // 4. Compliance-framework vote.
+    if (form.contract_type === 'saas' && form.saas_compliance_frameworks.length > 0) {
+        const votes: Record<string, number> = {};
+        for (const fw of form.saas_compliance_frameworks) {
+            const target = FRAMEWORK_JURISDICTION_HINT[fw];
+            if (target) votes[target] = (votes[target] ?? 0) + 1;
+        }
+        const entries = Object.entries(votes);
+        if (entries.length === 1) return entries[0][0];
+        if (entries.length > 1) {
+            entries.sort((a, b) => b[1] - a[1]);
+            if (entries[0][1] > entries[1][1]) return entries[0][0];
+        }
+    }
+    // 5. Fall back to whatever was set.
+    return form.jurisdiction || 'US-DE';
+}
 import DraftingStepper from './DraftingStepper';
 import StepContractType from './StepContractType';
 import StepDetails from './StepDetails';
@@ -48,11 +124,17 @@ export default function Drafting() {
     });
 
     const buildRequest = (): GenerateRequest => {
+        // Derive the contract's jurisdiction from all user signals so that
+        // downstream repair passes (DPA = DPDP for IN, CCPA for US-CA, etc.)
+        // fire correctly even when the hidden jurisdiction field hasn't been
+        // touched.
+        const effectiveJurisdiction = deriveJurisdiction(form);
+
         const req: GenerateRequest = {
             contract_type: form.contract_type,
             drafting_perspective: form.drafting_perspective,
             risk_appetite: form.risk_appetite,
-            jurisdiction: form.jurisdiction,
+            jurisdiction: effectiveJurisdiction,
             party_1: { name: form.party_1_name, entity_type: form.party_1_entity_type, jurisdiction: form.party_1_jurisdiction, address: form.party_1_address },
             party_2: { name: form.party_2_name, entity_type: form.party_2_entity_type, jurisdiction: form.party_2_jurisdiction, address: form.party_2_address },
             term_months: form.term_months,
