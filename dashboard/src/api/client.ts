@@ -320,10 +320,22 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retryCoun
         // Sanitize error messages to prevent backend detail leakage
         const MAX_ERROR_LENGTH = 200;
         const rawDetail = typeof error === 'object' && error !== null ? (error as any).detail : String(error);
-        const detail = typeof rawDetail === 'string'
-            ? rawDetail.substring(0, MAX_ERROR_LENGTH)
-            : 'An unexpected error occurred';
-        throw new Error(detail);
+        let detailStr: string;
+        if (typeof rawDetail === 'string') {
+            detailStr = rawDetail;
+        } else if (typeof rawDetail === 'object' && rawDetail !== null && typeof (rawDetail as any).message === 'string') {
+            // Structured error payload (e.g. quota_exceeded) — surface the human-readable message
+            detailStr = (rawDetail as any).message;
+        } else {
+            detailStr = 'An unexpected error occurred';
+        }
+        const err = new Error(detailStr.substring(0, MAX_ERROR_LENGTH));
+        // Attach structured payload so callers can branch on error_code (quota_exceeded, etc.)
+        if (typeof rawDetail === 'object' && rawDetail !== null) {
+            (err as any).detail = rawDetail;
+            (err as any).status = response.status;
+        }
+        throw err;
     }
 
     // Handle 204 No Content
