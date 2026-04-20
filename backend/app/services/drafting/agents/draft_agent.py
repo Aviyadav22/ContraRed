@@ -1464,6 +1464,49 @@ class DraftAgent:
                         "escalation stage."
                     )
 
+        # D13: AI meta-commentary / chain-of-thought leakage.
+        # Real-world example from a generated Employment Agreement:
+        #   "Let's refine the text to include all required elements naturally."
+        #   "* **Drafting the text:**"
+        # These are Gemini's internal reasoning tokens spilling into the
+        # clause body. They are universally wrong in contract prose — no
+        # legitimate clause contains markdown headings, bullet-with-bold
+        # framings, or conversational "Let me..." openings. Always-on; not
+        # gated by playbook metadata.
+        if text:
+            meta_patterns = [
+                # Markdown bullet with bold heading, e.g. "* **Drafting the text:**"
+                (r"(?:^|\n)\s*[-*]\s*\*\*[^*\n]{3,}\*\*", "markdown bullet-with-bold heading"),
+                # ATX markdown headings, e.g. "## Output" "# Drafting"
+                (r"(?:^|\n)\s*#{1,6}\s+\w", "markdown heading (# / ##)"),
+                # Chain-of-thought openers that are never legitimate legal prose.
+                # Specific verb choices keep the false-positive rate low — these
+                # are the exact framings the model uses when narrating its own
+                # drafting process.
+                (r"(?:^|\n)\s*Let'?s\s+(?:refine|draft|think|update|revise|rewrite|start\s+with|break)\b", "conversational 'Let's ...' opener"),
+                (r"(?:^|\n)\s*Let\s+me\s+(?:refine|draft|think|update|revise|rewrite|craft)\b", "conversational 'Let me ...' opener"),
+                (r"(?:^|\n)\s*(?:Okay|Sure|Alright)[,.]\s+", "conversational opener ('Okay,', 'Sure,', 'Alright,')"),
+                # Explicit references to the drafting process itself.
+                (r"\brefine\s+the\s+text\b", "meta reference: 'refine the text'"),
+                (r"\bdraft(?:ing)?\s+the\s+(?:text|clause|section)\b", "meta reference: 'drafting the text/clause/section'"),
+                (r"\binclude\s+all\s+required\s+elements\b", "meta reference: 'include all required elements'"),
+            ]
+            hit_label = None
+            for pattern, label in meta_patterns:
+                if re.search(pattern, text, re.IGNORECASE):
+                    hit_label = label
+                    break
+            if hit_label:
+                defects.append(
+                    f"Clause contains AI meta-commentary / chain-of-thought "
+                    f"leakage ({hit_label}). The model's internal reasoning "
+                    "has leaked into the clause body. Rewrite as pure legal "
+                    "prose: no markdown formatting, no bullet-with-bold "
+                    "headings, no conversational openers, and no references "
+                    "to the drafting process itself. Start directly with "
+                    "the first word of the operative text."
+                )
+
         # ------------------------------------------------------------------
         # Playbook-driven detectors. These only fire when the playbook
         # declares the corresponding detector entry, so SaaS/MSA/Employment
