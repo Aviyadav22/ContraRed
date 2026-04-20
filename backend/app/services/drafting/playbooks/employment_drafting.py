@@ -720,10 +720,73 @@ _CLAUSES: List[Dict[str, Any]] = [
 # Exported playbook
 # ---------------------------------------------------------------------------
 
+_EMPLOYMENT_FORBIDDEN_TERMS: List[str] = [
+    # NDA vocabulary
+    "Disclosing Party", "Receiving Party",
+    # SaaS vocabulary
+    "Provider", "Customer", "Subscription", "Subscription Services",
+    "SaaS", "Order Form",
+    # MSA vocabulary
+    "Service Provider", "Client", "Statement of Work", "SOW", "Deliverables",
+    # Legacy placeholder tokens
+    "[Employee Name]", "[Company Name]",
+]
+
+_EMPLOYMENT_DIRECTIVES: List[str] = [
+    "This is an Employment Agreement between a company and an individual "
+    "employee. The ONLY defined role terms are 'Company' (the employer) "
+    "and 'Employee' (the individual hire). NEVER use 'Provider' / "
+    "'Customer' (SaaS), 'Service Provider' / 'Client' (MSA), 'Disclosing "
+    "Party' / 'Receiving Party' (NDA), or any other role label — they "
+    "belong to other contract types.",
+    "This is an individual employment contract, not a services / "
+    "consulting agreement. Do NOT reference 'Statement of Work', 'SOW', "
+    "'Deliverables', or subscription services. Compensation is a salary "
+    "+ benefits structure, not fees or invoices.",
+    "Honor the user-supplied position title, base salary, reporting "
+    "manager, and work location verbatim. Do NOT substitute generic "
+    "placeholder values.",
+]
+
+_EMPLOYMENT_CLAUSE_DIRECTIVES: Dict[str, List[str]] = {
+    "preamble": [
+        "Identify the Company by its full legal name, entity type, "
+        "jurisdiction of organisation, and principal place of business. "
+        "Identify the Employee by full legal name and address. Use "
+        "'Company' for Party 1 and 'Employee' for Party 2 as the short-"
+        "names for the remainder of the Agreement."
+    ],
+    "confidentiality": [
+        "Confidentiality obligations in an employment context flow FROM "
+        "the Employee TO the Company (protecting Company's information). "
+        "Do NOT introduce NDA 'Disclosing Party' / 'Receiving Party' "
+        "role labels — this is a unilateral obligation within an "
+        "employment relationship, not a standalone NDA."
+    ],
+}
+
+_EMPLOYMENT_DETECTORS: List[Dict[str, Any]] = [
+    {"type": "forbidden_terms"},
+    {"type": "truncated_clause"},
+    {"type": "nested_quote_duplication"},
+    {"type": "entity_jurisdiction_mismatch"},
+]
+
+
 EMPLOYMENT_PLAYBOOK: Dict[str, Any] = {
     "name": "Employment Agreement",
     "contract_type": "employment",
     "jurisdiction": "Any",
     "section_order": _SECTION_ORDER,
+    # --- Modular metadata consumed by the Draft Agent ---
+    "roles": {
+        "company": {"label": "Company", "party": "party_1"},
+        "employee": {"label": "Employee", "party": "party_2"},
+    },
+    "forbidden_terms": list(_EMPLOYMENT_FORBIDDEN_TERMS),
+    "mandatory_directives": list(_EMPLOYMENT_DIRECTIVES),
+    "clause_mandatory_directives": dict(_EMPLOYMENT_CLAUSE_DIRECTIVES),
+    "detectors": list(_EMPLOYMENT_DETECTORS),
+    # ----------------------------------------------------
     "clauses": _CLAUSES,
 }

@@ -908,10 +908,75 @@ _CLAUSES: List[Dict[str, Any]] = [
 # Exported playbook
 # ---------------------------------------------------------------------------
 
+_MSA_FORBIDDEN_TERMS: List[str] = [
+    # NDA vocabulary
+    "Disclosing Party", "Receiving Party",
+    # SaaS vocabulary — MSA uses Service Provider / Client, not Provider / Customer
+    "Provider", "Customer", "Subscription", "Subscription Services",
+    "SaaS", "Order Form",
+    # Employment vocabulary
+    "Employer", "Employee",
+    # Legacy placeholder tokens
+    "[Client Name]", "[Service Provider Name]",
+]
+
+_MSA_DIRECTIVES: List[str] = [
+    "This is a Master Service Agreement. The ONLY defined role terms are "
+    "'Service Provider' (the party performing the services) and 'Client' "
+    "(the party receiving the services). NEVER use 'Provider' / "
+    "'Customer' (SaaS), 'Disclosing Party' / 'Receiving Party' (NDA), "
+    "or 'Employer' / 'Employee' — those role labels are not defined in "
+    "this Agreement.",
+    "This is a framework / umbrella agreement. Specific engagements, "
+    "deliverables, timelines, and fees are set out in Statements of Work "
+    "('SOWs') executed under this MSA. Do NOT treat this MSA as a "
+    "subscription agreement. Reference the SOW structure where scope or "
+    "deliverables come up.",
+    "Deliverables and work product are owned by or licensed to the Client "
+    "per the ownership clause — never introduce SaaS 'subscription' "
+    "language or call the work output 'the Services' in a subscription "
+    "sense.",
+]
+
+_MSA_CLAUSE_DIRECTIVES: Dict[str, List[str]] = {
+    "preamble": [
+        "Identify each Party's full legal name, entity type, jurisdiction "
+        "of organisation, and principal place of business. Use 'Service "
+        "Provider' for Party 1 and 'Client' for Party 2 as the short-"
+        "names for the remainder of the Agreement."
+    ],
+    "confidentiality": [
+        "Confidentiality obligations in an MSA flow between 'Service "
+        "Provider' and 'Client' mutually. Do NOT introduce NDA "
+        "'Disclosing Party' / 'Receiving Party' role labels. If the prose "
+        "needs to distinguish direction of disclosure, use lower-case "
+        "descriptive phrases like 'the disclosing party' or 'the "
+        "receiving party' — they are not defined terms here."
+    ],
+}
+
+_MSA_DETECTORS: List[Dict[str, Any]] = [
+    {"type": "forbidden_terms"},
+    {"type": "truncated_clause"},
+    {"type": "nested_quote_duplication"},
+    {"type": "entity_jurisdiction_mismatch"},
+]
+
+
 MSA_PLAYBOOK: Dict[str, Any] = {
     "name": "Master Service Agreement",
     "contract_type": "msa",
     "jurisdiction": "Any",
     "section_order": _SECTION_ORDER,
+    # --- Modular metadata consumed by the Draft Agent ---
+    "roles": {
+        "service_provider": {"label": "Service Provider", "party": "party_1"},
+        "client": {"label": "Client", "party": "party_2"},
+    },
+    "forbidden_terms": list(_MSA_FORBIDDEN_TERMS),
+    "mandatory_directives": list(_MSA_DIRECTIVES),
+    "clause_mandatory_directives": dict(_MSA_CLAUSE_DIRECTIVES),
+    "detectors": list(_MSA_DETECTORS),
+    # ----------------------------------------------------
     "clauses": _CLAUSES,
 }

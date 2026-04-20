@@ -226,11 +226,11 @@ export default function StepDetails({ form, set, missingFields = [] }: StepDetai
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                             <div>
                                 <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Term (months)</label>
-                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', accentColor: 'var(--accent)' }} value={form.term_months} onChange={e => set('term_months', +e.target.value)} />
+                                <input type="number" min={1} max={600} className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', accentColor: 'var(--accent)' }} value={form.term_months} onChange={e => set('term_months', Math.max(1, +e.target.value || 1))} />
                             </div>
                             <div>
                                 <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>Survival (years)</label>
-                                <input type="number" className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', accentColor: 'var(--accent)' }} value={form.nda_survival_years} onChange={e => set('nda_survival_years', +e.target.value)} />
+                                <input type="number" min={1} max={50} className={inputClass} style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)', color: 'var(--text-primary)', accentColor: 'var(--accent)' }} value={form.nda_survival_years} onChange={e => set('nda_survival_years', Math.max(1, +e.target.value || 1))} />
                             </div>
                             <div className="col-span-2">
                                 <label className={labelClass} style={{ color: 'var(--text-secondary)' }}>CI Categories (comma-separated)</label>

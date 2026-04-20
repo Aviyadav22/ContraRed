@@ -166,6 +166,15 @@ class IntakeAgent:
 
         # Infer governing_law from jurisdiction when not provided
         governing_law = raw.get("governing_law") or self._infer_governing_law(jurisdiction)
+        # Normalise casing: users sometimes type 'new york' / 'DELAWARE' which
+        # the AI then echoes verbatim into clauses ("the laws of new york").
+        # Title-case everything except small connector words that shouldn't
+        # be capitalised in a proper-noun phrase.
+        governing_law = self._normalise_proper_noun(governing_law)
+
+        # Same treatment for venue (also user-entered free text).
+        venue_raw = raw.get("venue")
+        venue = self._normalise_proper_noun(venue_raw) if venue_raw else venue_raw
 
         # Build optional detail blocks
         nda_details = self._build_nda_details(raw, contract_type)
@@ -182,7 +191,7 @@ class IntakeAgent:
             term_months=raw.get("term_months", 12),
             governing_law=governing_law,
             dispute_resolution=raw.get("dispute_resolution", "arbitration"),
-            venue=raw.get("venue"),
+            venue=venue,
             nda_details=nda_details,
             saas_details=saas_details,
             risk_profile=raw.get("risk_profile", {}),
@@ -208,6 +217,54 @@ class IntakeAgent:
     @staticmethod
     def _infer_governing_law(jurisdiction: str) -> str:
         return JURISDICTION_TO_GOVERNING_LAW.get(jurisdiction, jurisdiction)
+
+    @staticmethod
+    def _normalise_proper_noun(value: str) -> str:
+        """Title-case a proper-noun string like 'new york' -> 'New York'.
+
+        Handling:
+          - All-lowercase input ('new york') -> title-cased ('New York').
+          - All-uppercase input ('NEW YORK') -> title-cased ('New York').
+          - Mixed-case input ('New York', 'UAE', 'State of UAE') -> left
+            untouched (we trust the user).
+          - Connector words ('of', 'and', 'the') stay lowercase unless
+            they start the string.
+        Safe on empty / None input.
+        """
+        if not value:
+            return value
+        # Strip trailing punctuation.
+        value = value.strip().rstrip(",.;")
+        if not value:
+            return value
+
+        has_lower = any(c.islower() for c in value)
+        has_upper = any(c.isupper() for c in value)
+        # Mixed case (user already capitalised something) — trust them.
+        if has_lower and has_upper:
+            return value
+
+        # Preserve short all-caps acronyms like 'UK', 'UAE', 'NY' — but ONLY
+        # when the whole value is a single short token. 'NEW YORK' would
+        # have multiple tokens and should get title-cased below.
+        if (
+            value.isupper()
+            and " " not in value
+            and len(value) <= 4
+        ):
+            return value
+
+        # All one case, and either lowercase or long-enough to be a name.
+        # Normalise to lower then title-case each token.
+        connectors = {"of", "and", "the", "la", "le", "des"}
+        parts = value.lower().split()
+        out: List[str] = []
+        for i, part in enumerate(parts):
+            if i > 0 and part in connectors:
+                out.append(part)
+                continue
+            out.append(part.capitalize())
+        return " ".join(out)
 
     @staticmethod
     def _derive_jurisdiction(

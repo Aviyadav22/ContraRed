@@ -1006,13 +1006,24 @@ _NDA_UNILATERAL_DIRECTIVES: List[str] = [
 # above, but only when the matching clause_type is being drafted.
 _NDA_CLAUSE_DIRECTIVES: Dict[str, List[str]] = {
     "recitals": [
-        "Keep the recitals to 2–4 short 'WHEREAS' paragraphs. State ONLY: "
-        "(1) who the Parties are, (2) that they wish to discuss the "
-        "Purpose specified in the NDA context, and (3) that they may "
-        "disclose Confidential Information to each other in connection "
-        "with those discussions. Do NOT narrate any business relationship, "
-        "commercial arrangement, or evaluation scenario beyond the stated "
-        "Purpose."
+        "Output the recitals as EXACTLY THREE 'WHEREAS' paragraphs "
+        "followed by a closing 'NOW, THEREFORE' paragraph, matching this "
+        "scaffold:\n"
+        "  WHEREAS, the Parties wish to discuss [insert the Purpose from "
+        "the NDA context block here, verbatim or very lightly paraphrased] "
+        "(the \"Purpose\");\n"
+        "  WHEREAS, in connection with the Purpose, each Party may "
+        "disclose to the other Party certain confidential or proprietary "
+        "information; and\n"
+        "  WHEREAS, the Parties wish to establish the terms governing "
+        "the disclosure, use, and protection of such information.\n"
+        "  NOW, THEREFORE, in consideration of the mutual covenants and "
+        "promises contained in this Agreement, the Parties agree as "
+        "follows:\n"
+        "Do NOT narrate any business relationship, commercial arrangement, "
+        "evaluation scenario, or SaaS/procurement context beyond the "
+        "stated Purpose. Do NOT invent additional WHEREAS clauses that "
+        "describe the Parties' businesses."
     ],
     "no_license": [
         "This clause must state (a) that no license or ownership in "

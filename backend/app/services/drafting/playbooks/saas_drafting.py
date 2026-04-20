@@ -1780,6 +1780,70 @@ _CLAUSES: List[Dict[str, Any]] = [
 # Assemble the playbook
 # ---------------------------------------------------------------------------
 
+_SAAS_FORBIDDEN_TERMS: List[str] = [
+    # NDA vocabulary (SaaS never uses these as role terms)
+    "Disclosing Party", "Receiving Party",
+    # Employment vocabulary
+    "Employer", "Employee",
+    # MSA-only vocabulary
+    "Statement of Work", "SOW", "Deliverables",
+    # Legacy / placeholder tokens
+    "[Customer Name]", "[Provider Name]",
+]
+
+_SAAS_DIRECTIVES: List[str] = [
+    # Role discipline
+    "This is a SaaS Subscription Agreement. The ONLY defined role terms are "
+    "'Provider' (the vendor supplying the software service) and 'Customer' "
+    "(the subscriber). NEVER use 'Disclosing Party', 'Receiving Party', "
+    "'Employer', 'Employee', 'Service Provider' (except in CCPA DPA "
+    "context where it is a statutorily-defined term), 'Client', or other "
+    "role labels — those belong to other contract types and are not "
+    "defined in this Agreement.",
+    # Anti-NDA-leak for confidentiality clause
+    "Confidentiality obligations in a SaaS deal are owed by and to the "
+    "'Provider' and 'Customer', not to generic 'Disclosing Party' / "
+    "'Receiving Party' roles. Frame confidentiality as mutual obligations "
+    "between Provider and Customer.",
+    # Anti-MSA-leak
+    "This is a SUBSCRIPTION agreement, not a services / SOW agreement. Do "
+    "NOT reference 'Statement of Work', 'SOW', 'Deliverables', or "
+    "milestone-based delivery. The Services are described in the Order "
+    "Form (Exhibit) and delivered on an ongoing subscription basis.",
+    # Commercial-value discipline
+    "Honor every Customer-selected knob verbatim: the liability cap "
+    "(months of fees), compliance frameworks, data regions, authorized "
+    "user cap, support-tier matrix, and uptime commitment must be used "
+    "as specified. Do NOT substitute round-number defaults from the "
+    "reference seed.",
+]
+
+_SAAS_CLAUSE_DIRECTIVES: Dict[str, List[str]] = {
+    "preamble": [
+        "The preamble must identify each Party's full legal name, entity "
+        "type, jurisdiction of organisation, and principal place of "
+        "business. Use 'Provider' for Party 1 and 'Customer' for Party 2 "
+        "as the short-names for the remainder of the Agreement."
+    ],
+    "confidentiality": [
+        "Confidentiality obligations flow between 'Provider' and "
+        "'Customer' mutually. Do NOT introduce 'Disclosing Party' / "
+        "'Receiving Party' role labels — those are NDA vocabulary. Refer "
+        "to the party disclosing information as 'the disclosing party' "
+        "(lowercase, descriptive) and the party receiving information as "
+        "'the receiving party' (lowercase, descriptive) if the prose "
+        "requires that distinction."
+    ],
+}
+
+_SAAS_DETECTORS: List[Dict[str, Any]] = [
+    {"type": "forbidden_terms"},
+    {"type": "truncated_clause"},
+    {"type": "nested_quote_duplication"},
+    {"type": "entity_jurisdiction_mismatch"},
+]
+
+
 SAAS_PLAYBOOK: Dict[str, Any] = {
     "contract_type": "saas",
     "display_name": "SaaS Agreement (MSA + SLA + DPA + Order Form)",
@@ -1792,6 +1856,16 @@ SAAS_PLAYBOOK: Dict[str, Any] = {
     ),
     "perspective": "vendor",
     "section_order": _SECTION_ORDER,
+    # --- Modular metadata consumed by the Draft Agent ---
+    "roles": {
+        "provider": {"label": "Provider", "party": "party_1"},
+        "customer": {"label": "Customer", "party": "party_2"},
+    },
+    "forbidden_terms": list(_SAAS_FORBIDDEN_TERMS),
+    "mandatory_directives": list(_SAAS_DIRECTIVES),
+    "clause_mandatory_directives": dict(_SAAS_CLAUSE_DIRECTIVES),
+    "detectors": list(_SAAS_DETECTORS),
+    # ----------------------------------------------------
     "clauses": _CLAUSES,
     "placeholders": [
         "provider_name", "customer_name", "provider_entity_type",

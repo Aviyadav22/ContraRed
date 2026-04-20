@@ -370,19 +370,44 @@ class DraftAgent:
         # have not yet been migrated).
         # ------------------------------------------------------------------
         # Track provenance of ``ctx["roles"]``. The legacy hardcoded switch
-        # above stores PARTY NAMES as the values (e.g. saas → {"provider":
-        # "Acme Corp."}), whereas the new playbook convention stores ROLE
-        # LABELS (e.g. nda_mutual → {"disclosing_party": "Disclosing
-        # Party"}). Downstream code needs to know which is which so the
-        # "Use X and Y" instruction uses role labels, not party names.
+        # above stores PARTY NAMES as values (e.g. saas → {"provider":
+        # "Acme Corp."}), whereas playbook-supplied roles may use two
+        # conventions:
+        #
+        #   (A) Label-only string:   {"disclosing_party": "Disclosing Party"}
+        #       — used by NDA playbooks where both parties are both roles,
+        #       so there is no party binding.
+        #
+        #   (B) Structured dict:     {"provider": {"label": "Provider",
+        #                                          "party": "party_1"}}
+        #       — used by SaaS / MSA / Employment where each role is bound
+        #       to a specific party. We normalise this to the legacy
+        #       display format (``{label: party_name}``) AND keep a pure
+        #       label list for the prompt's "Use X and Y" line.
         ctx["_roles_from_playbook"] = False
+        ctx["role_labels"] = []
         if playbook:
             pb_roles = playbook.get("roles")
             if pb_roles:
-                # Playbook roles WIN over the hardcoded switch above. Keys
-                # are snake_case labels (e.g. "disclosing_party"), values
-                # are the human-readable role term shown to the AI.
-                ctx["roles"] = dict(pb_roles)
+                label_list: List[str] = []
+                display: Dict[str, str] = {}
+                for key, val in pb_roles.items():
+                    if isinstance(val, dict):
+                        # Structured form: {"label": ..., "party": "party_1"|"party_2"|None}
+                        label = val.get("label", key.replace("_", " ").title())
+                        party_key = val.get("party")
+                        if party_key and party_key in ctx:
+                            display[label] = ctx[party_key].get("name", label)
+                        else:
+                            display[label] = label
+                        label_list.append(label)
+                    else:
+                        # Label-only form (NDA convention).
+                        label = str(val)
+                        display[label] = label
+                        label_list.append(label)
+                ctx["roles"] = display
+                ctx["role_labels"] = label_list
                 ctx["_roles_from_playbook"] = True
             ctx["forbidden_terms"] = list(playbook.get("forbidden_terms", []))
             ctx["mandatory_directives"] = list(
@@ -943,16 +968,14 @@ class DraftAgent:
             f"==============================================================\n"
         ) if mandatory_overrides else ""
 
-        # Role labels used in the output instructions. Only safe to iterate
-        # ``roles.values()`` when the playbook itself supplied them — the
-        # legacy hardcoded switch in ``_build_context`` stored party NAMES
-        # as values (e.g. {"provider": "Acme Corp."}). For those cases we
-        # keep the historical Provider/Customer wording to preserve SaaS/MSA/
-        # Employment behavior until those playbooks are migrated.
-        if roles and context.get("_roles_from_playbook"):
-            role_labels_for_prompt = " and ".join(
-                f"'{v}'" for v in roles.values()
-            )
+        # Role labels used in the output instructions. Prefer the explicit
+        # ``role_labels`` list built from the playbook (which contains the
+        # pure role-label strings — "Disclosing Party", "Provider", etc.).
+        # Fall back to legacy wording for any playbook that hasn't been
+        # migrated to declare ``roles``.
+        pb_role_labels: List[str] = context.get("role_labels", []) or []
+        if pb_role_labels and context.get("_roles_from_playbook"):
+            role_labels_for_prompt = " and ".join(f"'{lbl}'" for lbl in pb_role_labels)
         else:
             role_labels_for_prompt = "'Provider' and 'Customer'"
 
@@ -1620,10 +1643,12 @@ class DraftAgent:
             roles_line = (
                 f"Provider = {p1.get('name')}, Customer = {p2.get('name')}"
             )
-        # Same provenance gate as _build_clause_prompt: only treat
-        # roles.values() as role LABELS when the playbook supplied them.
-        if roles and context.get("_roles_from_playbook"):
-            role_labels_only = ", ".join(f"'{v}'" for v in roles.values())
+        # Same provenance gate as _build_clause_prompt: prefer the
+        # structured label list (pure role names) when the playbook
+        # supplied it; fall back to legacy Provider/Customer wording.
+        pb_labels: List[str] = context.get("role_labels", []) or []
+        if pb_labels and context.get("_roles_from_playbook"):
+            role_labels_only = ", ".join(f"'{lbl}'" for lbl in pb_labels)
         else:
             role_labels_only = "'Provider' and 'Customer'"
 
