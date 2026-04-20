@@ -983,10 +983,15 @@ class DraftAgent:
                     # Fill placeholders in the seed fallback
                     content = self._fill_placeholders(content, placeholders)
 
+            # Belt-and-suspenders: strip any leading heading the AI may have
+            # embedded, in case the in-_call_vertex pass missed it for any reason.
+            heading = clause.get("section_heading", "")
+            content = _strip_leading_heading(content.strip(), heading)
+
             sections.append(
                 DraftSection(
                     number=str(i),
-                    heading=clause.get("section_heading", ""),
+                    heading=heading,
                     content=content.strip(),
                     clause_type=clause.get("clause_type", "unknown"),
                     tier_used=tier_name,
