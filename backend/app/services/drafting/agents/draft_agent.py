@@ -237,6 +237,7 @@ class DraftAgent:
                 "liability_cap_months": saas.liability_cap_months,
                 "compliance_frameworks": saas.compliance_frameworks or [],
                 "data_regions": saas.data_regions or [],
+                "support_tiers": saas.support_tiers or {},
                 "annual_value": saas.price_amount * multiplier,
                 "annual_value_formatted": f"${saas.price_amount * multiplier:,.2f}",
             }
@@ -485,12 +486,58 @@ class DraftAgent:
                 f"- Categories of confidential information: {ci_cat_line}"
             )
 
+        employment_block = ""
+        employment_clause_directive = ""
+        if "employment" in context:
+            e = context["employment"]
+            employment_block = (
+                "\nEmployment-specific context:\n"
+                f"- Position / Title: {e.get('title') or '(unspecified)'}\n"
+                f"- Base salary: {e.get('base_salary') or '(unspecified)'}\n"
+                f"- Reporting manager: {e.get('reporting_manager') or '(unspecified)'}\n"
+                f"- Work location: {e.get('work_location') or 'Hybrid'}"
+            )
+            emp_directives: list[str] = []
+            if clause_type in ("position_duties", "preamble") and e.get("title"):
+                emp_directives.append(
+                    f"MANDATORY: Employee's position / job title is exactly "
+                    f"'{e['title']}' — use this verbatim, do not paraphrase."
+                )
+            if clause_type == "compensation" and e.get("base_salary"):
+                emp_directives.append(
+                    f"MANDATORY: Base salary must be exactly {e['base_salary']} — "
+                    f"do not substitute a placeholder or different amount."
+                )
+            if clause_type in ("position_duties", "work_hours") and e.get("reporting_manager"):
+                emp_directives.append(
+                    f"MANDATORY: Employee reports to {e['reporting_manager']}."
+                )
+            if clause_type == "work_hours" and e.get("work_location"):
+                emp_directives.append(
+                    f"MANDATORY: Work location arrangement is "
+                    f"'{e['work_location']}' — reflect this exactly."
+                )
+            if emp_directives:
+                employment_clause_directive = (
+                    "\n\nClause-specific mandates (override tier defaults):\n- "
+                    + "\n- ".join(emp_directives)
+                )
+
         saas_block = ""
+        saas_clause_directive = ""
         if "saas" in context:
             s = context["saas"]
-            frameworks = ", ".join(s["compliance_frameworks"]) or "(none specified)"
-            regions = ", ".join(s["data_regions"]) or "(not specified)"
+            frameworks_list = s["compliance_frameworks"]
+            frameworks = ", ".join(frameworks_list) or "(none specified)"
+            regions_list = s["data_regions"]
+            regions = ", ".join(regions_list) or "(not specified)"
             cap_months = s["liability_cap_months"] or "(follow tier standard)"
+            support_tiers = s.get("support_tiers") or {}
+            support_line = (
+                ", ".join(f"{k}: {v}" for k, v in support_tiers.items())
+                if support_tiers
+                else "(use tier defaults)"
+            )
             saas_block = (
                 "\nSaaS-specific context:\n"
                 f"- Service: {s['service_description']}\n"
@@ -502,8 +549,54 @@ class DraftAgent:
                 f"- Authorized users: {s['authorized_users'] or '(unlimited)'}\n"
                 f"- Requested liability cap: {cap_months} months of fees\n"
                 f"- Compliance frameworks to reference: {frameworks}\n"
-                f"- Data processing regions: {regions}"
+                f"- Data processing regions: {regions}\n"
+                f"- Customer-specified support tiers: {support_line}"
             )
+
+            # Per-clause directives that force the AI to HONOR the user's SaaS
+            # knobs. Without these, generic prompts often ignore the specific
+            # numbers/frameworks and fall back to playbook defaults.
+            directives: list[str] = []
+            if clause_type == "limitation_of_liability" and s.get("liability_cap_months"):
+                directives.append(
+                    f"MANDATORY: The aggregate liability cap for this clause MUST be "
+                    f"exactly {s['liability_cap_months']} months of fees paid by Customer "
+                    f"in the {('12 months' if s['liability_cap_months'] >= 12 else f'{s['liability_cap_months']} months')} "
+                    f"preceding the claim. Do NOT substitute a different cap. If the tier "
+                    f"would normally use a different cap, override it with "
+                    f"{s['liability_cap_months']} months of fees."
+                )
+            if clause_type in ("data_security", "dpa") and frameworks_list:
+                directives.append(
+                    f"MANDATORY: This clause MUST reference the following compliance "
+                    f"frameworks explicitly by name: {', '.join(frameworks_list)}. "
+                    f"Provider's security / data-protection obligations must be "
+                    f"framed as aligning with these specific frameworks."
+                )
+            if clause_type in ("data_security", "dpa", "data_ownership") and regions_list:
+                directives.append(
+                    f"MANDATORY: Reference the following data processing regions "
+                    f"explicitly where relevant: {', '.join(regions_list)}. "
+                    f"Data shall be processed and stored in these regions."
+                )
+            if clause_type == "grant_of_license" and s.get("authorized_users"):
+                directives.append(
+                    f"MANDATORY: The license grant must reference the specific "
+                    f"authorized-user cap of {s['authorized_users']} users."
+                )
+            if clause_type == "sla" and support_tiers:
+                tiers_text = "; ".join(f"{k} — {v}" for k, v in support_tiers.items())
+                directives.append(
+                    f"MANDATORY: The SLA support section must reflect the "
+                    f"Customer-specified support tiers exactly: {tiers_text}. "
+                    f"Structure the P1/P2/P3/P4 response matrix to match these tier "
+                    f"commitments."
+                )
+            if directives:
+                saas_clause_directive = (
+                    "\n\nClause-specific mandates (override tier defaults with these):\n- "
+                    + "\n- ".join(directives)
+                )
 
         required_terms_block = (
             f"\nRequired defined terms this clause MUST use: {', '.join(required_terms)}"
@@ -550,6 +643,9 @@ class DraftAgent:
             f"{deal_block}"
             f"{nda_block}"
             f"{saas_block}"
+            f"{saas_clause_directive}"
+            f"{employment_block}"
+            f"{employment_clause_directive}"
             f"{required_terms_block}"
             f"{jur_block}"
             f"{cross_ref_block}"

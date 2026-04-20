@@ -51,12 +51,22 @@ export default function StepReview({ form, error }: StepReviewProps) {
                     <Row label="Venue" value={form.venue} />
                     <Row label="Term" value={`${form.term_months} months`} />
                 </Section>
-                <Section title="PARTY 1">
+                <Section title={
+                    form.contract_type === 'saas' ? 'PROVIDER' :
+                    form.contract_type === 'msa' ? 'SERVICE PROVIDER' :
+                    form.contract_type === 'employment' ? 'COMPANY' :
+                    'PARTY 1'
+                }>
                     <Row label="Name" value={form.party_1_name} />
                     <Row label="Entity" value={form.party_1_entity_type} />
                     <Row label="Jurisdiction" value={form.party_1_jurisdiction} />
                 </Section>
-                <Section title="PARTY 2">
+                <Section title={
+                    form.contract_type === 'saas' ? 'CUSTOMER' :
+                    form.contract_type === 'msa' ? 'CLIENT' :
+                    form.contract_type === 'employment' ? 'EMPLOYEE' :
+                    'PARTY 2'
+                }>
                     <Row label="Name" value={form.party_2_name} />
                     <Row label="Entity" value={form.party_2_entity_type} />
                     <Row label="Jurisdiction" value={form.party_2_jurisdiction} />
@@ -74,6 +84,24 @@ export default function StepReview({ form, error }: StepReviewProps) {
                         <Row label="Price" value={`$${form.saas_price_amount} / ${form.saas_billing_frequency}`} />
                         <Row label="Uptime" value={`${form.saas_uptime}%`} />
                         <Row label="Users" value={String(form.saas_authorized_users)} />
+                        <Row label="Liability Cap" value={`${form.saas_liability_cap_months} months of fees`} />
+                        <Row label="Compliance" value={form.saas_compliance_frameworks.join(', ') || '\u2014'} />
+                        <Row label="Data Regions" value={form.saas_data_regions.join(', ') || '\u2014'} />
+                    </Section>
+                )}
+                {form.contract_type === 'msa' && (
+                    <Section title="MSA DETAILS">
+                        <Row label="Scope" value={form.msa_scope_of_services.slice(0, 80)} />
+                        <Row label="Payment" value={form.msa_payment_terms} />
+                        <Row label="Liability Cap" value={`${form.msa_liability_cap_multiplier}x annual fees`} />
+                    </Section>
+                )}
+                {form.contract_type === 'employment' && (
+                    <Section title="EMPLOYMENT DETAILS">
+                        <Row label="Title" value={form.employment_title} />
+                        <Row label="Base Salary" value={form.employment_base_salary} />
+                        <Row label="Reports To" value={form.employment_reporting_manager} />
+                        <Row label="Location" value={form.employment_work_location} />
                     </Section>
                 )}
             </div>

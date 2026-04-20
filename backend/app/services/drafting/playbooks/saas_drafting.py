@@ -1589,6 +1589,88 @@ _CLAUSES: List[Dict[str, Any]] = [
         category="data_protection",
         position=21,
         cross_references=["data_security", "confidentiality", "data_ownership"],
+        jurisdiction_variants={
+            "IN": (
+                "Reference the Digital Personal Data Protection Act 2023 (DPDP Act) "
+                "as the primary data protection framework. Use 'Data Fiduciary' "
+                "(for Customer) and 'Data Processor' (for Provider) terminology "
+                "under the DPDP Act, and 'Data Principal' for the individual. "
+                "Do NOT reference GDPR, EEA, SCCs, or EU-specific concepts unless "
+                "Customer is specifically identified as operating in the EEA. "
+                "Cross-border transfer obligations should follow DPDP Section 16 "
+                "(notified countries list)."
+            ),
+            "US-CA": (
+                "Reference the California Consumer Privacy Act (CCPA) as amended by "
+                "the California Privacy Rights Act (CPRA) as the primary data "
+                "protection framework. Use 'Business' (for Customer) and 'Service "
+                "Provider' (for Provider) terminology as defined in CCPA § 1798.140. "
+                "Include required CCPA service-provider clauses (no sale/sharing, "
+                "purpose limitation, assistance with consumer rights requests under "
+                "§§ 1798.100-1798.125). Do NOT import EEA / GDPR language or SCCs "
+                "unless data is actually transferred outside the US."
+            ),
+            "US": (
+                "Reference the applicable US state privacy laws the parties may be "
+                "subject to (CCPA/CPRA for California; VCDPA for Virginia; CPA for "
+                "Colorado; CTDPA for Connecticut; UCPA for Utah) rather than EU GDPR. "
+                "Use 'controller' / 'processor' terminology where the state law uses "
+                "it, or 'business' / 'service provider' for California. Omit EEA / "
+                "UK / Switzerland cross-border transfer language and SCCs unless "
+                "the deal has an actual EEA/UK nexus."
+            ),
+            "GB": (
+                "Reference the UK GDPR and the Data Protection Act 2018 as the "
+                "primary data protection framework, with the Information "
+                "Commissioner's Office (ICO) as the supervisory authority. For "
+                "international transfers, reference the UK International Data "
+                "Transfer Agreement (IDTA) and the UK Addendum to the EU SCCs "
+                "rather than plain EU SCCs."
+            ),
+            "EU": (
+                "Reference EU GDPR (Regulation (EU) 2016/679), in particular "
+                "Article 28 processor obligations and Articles 44-49 on international "
+                "transfers. Incorporate the 2021 EU Standard Contractual Clauses "
+                "(Commission Decision 2021/914) for transfers outside the EEA."
+            ),
+            "DE": (
+                "Reference EU GDPR (Article 28) together with the German Federal "
+                "Data Protection Act (Bundesdatenschutzgesetz, BDSG). The "
+                "supervisory authority is the competent Landesdatenschutzbeauftragte "
+                "or the BfDI, depending on sector."
+            ),
+            "FR": (
+                "Reference EU GDPR (Article 28) together with the French Loi "
+                "Informatique et Libertés (as amended). The supervisory authority "
+                "is the CNIL."
+            ),
+            "SG": (
+                "Reference the Singapore Personal Data Protection Act 2012 (PDPA) "
+                "as the primary data protection framework. Use 'organisation' and "
+                "'data intermediary' terminology. The supervisory authority is "
+                "the PDPC. Do NOT import GDPR/EEA concepts unless the deal has a "
+                "relevant EU nexus."
+            ),
+            "AU": (
+                "Reference the Australian Privacy Act 1988 and the Australian "
+                "Privacy Principles (APPs) as the primary data protection "
+                "framework. Supervisory authority is the OAIC. Do not import "
+                "GDPR/EEA concepts unless warranted."
+            ),
+            "BR": (
+                "Reference the Lei Geral de Proteção de Dados (LGPD, Law No. "
+                "13.709/2018) as the primary data protection framework. Use "
+                "'controller' (controlador) and 'operator' (operador) terminology. "
+                "Supervisory authority is the ANPD."
+            ),
+            "AE": (
+                "Reference the UAE Federal Decree-Law No. 45 of 2021 on the "
+                "Protection of Personal Data (PDPL) as the primary data "
+                "protection framework; for DIFC-based parties, reference DIFC "
+                "Data Protection Law No. 5 of 2020; for ADGM-based parties, "
+                "reference the ADGM Data Protection Regulations 2021."
+            ),
+        },
     ),
 
     # ── 22. ORDER FORM (EXHIBIT C) ───────────────────────────────────────
