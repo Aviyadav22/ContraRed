@@ -563,12 +563,15 @@ class DraftAgent:
             "'Certainly, below is...'. Start directly with the first word of the clause.\n"
             "4. Use proper legal prose. Defined terms capitalized. Numbered "
             "sub-paragraphs (a), (b), (c) where a clause has multiple parts.\n"
-            "5. Length: 1–6 paragraphs, appropriate for this clause type. "
-            "Boilerplate sections may be shorter; substantive sections (liability, "
-            "indemnification, IP) should be thorough.\n"
-            "6. All dates, names, amounts from the deal context above must be "
+            "5. Length: 2–6 paragraphs, appropriate for this clause type. "
+            "Boilerplate sections may be shorter (but at least one full sentence); "
+            "substantive sections (liability, indemnification, IP) should be thorough.\n"
+            "6. NEVER respond with just a cross-reference like 'Section 3' or a "
+            "fragment — always produce the full operative clause text. "
+            "Cross-references belong INSIDE the clause body, not as the whole body.\n"
+            "7. All dates, names, amounts from the deal context above must be "
             "used verbatim — do not substitute placeholders like [Date] or XXX.\n"
-            "7. For cross-references, use {{REF:clause_type}} tokens exactly as "
+            "8. For cross-references, use {{REF:clause_type}} tokens exactly as "
             "instructed above."
         )
 
@@ -614,53 +617,90 @@ class DraftAgent:
             def _strip_markdown_fences(t: str) -> str:
                 return t.strip()
 
-        async with semaphore:
-            try:
-                from google.genai.types import GenerateContentConfig
-                model = get_generative_model(settings.GEMINI_MODEL)
-                response = await asyncio.wait_for(
-                    model.generate_content_async(
-                        [{"role": "user", "parts": [{"text": prompt}]}],
-                        generation_config=GenerateContentConfig(
-                            temperature=0.3,
-                            max_output_tokens=3500,
-                        ),
+        async def _call_vertex(prompt_text: str, attempt: int) -> Tuple[str, int]:
+            """Single AI call — returns (text, tokens). Raises on failure."""
+            from google.genai.types import GenerateContentConfig
+            model = get_generative_model(settings.GEMINI_MODEL)
+            response = await asyncio.wait_for(
+                model.generate_content_async(
+                    [{"role": "user", "parts": [{"text": prompt_text}]}],
+                    generation_config=GenerateContentConfig(
+                        temperature=0.3 + (0.1 * attempt),  # nudge variety on retry
+                        max_output_tokens=3500,
                     ),
-                    timeout=_PER_CLAUSE_TIMEOUT_S,
-                )
+                ),
+                timeout=_PER_CLAUSE_TIMEOUT_S,
+            )
+            raw = getattr(response, "text", None) or ""
+            cleaned = _strip_markdown_fences(raw).strip()
+            tokens = 0
+            usage = getattr(response, "usage_metadata", None)
+            if usage is not None:
+                tokens = getattr(usage, "total_token_count", 0) or 0
+            return cleaned, tokens
 
-                raw = getattr(response, "text", None) or ""
-                cleaned = _strip_markdown_fences(raw).strip()
+        # Minimum meaningful clause length — short boilerplate sections like
+        # signature blocks can be brief, but anything under this is almost
+        # always a bad/truncated AI output.
+        MIN_CLAUSE_CHARS = 80
 
-                # Collect token usage if exposed
-                tokens = 0
-                usage = getattr(response, "usage_metadata", None)
-                if usage is not None:
-                    tokens = getattr(usage, "total_token_count", 0) or 0
+        async with semaphore:
+            total_tokens = 0
+            for attempt in range(2):  # initial call + 1 retry
+                try:
+                    text, tokens = await _call_vertex(prompt, attempt)
+                    total_tokens += tokens
 
-                if not cleaned:
+                    if not text:
+                        logger.warning(
+                            "Attempt %d: AI returned empty text for clause %s",
+                            attempt + 1,
+                            clause.get("clause_type"),
+                        )
+                        continue
+
+                    if len(text) < MIN_CLAUSE_CHARS:
+                        logger.warning(
+                            "Attempt %d: AI output too short (%d chars) for clause %s: %r",
+                            attempt + 1,
+                            len(text),
+                            clause.get("clause_type"),
+                            text[:100],
+                        )
+                        # Retry with adjusted prompt asking for more detail
+                        prompt = prompt + (
+                            "\n\nIMPORTANT: Your previous response was too brief. "
+                            "Provide the complete clause body text (2-6 paragraphs). "
+                            "Do not respond with just a cross-reference or fragment."
+                        )
+                        continue
+
+                    return text, total_tokens, True
+
+                except asyncio.TimeoutError:
                     logger.warning(
-                        "AI returned empty text for clause %s, using seed",
+                        "Clause %s timed out on attempt %d after %.0fs",
                         clause.get("clause_type"),
+                        attempt + 1,
+                        _PER_CLAUSE_TIMEOUT_S,
                     )
-                    return seed_text, tokens, False
+                    # Don't retry on timeout — fall through to seed
+                    break
+                except Exception as e:
+                    logger.warning(
+                        "Clause %s AI call %d failed (%s)",
+                        clause.get("clause_type"),
+                        attempt + 1,
+                        type(e).__name__,
+                    )
+                    # Only retry on transient errors, not validation/etc.
+                    continue
 
-                return cleaned, tokens, True
-
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Clause %s timed out after %.0fs, falling back to seed",
-                    clause.get("clause_type"),
-                    _PER_CLAUSE_TIMEOUT_S,
-                )
-                return seed_text, 0, False
-            except Exception as e:
-                logger.warning(
-                    "Clause %s AI generation failed (%s), falling back to seed",
-                    clause.get("clause_type"),
-                    type(e).__name__,
-                )
-                return seed_text, 0, False
+            logger.warning(
+                "Clause %s falling back to seed text after retries",
+                clause.get("clause_type"),
+            )
+            return seed_text, total_tokens, False
 
     # ------------------------------------------------------------------
     # Cross-reference resolution (post-process)
