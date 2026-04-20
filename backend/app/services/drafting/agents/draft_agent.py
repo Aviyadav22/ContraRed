@@ -651,15 +651,22 @@ class DraftAgent:
 
         jur_block = f"\nJurisdiction note ({jur}): {jur_variant}" if jur_variant else ""
 
+        # Cross-references are handled by NAME, not by section number. This
+        # avoids a class of bugs where the AI writes a bare cross-ref token at
+        # the start of a clause body ("{{REF:fees}} and is expressly limited...")
+        # which then resolves into "Section 6 and is expressly limited..." —
+        # a syntactically-valid but content-less orphan opening.
         cross_ref_block = ""
         if cross_refs:
             cross_ref_text = ", ".join(cross_refs)
             cross_ref_block = (
-                f"\nThis clause cross-references these other clause types: {cross_ref_text}. "
-                "Use the token {{REF:clause_type}} where you would otherwise write "
-                "'Section X'. These tokens will be replaced with the real section "
-                "numbers after all clauses are generated. Example: "
-                "'notwithstanding {{REF:liability}}' or 'as defined in {{REF:definitions}}'."
+                f"\nThis clause may reference these related clauses when needed: "
+                f"{cross_ref_text}. Refer to them by NAME, not by number. Write e.g. "
+                f"'the Confidentiality section', 'Exhibit A (Service Level Agreement)', "
+                f"'the Indemnification Section', 'this Agreement'. Do NOT write "
+                f"'Section 5' or 'Section X'. Do NOT use any curly-brace tokens. "
+                f"Cross-references should appear INSIDE the clause body as part of "
+                f"a full sentence, never as the opening."
             )
 
         seed_block = ""
@@ -711,29 +718,54 @@ class DraftAgent:
             f"{drafting_notes_block}"
             f"{seed_block}"
             f"{mandatory_overrides_section}"
-            "\nOUTPUT INSTRUCTIONS (critical):\n"
-            "1. Return ONLY the clause body text. No heading. No section "
-            "number (those are added by the renderer).\n"
-            "2. Do NOT start the body with an uppercase section heading like "
-            f"'{heading.upper()}.' or '12. LIMITATION OF LIABILITY.'. Start with "
-            "the first sentence of the operative text directly.\n"
-            "3. No markdown formatting. No code fences. No ``` anywhere.\n"
-            "4. Do NOT include any preamble like 'Here is the clause' or "
-            "'Certainly, below is...'. Start directly with the first word of the clause.\n"
-            "5. Use proper legal prose. Defined terms capitalized. Numbered "
-            "sub-paragraphs (a), (b), (c) where a clause has multiple parts.\n"
-            "6. Length: 2–6 paragraphs, appropriate for this clause type. "
-            "Boilerplate sections may be shorter (but at least one full sentence); "
-            "substantive sections (liability, indemnification, IP) should be thorough.\n"
-            "7. NEVER respond with just a cross-reference like 'Section 3' or a "
-            "fragment — always produce the full operative clause text. "
-            "Cross-references belong INSIDE the clause body, not as the whole body.\n"
-            "8. All dates, names, amounts from the deal context above must be "
-            "used verbatim — do not substitute placeholders like [Date] or XXX.\n"
-            "9. For cross-references, use {{REF:clause_type}} tokens exactly as "
-            "instructed above.\n"
-            "10. If a CRITICAL USER-SPECIFIED OVERRIDE block appears above, "
-            "those values are NON-NEGOTIABLE — use them verbatim."
+            "\nOUTPUT INSTRUCTIONS (critical — read carefully):\n"
+            "\n"
+            "A. WHAT TO RETURN:\n"
+            "   - Return ONLY the clause body text. Start directly with the first "
+            "word of the operative text. No meta-commentary.\n"
+            "   - Do NOT repeat the heading or add a section number. The renderer "
+            f"adds '{heading}' as the heading automatically.\n"
+            "   - Do NOT start with a numbered or uppercase run-in heading like "
+            f"'{heading.upper()}.' or '12. LIMITATION OF LIABILITY.'.\n"
+            "   - Do NOT start with 'Section N' or 'Section (X)' — orphan "
+            "cross-references as openings are invalid.\n"
+            "   - No markdown. No ``` fences. No preamble like 'Here is...'.\n"
+            "\n"
+            "B. DEFINED-TERM DISCIPLINE (strict):\n"
+            "   - Use 'Provider' and 'Customer' (or the equivalent role labels "
+            "shown in the roles block above) throughout the clause body. These "
+            "are the defined terms for this contract.\n"
+            "   - Do NOT use the parties' literal company names in the body of "
+            "ordinary clauses. The party names belong ONLY in the Preamble "
+            "and Signature Blocks.\n"
+            "   - Wrap first-use defined terms in double quotes (e.g. "
+            '"Confidential Information"), then use them unquoted afterwards.\n'
+            "\n"
+            "C. SUB-NUMBERING DISCIPLINE:\n"
+            "   - Do NOT prefix sub-paragraphs with numeric labels like '12.1', "
+            "'12.2', '14.1'. Those numbers belong to the parent section and the "
+            "renderer handles them.\n"
+            "   - Use '(a)', '(b)', '(c)' for enumerated sub-parts within a clause. "
+            "For deeper nesting use '(i)', '(ii)', '(iii)'.\n"
+            "\n"
+            "D. CROSS-REFERENCES:\n"
+            "   - When referring to another clause in this Agreement, use its "
+            "NAME, not a number. Examples of correct references: "
+            "'the Confidentiality Section', 'the Data Security obligations', "
+            "'Exhibit A (Service Level Agreement)', 'this Agreement', "
+            "'the Order Form attached as Exhibit C'.\n"
+            "   - Cross-references must appear INSIDE a full sentence, never as "
+            "the clause opening.\n"
+            "\n"
+            "E. SUBSTANCE:\n"
+            "   - Length: 2–6 paragraphs as appropriate. Substantive sections "
+            "(liability, indemnification, IP, data security) should be thorough "
+            "and complete — no stubs. Boilerplate may be shorter but at least one "
+            "full operative sentence.\n"
+            "   - All dates, names, amounts from the deal context must be used "
+            "verbatim — never substitute '[Date]', 'XXX', '[Amount]', etc.\n"
+            "   - If a CRITICAL USER-SPECIFIED OVERRIDE block appears above, "
+            "those values are non-negotiable — use them verbatim.\n"
         )
 
         return prompt
@@ -870,19 +902,26 @@ class DraftAgent:
 
     @staticmethod
     def _resolve_cross_refs(sections: List[DraftSection]) -> List[DraftSection]:
-        """Replace ``{{REF:clause_type}}`` tokens with real section numbers."""
-        clause_type_to_number = {
-            s.clause_type: s.number for s in sections
+        """Replace legacy ``{{REF:clause_type}}`` tokens with named references.
+
+        We no longer instruct the AI to produce these tokens — clauses now
+        use named references ('the Confidentiality Section') directly. This
+        resolver remains as a safety net in case a playbook seed or an older
+        cached output still contains tokens. Resolves to the clause's
+        section_heading rather than a bare section number, which reads more
+        naturally if a stray token leaks through.
+        """
+        clause_type_to_heading = {
+            s.clause_type: s.heading for s in sections
         }
 
         def _replacer(match: re.Match) -> str:
             key = match.group(1).strip()
-            num = clause_type_to_number.get(key)
-            if num:
-                return f"Section {num}"
-            # Unresolved reference — fall back to a human-readable form
+            heading = clause_type_to_heading.get(key)
+            if heading:
+                return f"the {heading} section"
             pretty = key.replace("_", " ").title()
-            return f"Section ({pretty})"
+            return f"the {pretty} section"
 
         pattern = re.compile(r"\{\{\s*REF\s*:\s*([\w_]+)\s*\}\}")
         updated: List[DraftSection] = []
@@ -900,6 +939,274 @@ class DraftAgent:
             else:
                 updated.append(s)
         return updated
+
+    # ------------------------------------------------------------------
+    # Coherence pass (post-generation defect detection + AI repair)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _detect_defects(
+        section: DraftSection,
+        context: Dict[str, Any],
+    ) -> List[str]:
+        """Return a list of human-readable defects in this clause body.
+
+        Empty list means the section is clean. Each string describes a
+        specific issue the repair prompt should address.
+        """
+        text = section.content or ""
+        defects: List[str] = []
+
+        # D1: Orphan "Section N" opening (the {{REF:}} resolution artifact).
+        # E.g., "Section 22 and is expressly limited..."
+        orphan_opener = re.match(
+            r"^\s*Section\s*(?:\d+(?:\.\d+)?|\([^)]+\)|[IVX]+)[\s,.]",
+            text,
+        )
+        if orphan_opener:
+            defects.append(
+                "Clause opens with a bare section reference "
+                f"('{text[:60].strip()}...'). Rewrite to start with a full "
+                "operative sentence. If the clause needs to refer to another "
+                "section, do it by NAME inside a proper sentence."
+            )
+
+        # D2: Literal party names instead of role terms.
+        # Only flag when MORE than 2 occurrences — a couple in Preamble / SIG
+        # are legitimate.
+        p1_name = context.get("party_1", {}).get("name", "")
+        p2_name = context.get("party_2", {}).get("name", "")
+        p1_short = context.get("party_1", {}).get("short_name", "")
+        p2_short = context.get("party_2", {}).get("short_name", "")
+
+        # Skip the preamble and signature blocks — names are correct there.
+        if section.clause_type not in {"preamble", "signature_blocks", "recitals"}:
+            literal_hits = 0
+            for name in (p1_name, p2_name, p1_short, p2_short):
+                if name and len(name) > 2:
+                    literal_hits += len(re.findall(rf"\b{re.escape(name)}\b", text))
+            if literal_hits >= 2:
+                defects.append(
+                    f"Clause uses the parties' literal names "
+                    f"('{p1_short}', '{p2_short}') {literal_hits} times in the "
+                    "body. Replace with the defined role terms (Provider / "
+                    "Customer, or Disclosing Party / Receiving Party, as "
+                    "appropriate). Literal names belong only in the Preamble "
+                    "and Signature Blocks."
+                )
+
+        # D3: Numeric sub-labels that don't match the clause's own section
+        # number. E.g., body says "11.1" but clause is actually §12.
+        section_num = section.number
+        sub_label_match = re.search(r"(?<!\d)(\d{1,2})\.\d+\s+[A-Z]", text)
+        if sub_label_match:
+            embedded_num = sub_label_match.group(1)
+            if embedded_num != section_num:
+                defects.append(
+                    f"Clause body uses numeric sub-labels ('{embedded_num}.1', "
+                    f"'{embedded_num}.2', ...) but this is actually section "
+                    f"{section_num}. Replace the numeric sub-labels with "
+                    "'(a)', '(b)', '(c)' sub-paragraphs, OR simply drop the "
+                    "sub-numbers and let the sub-paragraphs flow as prose."
+                )
+
+        # D4: Stub clause. Some sections are expected to be substantive (liability,
+        # indemnification, IP, data security, data ownership, SLA) and should
+        # be at least 400 chars. Signature/boilerplate OK smaller.
+        SUBSTANTIVE_TYPES = {
+            "limitation_of_liability",
+            "indemnification",
+            "intellectual_property",
+            "data_security",
+            "data_ownership",
+            "confidentiality",
+            "sla",
+            "dpa",
+            "representations_warranties",
+            "fees_and_payment",
+            "term_and_termination",
+            "grant_of_license",
+            "scope_of_services",
+        }
+        if section.clause_type in SUBSTANTIVE_TYPES and len(text) < 400:
+            defects.append(
+                f"Clause is too short for a substantive '{section.clause_type}' "
+                f"section ({len(text)} chars). Produce a thorough clause with "
+                "2-5 paragraphs of operative language including all the "
+                "substantive obligations, carve-outs, and procedures expected "
+                "for this clause type."
+            )
+
+        # D5: Jurisdiction mismatch in the DPA. If the contract's jurisdiction
+        # is India, the DPA must reference DPDP (not GDPR).
+        if section.clause_type == "dpa":
+            jur = context.get("jurisdiction", "")
+            if jur.upper() == "IN" or jur.upper().startswith("IN-"):
+                mentions_dpdp = bool(re.search(r"DPDP|Digital Personal Data Protection", text))
+                mentions_gdpr = bool(re.search(r"\bGDPR\b|Regulation\s*\(EU\)\s*2016/679|EEA|EU\s*Standard\s*Contractual", text))
+                if not mentions_dpdp or mentions_gdpr:
+                    defects.append(
+                        "Contract jurisdiction is India (IN) so the DPA must be "
+                        "written under the Digital Personal Data Protection Act 2023 "
+                        "(DPDP Act). Rewrite the DPA to use DPDP terminology "
+                        "(Data Fiduciary = Customer, Data Processor = Provider, "
+                        "Data Principal = individual). Do NOT reference GDPR, EEA, "
+                        "EU SCCs, or EU 2016/679 — these are the wrong framework "
+                        "for an India-to-India processing relationship."
+                    )
+
+        return defects
+
+    async def _repair_clause(
+        self,
+        section: DraftSection,
+        defects: List[str],
+        context: Dict[str, Any],
+    ) -> Optional[str]:
+        """Ask Vertex AI to repair a defective clause. Returns new text or None."""
+        try:
+            from app.core.vertex_client import get_generative_model, is_available
+            if not is_available():
+                return None
+        except ImportError:
+            return None
+
+        defect_list = "\n".join(f"- {d}" for d in defects)
+
+        p1 = context.get("party_1", {})
+        p2 = context.get("party_2", {})
+        roles = context.get("roles", {})
+        roles_line = ", ".join(f"{k.replace('_',' ').title()} = {v}"
+                               for k, v in roles.items()) or f"Provider = {p1.get('name')}, Customer = {p2.get('name')}"
+
+        prompt = (
+            f"You are repairing a defective clause in a {context.get('contract_type','').replace('_',' ').upper()}.\n\n"
+            f"Clause heading: **{section.heading}** (type: {section.clause_type})\n"
+            f"Jurisdiction: {context.get('jurisdiction', '(unspecified)')}\n"
+            f"Defined roles: {roles_line}\n\n"
+            f"The current clause body has these defects that MUST be fixed:\n"
+            f"{defect_list}\n\n"
+            f"Current (defective) clause body:\n---\n{section.content}\n---\n\n"
+            "Return ONLY the corrected clause body as prose. No heading, no section "
+            "number, no markdown fences, no preamble. Start directly with the first "
+            "word of the operative text.\n\n"
+            "Rules:\n"
+            "- Use the defined role terms (Provider, Customer, etc.) — NOT the "
+            "parties' literal company names — throughout the body. Names belong "
+            "only in the Preamble / Signature Block.\n"
+            "- Use (a), (b), (c) for sub-parts, not '12.1', '12.2'.\n"
+            "- Refer to other clauses by NAME ('the Confidentiality Section', "
+            "'Exhibit A') never by number ('Section 5').\n"
+            "- Never start the body with an orphan 'Section N' reference.\n"
+            "- Preserve the substantive legal positions — do not soften or remove "
+            "protections, caps, or carve-outs that the current text has.\n"
+        )
+
+        try:
+            from google.genai.types import GenerateContentConfig
+            model = get_generative_model(settings.GEMINI_MODEL)
+            response = await asyncio.wait_for(
+                model.generate_content_async(
+                    [{"role": "user", "parts": [{"text": prompt}]}],
+                    generation_config=GenerateContentConfig(
+                        temperature=0.2,
+                        max_output_tokens=3500,
+                    ),
+                ),
+                timeout=_PER_CLAUSE_TIMEOUT_S,
+            )
+            raw = getattr(response, "text", None) or ""
+            try:
+                from app.services.gemini_analyzer import _strip_markdown_fences
+            except ImportError:
+                def _strip_markdown_fences(t: str) -> str:
+                    return t.strip()
+            cleaned = _strip_markdown_fences(raw).strip()
+            cleaned = _strip_leading_heading(cleaned, section.heading)
+            # Reject trivially-short repairs
+            if not cleaned or len(cleaned) < 80:
+                return None
+            return cleaned
+        except Exception as e:
+            logger.warning(
+                "Repair of clause %s failed (%s)",
+                section.clause_type,
+                type(e).__name__,
+            )
+            return None
+
+    async def _coherence_pass(
+        self,
+        sections: List[DraftSection],
+        req: DraftRequest,
+        context: Dict[str, Any],
+    ) -> List[DraftSection]:
+        """Detect and repair defects across all sections (in parallel)."""
+        # Build list of (index, section, defects) for only defective sections
+        flagged: List[Tuple[int, DraftSection, List[str]]] = []
+        for i, section in enumerate(sections):
+            defects = self._detect_defects(section, context)
+            if defects:
+                flagged.append((i, section, defects))
+
+        if not flagged:
+            logger.info("Coherence pass: 0/%d sections needed repair", len(sections))
+            return sections
+
+        logger.info(
+            "Coherence pass: %d/%d sections flagged — running repair in parallel",
+            len(flagged),
+            len(sections),
+        )
+
+        # Repair all flagged sections in parallel (bounded by same semaphore)
+        semaphore = asyncio.Semaphore(_MAX_CONCURRENT_CLAUSES)
+
+        async def _repair_one(section: DraftSection, defects: List[str]) -> Optional[str]:
+            async with semaphore:
+                return await self._repair_clause(section, defects, context)
+
+        repair_tasks = [_repair_one(s, d) for (_, s, d) in flagged]
+        repairs = await asyncio.gather(*repair_tasks, return_exceptions=True)
+
+        # Apply successful repairs
+        repaired_count = 0
+        result = list(sections)  # shallow copy
+        for (idx, section, defects), repair in zip(flagged, repairs):
+            if isinstance(repair, BaseException):
+                logger.warning(
+                    "Repair exception for %s: %s",
+                    section.clause_type,
+                    repair,
+                )
+                continue
+            if repair is None:
+                logger.info(
+                    "Coherence repair for %s unavailable; keeping original",
+                    section.clause_type,
+                )
+                continue
+            result[idx] = DraftSection(
+                number=section.number,
+                heading=section.heading,
+                content=repair,
+                clause_type=section.clause_type,
+                tier_used=section.tier_used,
+                notes=section.notes,
+            )
+            repaired_count += 1
+            logger.info(
+                "Coherence repaired %s (%d defects)",
+                section.clause_type,
+                len(defects),
+            )
+
+        logger.info(
+            "Coherence pass complete: %d/%d sections repaired",
+            repaired_count,
+            len(flagged),
+        )
+        return result
 
     # ------------------------------------------------------------------
     # Main generation
@@ -1002,8 +1309,15 @@ class DraftAgent:
             for term in clause.get("required_defined_terms", []):
                 defined_terms.setdefault(term, clause.get("section_heading", ""))
 
-        # Resolve {{REF:clause_type}} tokens
+        # Resolve any legacy {{REF:clause_type}} tokens (belt-and-suspenders;
+        # the AI is now instructed not to produce them).
         sections = self._resolve_cross_refs(sections)
+
+        # Coherence pass: detect common AI-generated defects (orphan openings,
+        # literal-name drift, numeric sub-labels, stub content) and repair
+        # each broken section with a targeted AI call. Always AI-first —
+        # never a deterministic rewrite.
+        sections = await self._coherence_pass(sections, req, context)
 
         elapsed = time.monotonic() - start
         title = _TITLE_MAP.get(
