@@ -37,6 +37,7 @@ interface Props {
 const barStyle: CSSProperties = {
     display: 'flex',
     alignItems: 'flex-end',
+    flexWrap: 'wrap',
     gap: 14,
     padding: '12px 16px',
     backgroundColor: 'var(--bg-surface)',
@@ -48,8 +49,8 @@ const fieldStyle: CSSProperties = {
     display: 'flex',
     flexDirection: 'column',
     gap: 3,
-    flex: 1,
-    minWidth: 0,
+    flex: '1 1 180px',
+    minWidth: 140,
 };
 
 const labelStyle: CSSProperties = {
@@ -86,7 +87,7 @@ export function RedlineConfigBar({
                 </SelectInput>
             </div>
 
-            <div style={{ ...fieldStyle, flex: '0 0 auto', minWidth: 130 }}>
+            <div style={{ ...fieldStyle, flex: '1 1 140px', minWidth: 130 }}>
                 <span style={labelStyle}>Party Side</span>
                 <SelectInput
                     value={partySide}
@@ -98,7 +99,7 @@ export function RedlineConfigBar({
                 </SelectInput>
             </div>
 
-            <div style={{ ...fieldStyle, flex: '0 0 auto', minWidth: 120 }}>
+            <div style={{ ...fieldStyle, flex: '1 1 130px', minWidth: 120 }}>
                 <span style={labelStyle}>Jurisdiction</span>
                 <SelectInput
                     value={jurisdiction}

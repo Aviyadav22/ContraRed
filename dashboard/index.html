@@ -3,17 +3,9 @@
 
 <head>
   <meta charset="UTF-8" />
-  <script>
-    // Apply saved theme preference synchronously to avoid flash of wrong theme.
-    (function () {
-      try {
-        var saved = localStorage.getItem('contrared-theme');
-        if (saved === 'dark' || saved === 'light') {
-          document.documentElement.setAttribute('data-theme', saved);
-        }
-      } catch (e) { /* localStorage unavailable — keep HTML default */ }
-    })();
-  </script>
+  <!-- Theme restore runs before React mounts to prevent flash-of-wrong-theme.
+       External file so it satisfies `script-src 'self'` in CSP. -->
+  <script src="/theme-init.js"></script>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ContraRed — Contract Redlining Platform</title>
