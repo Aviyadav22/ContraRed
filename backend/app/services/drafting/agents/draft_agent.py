@@ -103,6 +103,49 @@ def _normalise_billing_frequency(value: str) -> str:
 _FREQ_MULTIPLIER: Dict[str, int] = {"monthly": 12, "quarterly": 4, "annual": 1}
 
 
+def _strip_leading_heading(text: str, heading: str = "") -> str:
+    """Strip any leading section-heading line the AI may have added.
+
+    The renderer adds its own numbered heading. If the AI starts the body with
+    something like "12. LIMITATION OF LIABILITY." or "LIMITATION OF LIABILITY.",
+    remove that prefix so the document doesn't double-heading.
+    """
+    if not text:
+        return text
+
+    # Match patterns like:
+    #   "12. LIMITATION OF LIABILITY."
+    #   "12.1 Liability Cap."
+    #   "LIMITATION OF LIABILITY."
+    #   "Limitation of Liability."
+    # followed by \n or \s+ (run-in heading).
+    patterns = [
+        # Numbered heading: "12.", "12.1 ", "I.", "A.", "(a)" etc. followed by UPPERCASE title
+        r"^\s*(?:\d+(?:\.\d+)?|[IVX]+|[A-Z]|\([a-z]\))\.?\s+[A-Z][A-Z\s,&]+(?:\.\s+|\n)",
+        # Just UPPERCASE run-in heading like "LIMITATION OF LIABILITY."
+        r"^\s*[A-Z][A-Z\s,&]{5,}(?:\.\s+|\n)",
+    ]
+    for pat in patterns:
+        m = re.match(pat, text)
+        if m:
+            remaining = text[m.end():].strip()
+            # Sanity: only strip if what follows is a full clause body (not just another line)
+            if len(remaining) > 40:
+                text = remaining
+                break
+
+    # Additionally: if the heading string matches exactly as the first line, strip it.
+    if heading:
+        # Case-insensitive exact first-line match
+        first_newline = text.find("\n")
+        if first_newline > 0:
+            first_line = text[:first_newline].strip(" .\t")
+            if first_line.lower() == heading.lower():
+                text = text[first_newline:].lstrip()
+
+    return text
+
+
 class DraftAgent:
     """AI-first drafting agent — builds a RawDraft from a request and playbook."""
 
@@ -632,6 +675,22 @@ class DraftAgent:
             f"\nPlaybook drafting notes: {drafting_notes}" if drafting_notes else ""
         )
 
+        # Collect MANDATORY overrides (user-selected knobs) and put them right
+        # before the output instructions where the model pays the most attention.
+        mandatory_overrides = ""
+        for block in (saas_clause_directive, employment_clause_directive):
+            if block and "MANDATORY" in block:
+                mandatory_overrides += block
+        mandatory_overrides_section = (
+            f"\n\n=== CRITICAL USER-SPECIFIED OVERRIDES (HIGHEST PRIORITY) ==="
+            f"{mandatory_overrides}\n"
+            f"These overrides take ABSOLUTE priority over any conflicting guidance in the "
+            f"reference seed, tier posture, or playbook notes above. If the seed text "
+            f"uses a different value (e.g. a different cap or framework list), you MUST "
+            f"override it to honor the user's explicit choice.\n"
+            f"==============================================================\n"
+        ) if mandatory_overrides else ""
+
         prompt = (
             f"You are a senior contract attorney drafting a single clause of a "
             f"{context['contract_type'].replace('_', ' ').upper()}.\n\n"
@@ -645,32 +704,36 @@ class DraftAgent:
             f"{deal_block}"
             f"{nda_block}"
             f"{saas_block}"
-            f"{saas_clause_directive}"
             f"{employment_block}"
-            f"{employment_clause_directive}"
             f"{required_terms_block}"
             f"{jur_block}"
             f"{cross_ref_block}"
             f"{drafting_notes_block}"
-            f"{seed_block}\n\n"
-            "OUTPUT INSTRUCTIONS (critical):\n"
+            f"{seed_block}"
+            f"{mandatory_overrides_section}"
+            "\nOUTPUT INSTRUCTIONS (critical):\n"
             "1. Return ONLY the clause body text. No heading. No section "
             "number (those are added by the renderer).\n"
-            "2. No markdown formatting. No code fences. No ``` anywhere.\n"
-            "3. Do NOT include any preamble like 'Here is the clause' or "
+            "2. Do NOT start the body with an uppercase section heading like "
+            f"'{heading.upper()}.' or '12. LIMITATION OF LIABILITY.'. Start with "
+            "the first sentence of the operative text directly.\n"
+            "3. No markdown formatting. No code fences. No ``` anywhere.\n"
+            "4. Do NOT include any preamble like 'Here is the clause' or "
             "'Certainly, below is...'. Start directly with the first word of the clause.\n"
-            "4. Use proper legal prose. Defined terms capitalized. Numbered "
+            "5. Use proper legal prose. Defined terms capitalized. Numbered "
             "sub-paragraphs (a), (b), (c) where a clause has multiple parts.\n"
-            "5. Length: 2–6 paragraphs, appropriate for this clause type. "
+            "6. Length: 2–6 paragraphs, appropriate for this clause type. "
             "Boilerplate sections may be shorter (but at least one full sentence); "
             "substantive sections (liability, indemnification, IP) should be thorough.\n"
-            "6. NEVER respond with just a cross-reference like 'Section 3' or a "
+            "7. NEVER respond with just a cross-reference like 'Section 3' or a "
             "fragment — always produce the full operative clause text. "
             "Cross-references belong INSIDE the clause body, not as the whole body.\n"
-            "7. All dates, names, amounts from the deal context above must be "
+            "8. All dates, names, amounts from the deal context above must be "
             "used verbatim — do not substitute placeholders like [Date] or XXX.\n"
-            "8. For cross-references, use {{REF:clause_type}} tokens exactly as "
-            "instructed above."
+            "9. For cross-references, use {{REF:clause_type}} tokens exactly as "
+            "instructed above.\n"
+            "10. If a CRITICAL USER-SPECIFIED OVERRIDE block appears above, "
+            "those values are NON-NEGOTIABLE — use them verbatim."
         )
 
         return prompt
@@ -731,6 +794,7 @@ class DraftAgent:
             )
             raw = getattr(response, "text", None) or ""
             cleaned = _strip_markdown_fences(raw).strip()
+            cleaned = _strip_leading_heading(cleaned, clause.get("section_heading", ""))
             tokens = 0
             usage = getattr(response, "usage_metadata", None)
             if usage is not None:
