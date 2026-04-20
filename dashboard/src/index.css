@@ -2,11 +2,11 @@
 
 /* ============================================================================
    ContraRed Design Tokens — Dark/Light Dual-Mode System
-   Dark mode is the default. Light mode via [data-theme="light"].
+   Light mode is the default. Dark mode via [data-theme="dark"].
    ============================================================================ */
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 
   /* Backgrounds */
   --bg-app: #09090B;

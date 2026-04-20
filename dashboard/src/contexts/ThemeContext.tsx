@@ -13,7 +13,7 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(() => {
     const saved = localStorage.getItem('contrared-theme') as Theme | null;
-    return saved || 'dark';
+    return saved || 'light';
   });
 
   useEffect(() => {
