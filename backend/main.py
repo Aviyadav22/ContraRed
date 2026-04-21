@@ -273,6 +273,25 @@ app = FastAPI(
 # Global exception handler — catch unhandled errors, strip PII from response
 # ---------------------------------------------------------------------------
 
+def _is_client_cancellation(exc: BaseException) -> bool:
+    """True if this exception (or any cause in its chain) is a request cancellation.
+
+    CancelledError propagates up when the client disconnects mid-request or an
+    upstream proxy times out — typical on Render cold-starts where asyncpg's
+    connect handshake is still in flight. SQLAlchemy wraps it as __cause__/__context__,
+    so we walk the chain.
+    """
+    import asyncio as _a
+    seen = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        if isinstance(cur, _a.CancelledError):
+            return True
+        seen.add(id(cur))
+        cur = cur.__cause__ or cur.__context__
+    return False
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Catch-all for unhandled exceptions.
@@ -281,6 +300,23 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
     - Returns a generic error to the client with PII stripped.
     - Adds CORS headers so browsers don't block the error response.
     """
+    # Client disconnect / upstream cancellation: not a bug, don't spam error logs or return 500
+    if _is_client_cancellation(exc):
+        logger.warning(
+            "Request cancelled on %s %s (client disconnect or upstream timeout)",
+            request.method,
+            request.url.path,
+        )
+        response = JSONResponse(
+            status_code=503,
+            content={"detail": "The server was still warming up. Please retry."},
+        )
+        origin = request.headers.get("origin")
+        if origin and origin in settings.CORS_ORIGINS:
+            response.headers["access-control-allow-origin"] = origin
+            response.headers["access-control-allow-credentials"] = "true"
+        return response
+
     logger.error(
         "Unhandled exception on %s %s: %s",
         request.method,

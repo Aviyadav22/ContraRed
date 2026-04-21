@@ -1,0 +1,32 @@
+name: Keep Backend Warm
+
+on:
+  schedule:
+    # Every 10 minutes — Render free tier sleeps after 15 min idle.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: keepalive
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Ping backend /health
+        run: |
+          code=$(curl -sS -o /tmp/body -w "%{http_code}" \
+            --connect-timeout 15 --max-time 120 \
+            --retry 2 --retry-delay 20 --retry-connrefused \
+            https://contrared-api.onrender.com/health || echo "000")
+          echo "Status: $code"
+          head -c 500 /tmp/body || true
+          # 5xx or network-level failure → fail the job so we get a GH notification
+          if [ "$code" -ge 500 ] || [ "$code" = "000" ]; then
+            exit 1
+          fi
