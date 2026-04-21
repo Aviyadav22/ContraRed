@@ -229,14 +229,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Token blacklist init failed: %s — revocation disabled", e)
 
-    # Startup - seed default playbooks if missing (non-fatal)
+    # Startup - seed default playbooks if missing (non-fatal, time-bounded)
+    # Hard 3s cap: seeding is best-effort. On a slow/cold DB connection, the
+    # inner loop can blow startup to 5+ min (30s asyncpg timeout × 10 playbooks),
+    # leaving the container unreachable during its own wake. Playbooks missing
+    # after that window can be seeded by re-running this out-of-band.
     try:
+        import asyncio as _asyncio
         from app.services.seed_defaults import seed_default_playbooks
         from app.db.session import AsyncSessionLocal
-        async with AsyncSessionLocal() as session:
-            n = await seed_default_playbooks(session)
-            if n:
-                logger.info("Seeded %d default playbook(s)", n)
+        async def _do_seed():
+            async with AsyncSessionLocal() as session:
+                return await seed_default_playbooks(session)
+        n = await _asyncio.wait_for(_do_seed(), timeout=3.0)
+        if n:
+            logger.info("Seeded %d default playbook(s)", n)
+    except _asyncio.TimeoutError:
+        logger.warning("Default playbook seeding exceeded 3s budget — skipping to keep startup fast")
     except Exception as e:
         logger.warning("Default playbook seeding failed: %s — app continues", e)
 
