@@ -18,12 +18,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
-      - name: Ping backend /health
+      - name: Ping backend /health/db
         run: |
+          # /health/db runs SELECT 1 so the SQLAlchemy pool keeps a live connection —
+          # static /health would keep only the container warm, not the DB pool.
           code=$(curl -sS -o /tmp/body -w "%{http_code}" \
             --connect-timeout 15 --max-time 120 \
             --retry 2 --retry-delay 20 --retry-connrefused \
-            https://contrared-api.onrender.com/health || echo "000")
+            https://contrared-api.onrender.com/health/db || echo "000")
           echo "Status: $code"
           head -c 500 /tmp/body || true
           # 5xx or network-level failure → fail the job so we get a GH notification
