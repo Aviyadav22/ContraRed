@@ -1607,6 +1607,13 @@ export async function generateContract(
         clearTimeout(timeoutId);
         if (!res.ok) {
             const err = await res.json().catch(() => ({ detail: 'Generation failed' }));
+            // Consent intercept — draftContract bypasses request() for the 10-min timeout,
+            // so it needs to replicate the 403 consent_required handshake itself.
+            if (res.status === 403 && err?.error === 'consent_required' && Array.isArray(err.required_purposes)) {
+                const { requestConsent } = await import('./consentPrompt');
+                await requestConsent(err.required_purposes);
+                return generateContract(data, externalSignal);
+            }
             throw new Error(err.detail || `Server error ${res.status}`);
         }
         return res.json();
