@@ -35,6 +35,12 @@ if _is_supabase:
 # asyncpg doesn't understand the SQLAlchemy "+asyncpg" scheme suffix.
 _async_dsn = settings.DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
 
+# These keys are consumed by SQLAlchemy's asyncpg dialect before it calls
+# asyncpg.connect() — when we bypass the dialect via async_creator, we must
+# strip them or asyncpg raises TypeError on the unexpected kwarg.
+_DIALECT_ONLY_CONNECT_ARGS = {"prepared_statement_name_func"}
+_asyncpg_kwargs = {k: v for k, v in connect_args.items() if k not in _DIALECT_ONLY_CONNECT_ARGS}
+
 
 async def _connect_with_retry() -> asyncpg.Connection:
     """One-retry wrapper around asyncpg.connect to mask transient cross-cloud flakes.
@@ -47,7 +53,7 @@ async def _connect_with_retry() -> asyncpg.Connection:
     last_exc: BaseException | None = None
     for attempt in (1, 2):
         try:
-            return await asyncpg.connect(_async_dsn, **connect_args)
+            return await asyncpg.connect(_async_dsn, **_asyncpg_kwargs)
         except asyncio.CancelledError:
             raise
         except (asyncio.TimeoutError, ConnectionError, OSError,
