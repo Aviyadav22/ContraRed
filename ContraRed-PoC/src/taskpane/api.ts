@@ -173,6 +173,7 @@ interface DocumentListItem {
 
 class ContraRedAPI {
     private currentUser: User | null = null;
+    private csrfToken: string = '';
     private refreshPromise: Promise<boolean> | null = null;
     private analyzeInFlight: boolean = false;
 
@@ -180,7 +181,11 @@ class ContraRedAPI {
         this.loadUser();
     }
 
+    // The csrf_token cookie is set by contrared-api.onrender.com (different domain
+    // than the add-in), so document.cookie from this origin can't see it. Capture
+    // it from the login/refresh response body instead and keep an in-memory copy.
     private getCsrfToken(): string {
+        if (this.csrfToken) return this.csrfToken;
         const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
         return match ? decodeURIComponent(match[1]) : '';
     }
@@ -201,9 +206,16 @@ class ContraRedAPI {
                     localStorage.removeItem('contrared_user');
                 }
             }
+            const csrfStored = sessionStorage.getItem('contrared_csrf');
+            if (csrfStored) this.csrfToken = csrfStored;
         } catch {
             // No stored user — fresh session
         }
+    }
+
+    private saveCsrfToken(token: string): void {
+        this.csrfToken = token;
+        try { sessionStorage.setItem('contrared_csrf', token); } catch { /* ignore */ }
     }
 
     private saveUser(user: User): void {
@@ -296,6 +308,10 @@ class ContraRedAPI {
                         headers: { 'Content-Type': 'application/json' },
                         credentials: 'include',
                     });
+                    if (refreshResp.ok) {
+                        const refreshData = await refreshResp.clone().json().catch(() => null);
+                        if (refreshData?.csrf_token) this.saveCsrfToken(refreshData.csrf_token);
+                    }
                     return refreshResp.ok;
                 } catch {
                     this.logout();
@@ -370,6 +386,7 @@ class ContraRedAPI {
         const data = await response.json();
         // Server sets HttpOnly cookies; only store user profile locally
         this.saveUser(data.user);
+        if (data.csrf_token) this.saveCsrfToken(data.csrf_token);
         return data;
     }
 
@@ -397,9 +414,11 @@ class ContraRedAPI {
             });
         } catch { /* best-effort server logout */ }
         this.currentUser = null;
+        this.csrfToken = '';
         // AUDIT FIX L2: Clear from both storages (migration period)
         sessionStorage.removeItem('contrared_user');
         localStorage.removeItem('contrared_user');
+        sessionStorage.removeItem('contrared_csrf');
     }
 
     // ========================================================================
