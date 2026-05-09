@@ -415,9 +415,6 @@ let searchQuery = '';
 // Selection scanning state
 let isSelectionScanning = false;
 
-// Keyboard navigation state
-let currentRiskIndex = -1;
-
 // Negotiation mode state
 let negotiationMode = false;
 let negotiationSession: NegotiationSession | null = null;
@@ -492,16 +489,6 @@ Office.onReady((info) => {
     logoutBtn()?.addEventListener('click', handleLogout);
     scanBtn()?.addEventListener('click', scanDocument);
     document.getElementById('scanSelectionBtn')?.addEventListener('click', scanSelection);
-    document.getElementById('scanBtn')?.setAttribute('title', 'Scan Document (Ctrl+Shift+D)');
-    document.getElementById('scanSelectionBtn')?.setAttribute('title', 'Scan Selection (Ctrl+Alt+S)');
-
-    // Shortcuts help panel
-    document.getElementById('shortcutsHelpBtn')?.addEventListener('click', toggleShortcutsPanel);
-    document.getElementById('shortcutsPanelClose')?.addEventListener('click', () => {
-      const panel = document.getElementById('shortcutsPanel');
-      if (panel) panel.style.display = 'none';
-      shortcutsPanelTrap?.deactivate();
-    });
 
     // Template picker
     document.getElementById('templateBtn')?.addEventListener('click', toggleTemplatePicker);
@@ -554,9 +541,6 @@ Office.onReady((info) => {
 
     // Export report
     document.getElementById('exportReportBtn')?.addEventListener('click', exportReport);
-
-    // Keyboard shortcuts (Phase 8)
-    document.addEventListener('keydown', handleKeyboardShortcuts);
 
     // Negotiation mode buttons (Phase 8.4)
     document.getElementById('negotiationBtn')?.addEventListener('click', toggleNegotiationMode);
@@ -777,7 +761,6 @@ async function applyTemplate(templateId: string, pairedPlaybookId?: string): Pro
 // Focus trap instances for modal dialogs
 let playBookModalTrap: FocusTrap | null = null;
 let templatePickerTrap: FocusTrap | null = null;
-let shortcutsPanelTrap: FocusTrap | null = null;
 
 // Admin feature handlers — bind once to prevent duplicate listeners
 let adminActionsBound = false;
@@ -924,7 +907,6 @@ function handleLogout(): void {
   // Clear all scan and analysis state
   currentAIAnalysis = null;
   fixedRisks.clear();
-  currentRiskIndex = -1;
   isScanning = false;
   isSelectionScanning = false;
 
@@ -1643,134 +1625,6 @@ ${reportHtml}
   URL.revokeObjectURL(url);
 
   showNotification('Negotiation report exported', 'info');
-}
-
-// ============================================================================
-// Keyboard Shortcuts (Phase 8)
-// ============================================================================
-
-/** Navigate to a risk card by index, wrapping around at boundaries. */
-function focusRiskCard(index: number): void {
-  const cards = document.querySelectorAll('.risk-card');
-  if (cards.length === 0) return;
-
-  // Remove existing focus
-  cards.forEach(c => c.classList.remove('keyboard-focused'));
-
-  // Wrap around
-  if (index < 0) index = cards.length - 1;
-  if (index >= cards.length) index = 0;
-
-  currentRiskIndex = index;
-  const card = cards[currentRiskIndex] as HTMLElement;
-  card.classList.add('keyboard-focused');
-  card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-/** Returns the redline data for the currently focused card. */
-function getFocusedRedline(): RedlineItem | null {
-  const filtered = getFilteredRedlines();
-  if (currentRiskIndex < 0 || currentRiskIndex >= filtered.length) return null;
-  return filtered[currentRiskIndex];
-}
-
-/** Clicks a button inside the currently focused risk card. */
-function clickFocusedCardButton(selector: string): void {
-  const cards = document.querySelectorAll('.risk-card');
-  if (currentRiskIndex < 0 || currentRiskIndex >= cards.length) return;
-  const btn = cards[currentRiskIndex].querySelector(selector) as HTMLElement | null;
-  if (btn) btn.click();
-}
-
-/** Global keyboard shortcut handler. */
-function handleKeyboardShortcuts(e: KeyboardEvent): void {
-  // Don't intercept when user is typing in form fields
-  const tag = (e.target as HTMLElement)?.tagName;
-  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
-
-  // ? key → Toggle shortcuts help
-  if (e.key === '?') {
-    e.preventDefault();
-    toggleShortcutsPanel();
-    return;
-  }
-
-  // Ctrl+Alt+S → Scan Selection (changed from Ctrl+Shift+S to avoid Save As conflict)
-  if (e.ctrlKey && e.altKey && (e.key === 'S' || e.key === 's')) {
-    e.preventDefault();
-    scanSelection();
-    return;
-  }
-
-  // Ctrl+Shift+D → Scan Document
-  if (e.ctrlKey && e.shiftKey && (e.key === 'D' || e.key === 'd')) {
-    e.preventDefault();
-    scanDocument();
-    return;
-  }
-
-  // Ctrl+Shift+N → Toggle Negotiation Mode
-  if (e.ctrlKey && e.shiftKey && (e.key === 'N' || e.key === 'n')) {
-    e.preventDefault();
-    toggleNegotiationMode();
-    return;
-  }
-
-  // Alt+ArrowUp → Previous risk card
-  if (e.altKey && e.key === 'ArrowUp') {
-    e.preventDefault();
-    focusRiskCard(currentRiskIndex - 1);
-    return;
-  }
-
-  // Alt+ArrowDown → Next risk card
-  if (e.altKey && e.key === 'ArrowDown') {
-    e.preventDefault();
-    focusRiskCard(currentRiskIndex + 1);
-    return;
-  }
-
-  // Ctrl+Shift+H → Highlight focused risk (changed from Alt+H to avoid Word ribbon conflict)
-  if (e.ctrlKey && e.shiftKey && (e.key === 'H' || e.key === 'h')) {
-    e.preventDefault();
-    clickFocusedCardButton('.highlight-btn');
-    return;
-  }
-
-  // Ctrl+Shift+G → Generate fix for focused risk (changed from Alt+G to avoid Word ribbon conflict)
-  if (e.ctrlKey && e.shiftKey && (e.key === 'G' || e.key === 'g')) {
-    e.preventDefault();
-    clickFocusedCardButton('.generate-fix-btn');
-    return;
-  }
-
-  // Ctrl+Alt+A → Apply fix for focused risk (changed from Ctrl+Shift+A to avoid All Caps conflict)
-  if (e.ctrlKey && e.altKey && (e.key === 'A' || e.key === 'a')) {
-    e.preventDefault();
-    clickFocusedCardButton('.apply-btn');
-    return;
-  }
-
-  // Ctrl+Shift+R → Research focused risk (changed from Alt+R to avoid Word ribbon conflict)
-  if (e.ctrlKey && e.shiftKey && (e.key === 'R' || e.key === 'r')) {
-    e.preventDefault();
-    clickFocusedCardButton('.research-btn');
-    return;
-  }
-}
-
-function toggleShortcutsPanel(): void {
-  const panel = document.getElementById('shortcutsPanel');
-  if (!panel) return;
-  const isVisible = panel.style.display !== 'none' && panel.style.display !== '';
-  if (isVisible) {
-    panel.style.display = 'none';
-    shortcutsPanelTrap?.deactivate();
-  } else {
-    panel.style.display = 'flex';
-    shortcutsPanelTrap = new FocusTrap(panel, () => { panel.style.display = 'none'; });
-    shortcutsPanelTrap.activate();
-  }
 }
 
 /**
