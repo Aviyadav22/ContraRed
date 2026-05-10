@@ -137,7 +137,10 @@ export default function App() {
             <Route path="/marketplace" element={<ProtectedRoute><Marketplace /></ProtectedRoute>} />
 
             {/* Admin-only routes */}
-            <Route path="/playbooks/:id" element={<AdminRoute><PlaybookEditor /></AdminRoute>} />
+            {/* Playbook editor is accessible to any authenticated user — the backend
+                enforces ownership via _get_playbook_or_403 for every mutation, and the
+                editor's own UI shows view-only state for non-owned playbooks. */}
+            <Route path="/playbooks/:id" element={<ProtectedRoute><PlaybookEditor /></ProtectedRoute>} />
             <Route path="/analytics" element={<AdminRoute><Analytics /></AdminRoute>} />
             <Route path="/billing" element={<AdminRoute><Billing /></AdminRoute>} />
             <Route path="/team" element={<AdminRoute><Team /></AdminRoute>} />
