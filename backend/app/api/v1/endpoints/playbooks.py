@@ -21,6 +21,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.services.playbook_cache import invalidate_playbook_cache
 from app.services.rule_engine import _safe_compile_regex
+from app.services.clause_taxonomy import snap_to_clause_type
 from app.models.playbook import (
     Playbook, PlaybookRule, PlaybookCategory, RiskLevel,
     PlaybookRuleTier, PlaybookCondition, PlaybookRuleOverride,
@@ -28,8 +29,8 @@ from app.models.playbook import (
     PlaybookMarketplace, PlaybookRating,
 )
 from app.api.v1.endpoints.auth import get_current_user, limiter
-from app.api.dependencies import require_permission
-from app.api.v1.endpoints.billing import require_tier
+# Playbook ops are gated by ownership via _get_playbook_or_403, not by role —
+# any authenticated user can create + manage their own playbooks.
 from app.models.audit_log import log_audit_event
 from app.services.playbook_versioning import playbook_versioning_service
 
@@ -108,7 +109,9 @@ class PlaybookResponse(BaseModel):
     is_default: bool
     version: int
     rules_count: int = 0
-    
+    # Whether the requesting user owns this playbook (drives Edit/Delete UI).
+    is_owner: bool = False
+
     class Config:
         from_attributes = True
 
@@ -124,6 +127,12 @@ class RuleCreate(BaseModel):
     suggested_language: Optional[str] = Field(default=None, max_length=5000)
     # P2 #29: AI-primary detection fields
     detection_mode: str = "keywords_only"
+
+    @field_validator("clause_type")
+    @classmethod
+    def normalize_clause_type(cls, v: str) -> str:
+        # Phase C1 — snap free strings to canonical taxonomy
+        return snap_to_clause_type(v).value
 
     @field_validator("detection_mode")
     @classmethod
@@ -150,6 +159,14 @@ class RuleUpdate(BaseModel):
     suggested_language: Optional[str] = None
     # P2 #29: AI-primary detection fields
     detection_mode: Optional[str] = None
+
+    @field_validator("clause_type")
+    @classmethod
+    def normalize_clause_type(cls, v: Optional[str]) -> Optional[str]:
+        # Phase C1 — snap free strings to canonical taxonomy
+        if v is None:
+            return None
+        return snap_to_clause_type(v).value
 
     @field_validator("detection_mode")
     @classmethod
@@ -248,6 +265,7 @@ async def list_playbooks(
                 is_default=p.is_default,
                 version=p.version,
                 rules_count=len(p.rules_list) if p.rules_list else 0,
+                is_owner=str(p.created_by) == str(current_user.id),
             )
             for p in playbooks
         ],
@@ -262,11 +280,11 @@ async def list_playbooks(
 async def create_playbook(
     request: Request,
     playbook_data: PlaybookCreate,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-    _tier=Depends(require_tier("starter")),
 ):
-    """Create a new playbook. Requires ADMIN role."""
+    """Create a new playbook. Open to any authenticated user — playbooks are
+    scoped to the creator and their organization (see _get_playbook_or_403)."""
     
     try:
         category = PlaybookCategory(playbook_data.category)
@@ -301,75 +319,7 @@ async def create_playbook(
         is_default=playbook.is_default,
         version=playbook.version,
         rules_count=0,
-    )
-
-
-# ============================================================================
-# Playbook Templates (Phase 5 — pre-built templates)
-# ============================================================================
-
-class TemplateListItem(BaseModel):
-    id: str
-    name: str
-    description: str
-    category: str
-    jurisdiction: str
-    rule_count: int
-
-
-@router.get("/templates/browse", response_model=List[TemplateListItem])
-async def browse_templates(
-    category: Optional[str] = None,
-    jurisdiction: Optional[str] = None,
-    current_user: User = Depends(get_current_user),
-):
-    """List available pre-built playbook templates."""
-    from app.services.playbook_templates import list_templates, get_templates_by_category, get_templates_by_jurisdiction
-
-    if category:
-        templates = get_templates_by_category(category)
-    elif jurisdiction:
-        templates = get_templates_by_jurisdiction(jurisdiction)
-    else:
-        templates = list_templates()
-
-    return [
-        TemplateListItem(
-            id=t.id, name=t.name, description=t.description,
-            category=t.category, jurisdiction=t.jurisdiction,
-            rule_count=len(t.rules),
-        )
-        for t in templates
-    ]
-
-
-@router.post("/templates/{template_id}/create", response_model=PlaybookResponse, status_code=status.HTTP_201_CREATED)
-async def create_from_template(
-    template_id: str,
-    name: Optional[str] = None,
-    current_user: User = Depends(require_permission("playbook.admin")),
-    db: AsyncSession = Depends(get_db),
-):
-    """Create a playbook from a pre-built template."""
-    from app.services.playbook_templates import create_playbook_from_template
-
-    result = await create_playbook_from_template(
-        template_id=template_id,
-        org_id=current_user.organization_id,
-        user_id=current_user.id,
-        db=db,
-        custom_name=name,
-    )
-    await db.commit()
-    return PlaybookResponse(
-        id=result["playbook_id"],
-        name=name or template_id,
-        description=f"Created from template: {template_id}",
-        category="custom",
-        is_public=False,
-        created_by=str(current_user.id),
-        version=1,
-        rules_count=result["rule_count"],
+        is_owner=True,
     )
 
 
@@ -606,6 +556,7 @@ async def fork_playbook(
         id=str(new_pb.id), name=new_pb.name, description=new_pb.description,
         category=new_pb.category.value, is_public=new_pb.is_public,
         is_default=new_pb.is_default, version=new_pb.version, rules_count=len(source.rules_list or []),
+        is_owner=True,
     )
 
 
@@ -773,7 +724,7 @@ async def update_playbook(
     request: Request,
     playbook_id: UUID,
     update_data: PlaybookUpdate,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Update playbook metadata. Requires ADMIN role."""
@@ -826,6 +777,7 @@ async def update_playbook(
         is_default=playbook.is_default,
         version=playbook.version,
         rules_count=len(playbook.rules_list) if playbook.rules_list else 0,
+        is_owner=str(playbook.created_by) == str(current_user.id),
     )
 
 
@@ -834,7 +786,7 @@ async def update_playbook(
 async def delete_playbook(
     request: Request,
     playbook_id: UUID,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a playbook. Requires ADMIN role."""
@@ -854,7 +806,7 @@ async def delete_playbook(
 @router.post("/{playbook_id}/publish", response_model=PlaybookResponse)
 async def toggle_publish(
     playbook_id: UUID,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Toggle playbook public/private status. Requires ADMIN role."""
@@ -891,6 +843,7 @@ async def toggle_publish(
         is_default=playbook.is_default,
         version=playbook.version,
         rules_count=len(playbook.rules_list) if playbook.rules_list else 0,
+        is_owner=str(playbook.created_by) == str(current_user.id),
     )
 
 
@@ -904,7 +857,7 @@ async def add_rule(
     request: Request,
     playbook_id: UUID,
     rule_data: RuleCreate,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Add a rule to a playbook. Requires ADMIN role."""
@@ -989,7 +942,7 @@ async def update_rule(
     playbook_id: UUID,
     rule_id: UUID,
     update_data: RuleUpdate,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Update a rule in a playbook. Requires ADMIN role."""
@@ -1081,7 +1034,7 @@ async def delete_rule(
     request: Request,
     playbook_id: UUID,
     rule_id: UUID,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a rule from a playbook. Requires ADMIN role."""
@@ -1118,7 +1071,7 @@ async def delete_rule(
 async def reorder_rules(
     playbook_id: UUID,
     reorder_data: ReorderRequest,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Reorder rules within a playbook. Requires ADMIN role."""
@@ -1240,7 +1193,7 @@ async def upsert_tiers(
     playbook_id: UUID,
     rule_id: UUID,
     tiers_data: List[TierCreate],
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Create or replace all tiers for a rule (bulk upsert). Requires ADMIN role."""
@@ -1386,7 +1339,7 @@ async def list_conditions(
 async def create_condition(
     playbook_id: UUID,
     data: ConditionCreate,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new condition for a playbook."""
@@ -1418,7 +1371,7 @@ async def create_condition(
 async def delete_condition(
     playbook_id: UUID,
     condition_id: UUID,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a condition and its overrides."""
@@ -1442,7 +1395,7 @@ async def add_override(
     playbook_id: UUID,
     condition_id: UUID,
     data: OverrideCreate,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Add a rule override to a condition."""
@@ -1492,7 +1445,7 @@ async def delete_override(
     playbook_id: UUID,
     condition_id: UUID,
     override_id: UUID,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a rule override."""
@@ -1574,7 +1527,7 @@ async def list_dependencies(
 async def create_dependency(
     playbook_id: UUID,
     data: DependencyCreate,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a cross-clause dependency."""
@@ -1613,7 +1566,7 @@ async def create_dependency(
 async def delete_dependency(
     playbook_id: UUID,
     dep_id: UUID,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a dependency."""
@@ -1687,7 +1640,7 @@ async def list_versions(
 async def create_version_snapshot(
     playbook_id: UUID,
     change_summary: str = Query("Manual snapshot"),
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Create a version snapshot of the current playbook state."""
@@ -1745,7 +1698,7 @@ async def get_version_detail(
 async def rollback_to_version(
     playbook_id: UUID,
     version_id: UUID,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Rollback a playbook to a previous version."""
@@ -1767,7 +1720,7 @@ async def rollback_to_version(
 async def publish_to_marketplace(
     playbook_id: UUID,
     data: MarketplacePublishRequest,
-    current_user: User = Depends(require_permission("playbook.admin")),
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Publish a playbook to the marketplace."""

@@ -208,6 +208,32 @@ export function RiskCard({
 
                         {(fixState === 'generated' || fixState === 'applied') && generatedFix && (
                             <>
+                                {/* Phase C2 — fix provenance badge */}
+                                {generatedFix.fix_source && generatedFix.fix_source !== 'ai_generated' && (
+                                    <div style={{
+                                        fontSize: 11,
+                                        fontWeight: 600,
+                                        padding: '2px 8px',
+                                        borderRadius: 9999,
+                                        display: 'inline-block',
+                                        marginBottom: 4,
+                                        backgroundColor: generatedFix.fix_source === 'clause_library'
+                                            ? '#DBEAFE'
+                                            : '#FEF3C7',
+                                        color: generatedFix.fix_source === 'clause_library'
+                                            ? '#1E40AF'
+                                            : '#92400E',
+                                    }} title={
+                                        generatedFix.fix_source === 'clause_library'
+                                            ? 'Verbatim approved language from your organization\'s clause library'
+                                            : 'AI adapted your clause library\'s reference language'
+                                    }>
+                                        {generatedFix.fix_source === 'clause_library'
+                                            ? 'From your library'
+                                            : 'Adapted from library'}
+                                    </div>
+                                )}
+
                                 {/* Word-level diff preview */}
                                 <DiffPreview
                                     original={risk.clause_text}

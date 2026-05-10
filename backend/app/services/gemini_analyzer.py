@@ -25,7 +25,6 @@ from app.services.prompt_templates import (
     render_fix_prompt,
     render_clause_generation_prompt,
     render_research_prompt,
-    LEGACY_PROMPT,
 )
 from app.services.prompt_sanitizer import sanitize_for_prompt, validate_contract_length
 
@@ -298,9 +297,6 @@ async def _rate_limited_call(coro_factory, retries: int = _RETRY_MAX_ATTEMPTS):
                 await asyncio.sleep(delay)
             else:
                 raise  # Non-rate-limit errors are not retried
-
-# Legacy prompt kept as fallback — new code uses prompt_templates.py
-CONTRARED_SYSTEM_PROMPT = LEGACY_PROMPT
 
 
 @dataclass

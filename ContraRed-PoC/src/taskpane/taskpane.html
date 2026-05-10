@@ -1695,8 +1695,10 @@
         <!-- Header -->
         <header class="header" style="margin-bottom: var(--space-3); padding-bottom: var(--space-2);">
             <span style="font-size: 15px; font-weight: 700; letter-spacing: -0.3px; color: var(--text-primary);">Contra<span style="color: #C0392B;">Red</span></span>
-            <div style="display: flex; align-items: center; gap: 6px;">
-                <a href="https://contrared.neetiq.in" target="_blank" class="btn btn-ghost btn-sm" style="text-decoration: none; font-size: 11px; padding: 4px 10px;" aria-label="Open ContraRed Dashboard">Dashboard</a>
+            <div style="display: flex; align-items: center; gap: 4px;">
+                <a href="https://contrared.neetiq.in/playbooks" target="_blank" rel="noopener" class="btn btn-ghost btn-sm" style="text-decoration: none; font-size: 11px; padding: 4px 8px;" aria-label="Open Playbooks in dashboard">Playbooks</a>
+                <a href="https://contrared.neetiq.in/clause-library" target="_blank" rel="noopener" class="btn btn-ghost btn-sm" style="text-decoration: none; font-size: 11px; padding: 4px 8px;" aria-label="Open Clause Library in dashboard">Clauses</a>
+                <a href="https://contrared.neetiq.in" target="_blank" rel="noopener" class="btn btn-ghost btn-sm" style="text-decoration: none; font-size: 11px; padding: 4px 8px;" aria-label="Open ContraRed Dashboard">Dashboard</a>
             </div>
         </header>
 
@@ -1802,7 +1804,7 @@
 
             <!-- Scan Section -->
             <section id="scanSection" class="section">
-                <!-- Playbook Selector + Template Icon -->
+                <!-- Playbook Selector + Template Icon + Create Link -->
                 <div class="form-group" style="margin-bottom: 12px;">
                     <label class="form-label" for="playbookSelect">Playbook</label>
                     <div style="display: flex; gap: 6px; align-items: center;">
@@ -1815,6 +1817,15 @@
                                     d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                             </svg>
                         </button>
+                        <a id="createPlaybookLink" href="https://contrared.neetiq.in/playbooks" target="_blank" rel="noopener"
+                           class="btn-icon" title="Create or manage playbooks in the dashboard"
+                           aria-label="Create or manage playbooks in the dashboard"
+                           style="text-decoration: none; display: inline-flex; align-items: center; justify-content: center;">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" width="15" height="15">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                    d="M12 4v16m8-8H4" />
+                            </svg>
+                        </a>
                     </div>
                 </div>
 
@@ -1853,6 +1864,56 @@
                         </optgroup>
                     </select>
                 </div>
+
+                <!-- Negotiation Context (Phase 6) — collapsible -->
+                <details id="negotiationContext" style="margin-bottom: 12px; border: 1px solid var(--border, #e8e5e0); border-radius: 6px; padding: 8px 10px;">
+                    <summary style="cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text-secondary, #555);" aria-label="Toggle negotiation tier and deal context">
+                        Negotiation context <span id="negotiationContextDot" style="display:none;color:var(--accent,#3b82f6);">•</span>
+                    </summary>
+                    <div style="display: flex; flex-direction: column; gap: 8px; margin-top: 8px;">
+                        <div class="form-group" style="margin: 0;">
+                            <label class="form-label" for="tierPreferenceSelect" title="Tier 1 (Ideal) uses the rule's primary position; lower tiers loosen the stance.">
+                                Negotiation Tier
+                            </label>
+                            <select id="tierPreferenceSelect" class="form-input" style="margin: 0;">
+                                <option value="ideal">Ideal — primary position</option>
+                                <option value="acceptable">Acceptable — fallback position</option>
+                                <option value="walk_away">Walk-away — minimum acceptable</option>
+                                <option value="escalate">Escalate — flag for senior review</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin: 0;">
+                            <label class="form-label" for="counterpartyTypeInput" title="e.g. fortune_500, startup, government — drives PlaybookCondition matching.">
+                                Counterparty Type
+                            </label>
+                            <input id="counterpartyTypeInput" type="text" class="form-input" style="margin: 0;" placeholder="e.g. fortune_500" maxlength="64" />
+                        </div>
+                        <div class="form-group" style="margin: 0;">
+                            <label class="form-label" for="dealSizeInput" title="Total deal value in USD — drives numeric conditions.">
+                                Deal Size (USD)
+                            </label>
+                            <input id="dealSizeInput" type="number" class="form-input" style="margin: 0;" placeholder="e.g. 250000" min="0" />
+                        </div>
+                        <div class="form-group" style="margin: 0;">
+                            <label class="form-label" for="contractSideSelect" title="Which side of the contract you're on.">
+                                Contract Side
+                            </label>
+                            <select id="contractSideSelect" class="form-input" style="margin: 0;">
+                                <option value="">— not set —</option>
+                                <option value="vendor">Vendor (we provide)</option>
+                                <option value="customer">Customer (we receive)</option>
+                            </select>
+                        </div>
+                        <div class="form-group" style="margin: 0;">
+                            <label class="form-label" title="Jurisdiction-specific compliance overlays applied on top of the playbook.">
+                                Compliance Overlays
+                            </label>
+                            <div id="complianceLayersList" style="display: flex; flex-wrap: wrap; gap: 6px; min-height: 22px; font-size: 12px; color: var(--text-muted, #666);">
+                                <span class="compliance-loading" style="font-style: italic;">Loading…</span>
+                            </div>
+                        </div>
+                    </div>
+                </details>
 
                 <!-- Scan Button (full width) -->
                 <div style="margin-bottom: 8px;">

@@ -97,6 +97,23 @@ class AnalyzeRequest(BaseModel):
     compliance_layers: List[str] = Field(default_factory=list, description="Compliance layer codes to activate, e.g. ['dpdp']")
     jurisdiction: Optional[str] = Field(default=None, description="Jurisdiction code override, e.g. 'IN', 'CA-US'. If omitted, auto-detected from contract text.")
     paragraphs: Optional[List[ParagraphData]] = Field(default=None, description="Paragraph-indexed text from Word Add-in for precise targeting. When provided, enables paragraph_index in response.")
+    # Phase C3 — Phase 6 wiring: negotiation tiers + conditional logic
+    tier_preference: Optional[Literal["ideal", "acceptable", "walk_away", "escalate"]] = Field(
+        default="ideal",
+        description="Which negotiation tier the AI should adopt for rule positions. Default 'ideal' uses primary_position; lower tiers loosen the stance.",
+    )
+    counterparty_type: Optional[str] = Field(
+        default=None, max_length=64,
+        description="Counterparty classification (e.g. 'fortune_500', 'startup'). Triggers PlaybookCondition matches.",
+    )
+    deal_size: Optional[float] = Field(
+        default=None, ge=0,
+        description="Total deal value in USD. Triggers PlaybookCondition matches with numeric thresholds.",
+    )
+    contract_side: Optional[Literal["vendor", "customer"]] = Field(
+        default=None,
+        description="Which side of the contract the user is on. Triggers PlaybookCondition matches.",
+    )
 
 
 class RedlineItem(BaseModel):
@@ -379,6 +396,66 @@ async def analyze_document(
     if not body.party_side and playbook and hasattr(playbook, 'party_side') and playbook.party_side:
         effective_party_side = playbook.party_side
 
+    # Phase C3 — pre-load Phase 6 data so the pipeline stays DB-agnostic
+    deal_context = None
+    playbook_conditions = None
+    playbook_dependencies = None
+    rule_tiers_by_rule = None
+    if playbook is not None:
+        try:
+            from app.services.playbook_conditions_engine import DealContext
+            from app.models.playbook import (
+                PlaybookCondition, PlaybookRuleOverride,
+                PlaybookRuleDependency, PlaybookRuleTier,
+            )
+            from sqlalchemy.orm import selectinload as _selectinload
+
+            deal_context = DealContext(
+                counterparty_type=body.counterparty_type,
+                deal_size=float(body.deal_size) if body.deal_size is not None else None,
+                jurisdiction=body.jurisdiction,
+                contract_side=body.contract_side,
+            )
+
+            cond_q = (
+                select(PlaybookCondition)
+                .where(
+                    PlaybookCondition.playbook_id == playbook.id,
+                    PlaybookCondition.is_active == True,  # noqa: E712
+                )
+                .options(
+                    _selectinload(PlaybookCondition.rule_overrides).selectinload(
+                        PlaybookRuleOverride.rule
+                    )
+                )
+                .order_by(PlaybookCondition.priority.desc())
+            )
+            playbook_conditions = list((await db.execute(cond_q)).scalars().all())
+
+            dep_q = select(PlaybookRuleDependency).where(
+                PlaybookRuleDependency.playbook_id == playbook.id,
+                PlaybookRuleDependency.is_active == True,  # noqa: E712
+            )
+            playbook_dependencies = list((await db.execute(dep_q)).scalars().all())
+
+            tier_pref = (body.tier_preference or "ideal").lower()
+            tier_level_map = {"ideal": 1, "acceptable": 2, "walk_away": 3, "escalate": 4}
+            target_tier_level = tier_level_map.get(tier_pref, 1)
+            if target_tier_level != 1:
+                from app.models.playbook import PlaybookRule  # local import to avoid cycle
+                tier_q = select(PlaybookRuleTier).where(
+                    PlaybookRuleTier.tier_level == target_tier_level,
+                    PlaybookRuleTier.rule_id.in_(
+                        select(PlaybookRule.id).where(
+                            PlaybookRule.playbook_id == playbook.id
+                        )
+                    ),
+                )
+                tiers = list((await db.execute(tier_q)).scalars().all())
+                rule_tiers_by_rule = {str(t.rule_id): t for t in tiers}
+        except Exception as e:
+            logger.warning("Phase 6 data loading failed (non-fatal): %s", e)
+
     try:
         # Sanitize playbook name before passing to AI
         playbook_name = _sanitize_for_prompt(playbook_name, max_length=200)
@@ -404,6 +481,11 @@ async def analyze_document(
                     party_side=effective_party_side,
                     org_context=org_context,
                     jurisdiction_override=body.jurisdiction,
+                    deal_context=deal_context,
+                    playbook_conditions=playbook_conditions,
+                    playbook_dependencies=playbook_dependencies,
+                    rule_tiers_by_rule=rule_tiers_by_rule,
+                    tier_preference=body.tier_preference or "ideal",
                 ),
                 timeout=600.0,
             )
@@ -680,7 +762,8 @@ async def analyze_async(
 
     await db.commit()
 
-    # Create job
+    # Create job — carry forward the same Phase 6 + scan inputs the sync
+    # /analyze accepts so worker.py / run_analysis_inline can mirror behavior.
     job = AnalysisJob(
         job_id=str(uuid4()),
         document_id=doc_id,
@@ -690,6 +773,13 @@ async def analyze_async(
         playbook_id=body.playbook_id,
         playbook_name=playbook_name,
         playbook_rules=playbook_rules,
+        party_side=body.party_side or "buyer",
+        jurisdiction=body.jurisdiction,
+        compliance_layers=body.compliance_layers or [],
+        tier_preference=body.tier_preference or "ideal",
+        counterparty_type=body.counterparty_type,
+        deal_size=float(body.deal_size) if body.deal_size is not None else None,
+        contract_side=body.contract_side,
     )
 
     await task_queue.enqueue(job)
@@ -729,28 +819,6 @@ async def get_job_status(
         created_at=status_data.get("created_at"),
         completed_at=status_data.get("completed_at"),
         error=status_data.get("error"),
-    )
-
-
-# ============================================================================
-# AI-First Analysis Endpoint - Full Gemini Analysis
-# ============================================================================
-
-@router.post("/analyze-full", response_model=AnalysisResult)
-@limiter.limit("20/minute")
-async def analyze_full_ai(
-    request: Request,
-    body: AnalyzeRequest,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-    _quota=Depends(check_and_increment_quota),
-):
-    """AI-first analysis. Now redirects to unified /analyze endpoint.
-
-    Kept for backward compatibility — same pipeline, same response.
-    """
-    return await analyze_document(
-        request=request, body=body, current_user=current_user, db=db, _quota=_quota
     )
 
 
@@ -1018,12 +1086,14 @@ async def batch_analyze(
                 })
                 file_contents.append({"filename": filename, "text": None})
                 continue
-            with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
-                if "word/document.xml" not in zf.namelist():
-                    raise ValueError("Invalid .docx: missing word/document.xml")
-                xml_content = zf.read("word/document.xml").decode("utf-8", errors="replace")
-                text = re.sub(r"<[^>]+>", " ", xml_content)
-                text = re.sub(r"\s+", " ", text).strip()
+            # Parse the DOCX through the canonical StructureExtractor so paragraph
+            # boundaries, headings, and table cells survive — the previous regex
+            # strip silently mangled tables and footnotes (B1).
+            try:
+                contract_map = StructureExtractor().extract_from_docx(raw_bytes)
+                text = contract_map.full_text
+            except Exception as exc:
+                raise ValueError(f"Failed to parse .docx: {exc}")
 
             if len(text) < 50:
                 file_statuses.append({
@@ -1151,7 +1221,10 @@ async def _process_batch(
     """Background task to process all files in a batch concurrently."""
     semaphore = asyncio.Semaphore(1)  # Sequential to avoid Vertex AI rate limits
 
-    # Load playbook rules once if playbook_id is given
+    # Load playbook rules once if playbook_id is given. Use the canonical
+    # cached-dict shape so the AI prompt + rule engine see the same fields
+    # the sync /analyze path produces (Phase B fix — was previously a
+    # hand-rolled dict missing detection_mode, suggested_language, etc.).
     playbook_rules = None
     playbook_name = None
     if playbook_id:
@@ -1163,10 +1236,7 @@ async def _process_batch(
                 playbook = await load_playbook(db, playbook_id, current_user_id=_uid, current_user_org_id=_oid)
                 if playbook:
                     playbook_name = playbook.name
-                    playbook_rules = [
-                        {"name": r.clause_type, "description": r.primary_position, "severity": r.risk_level.value}
-                        for r in (playbook.rules_list or [])
-                    ]
+                    playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
         except Exception as e:
             logger.warning("Batch %s: failed to load playbook %s: %s", batch_id, playbook_id, e)
 
@@ -1866,6 +1936,7 @@ class GenerateFixRequest(BaseModel):
     original_text: str = Field(..., min_length=1, max_length=10000)
     recommendation: str = Field(..., min_length=1, max_length=5000)
     rule_name: str = Field(..., min_length=1, max_length=200)
+    clause_type: Optional[str] = Field(default=None, max_length=200)  # C2 — used to look up ClauseLibrary
     redline_type: Literal["violation", "missing"] = "violation"
     surrounding_context: Optional[str] = Field(default=None, max_length=10000)
     playbook_id: Optional[UUID] = None
@@ -1879,6 +1950,8 @@ class GenerateFixResponse(BaseModel):
     reasoning: str
     fix_verified: bool = True
     fix_warnings: Optional[List[str]] = None
+    # C2 — provenance: "clause_library" | "clause_library_adapted" | "ai_generated"
+    fix_source: str = "ai_generated"
 
 
 @router.post("/generate-fix", response_model=GenerateFixResponse)
@@ -1892,10 +1965,65 @@ async def generate_fix(
     """
     Generate exact replacement/insertion text for a specific risk.
 
-    Takes a risk's original text + recommendation (guidance) and produces
-    exact text that can be inserted into the Word document.
-    Uses Flash-Lite model for fast, cheap per-issue generation.
+    Phase C2 — lawyer-best path:
+    1. If the user's org has a mandatory ClauseLibrary entry for this
+       clause_type, return it verbatim (deterministic, pre-vetted language wins).
+    2. If a non-mandatory match exists, pass it to Gemini as preferred
+       reference language so the AI adapts it to the contract context.
+    3. Otherwise, fall through to the standard AI path.
     """
+    from app.services.clause_taxonomy import snap_to_clause_type
+    from app.models.playbook import ClauseLibrary
+
+    fix_source = "ai_generated"
+    library_match: Optional[ClauseLibrary] = None
+    library_clause_type: Optional[str] = None
+
+    if body.clause_type:
+        library_clause_type = snap_to_clause_type(body.clause_type).value
+        # Look up mandatory clause first; fall back to any active match
+        from sqlalchemy import select as _select  # local alias to avoid shadowing
+        ll_query = _select(ClauseLibrary).where(
+            ClauseLibrary.is_active == True,  # noqa: E712
+            ClauseLibrary.clause_type == library_clause_type,
+        )
+        if current_user.organization_id:
+            ll_query = ll_query.where(
+                (ClauseLibrary.organization_id == current_user.organization_id)
+                | (ClauseLibrary.created_by == current_user.id)
+            )
+        else:
+            ll_query = ll_query.where(ClauseLibrary.created_by == current_user.id)
+        ll_query = ll_query.order_by(ClauseLibrary.is_mandatory.desc()).limit(1)
+        result = await db.execute(ll_query)
+        library_match = result.scalar_one_or_none()
+
+    # Mandatory match — short-circuit, return verbatim approved language
+    if library_match and library_match.is_mandatory:
+        await log_audit_event(
+            db=db,
+            user=current_user,
+            action="fix_generation",
+            resource_type="clause",
+            details=json.dumps({
+                "rule_name": body.rule_name,
+                "redline_type": body.redline_type,
+                "fix_source": "clause_library",
+                "clause_type": library_clause_type,
+                "library_id": str(library_match.id),
+            }),
+        )
+        await db.commit()
+        return GenerateFixResponse(
+            fix_text=library_match.approved_text,
+            fix_edits=[{"find": body.original_text, "replace": library_match.approved_text}]
+            if body.redline_type == "violation" else None,
+            reasoning=f"Used mandatory approved language from your clause library: {library_match.name}.",
+            fix_verified=True,
+            fix_warnings=None,
+            fix_source="clause_library",
+        )
+
     try:
         # Load playbook rules if provided (with authorization check)
         playbook_rules = None
@@ -1909,11 +2037,23 @@ async def generate_fix(
             if playbook:
                 playbook_rules = get_cached_rules_dicts(playbook)
 
+        # Non-mandatory library match — append to recommendation as preferred
+        # reference language so the AI adapts it to the contract context.
+        effective_recommendation = body.recommendation
+        if library_match and not library_match.is_mandatory:
+            effective_recommendation = (
+                f"{body.recommendation}\n\n"
+                f"PREFERRED REFERENCE LANGUAGE (from organization's clause library — "
+                f"adapt as needed to fit the contract's existing terminology):\n"
+                f"{library_match.approved_text}"
+            )
+            fix_source = "clause_library_adapted"
+
         try:
             generated = await asyncio.wait_for(
                 analysis_pipeline.generate_fix(
                     original_text=body.original_text,
-                    recommendation=body.recommendation,
+                    recommendation=effective_recommendation,
                     rule_name=body.rule_name,
                     redline_type=body.redline_type,
                     surrounding_context=body.surrounding_context or "",
@@ -1948,7 +2088,13 @@ async def generate_fix(
             user=current_user,
             action="fix_generation",
             resource_type="clause",
-            details=json.dumps({"rule_name": body.rule_name, "redline_type": body.redline_type, "fix_verified": fix_verified}),
+            details=json.dumps({
+                "rule_name": body.rule_name,
+                "redline_type": body.redline_type,
+                "fix_verified": fix_verified,
+                "fix_source": fix_source,
+                "clause_type": library_clause_type,
+            }),
         )
         await db.commit()
 
@@ -1958,6 +2104,7 @@ async def generate_fix(
             reasoning=generated.get("reasoning", ""),
             fix_verified=fix_verified,
             fix_warnings=fix_warnings if fix_warnings else None,
+            fix_source=fix_source,
         )
 
     except AIServiceUnavailable as e:

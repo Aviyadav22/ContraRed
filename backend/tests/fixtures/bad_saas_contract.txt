@@ -1,0 +1,97 @@
+SOFTWARE-AS-A-SERVICE AGREEMENT
+
+This Software-as-a-Service Agreement ("Agreement") is entered into between Acme
+SaaS Pvt. Ltd., a company incorporated under the laws of the State of Delaware
+("Provider"), and the customer identified in the Order Form ("Customer"). This
+Agreement is effective on the date signed by both parties.
+
+1. SERVICES
+
+Provider grants Customer a non-exclusive, non-transferable license to access
+the cloud-based software services (the "Services") described in the Order Form,
+solely for Customer's internal business operations. All Customer Data and any
+intellectual property created during use of the Services shall be assigned to
+Provider on creation, including derivative works.
+
+2. TERM AND TERMINATION
+
+The initial term is twelve (12) months, commencing on the Effective Date. This
+Agreement shall automatically renew for successive one (1) year periods unless
+either party provides written notice of non-renewal at least ninety (90) days
+prior to the end of the then-current term. The Provider may terminate this
+Agreement at any time without cause and without notice. Customer may terminate
+only for material breach by Provider that remains uncured after thirty (30) days
+written notice.
+
+3. FEES AND PAYMENT
+
+Customer shall pay all Fees as set forth in the Order Form. Invoices are due
+upon receipt. Any unpaid amounts shall accrue interest at the rate of three
+percent (3%) per month or the maximum rate permitted by law, whichever is
+higher. Customer waives any right to dispute invoices.
+
+4. LIABILITY
+
+EXCEPT FOR CUSTOMER'S PAYMENT OBLIGATIONS, EACH PARTY'S LIABILITY UNDER THIS
+AGREEMENT IS UNLIMITED. Provider shall not be liable for indirect, incidental,
+or consequential damages, but Customer shall remain liable without limit of
+liability for any breach. Customer shall indemnify and hold harmless Provider,
+its affiliates, officers, directors, and employees from any and all claims,
+losses, damages, costs, and expenses (including reasonable attorneys' fees)
+arising out of or related to Customer's use of the Services, including without
+limitation claims by third parties.
+
+5. INTELLECTUAL PROPERTY
+
+Customer hereby assigns to Provider all right, title, and interest in any
+feedback, suggestions, ideas, or improvements relating to the Services,
+including all intellectual property rights therein, in perpetuity and
+worldwide, without compensation.
+
+6. CONFIDENTIALITY
+
+Each party agrees to keep Confidential Information strictly confidential in
+perpetuity. The receiving party shall not disclose Confidential Information to
+any third party under any circumstances, with no exceptions for legally
+compelled disclosures or court orders.
+
+7. NON-COMPETE
+
+During the term of this Agreement and for a period of three (3) years after
+termination, Customer shall not, directly or indirectly, engage in any business
+that competes with Provider, nor solicit any of Provider's employees or
+contractors.
+
+8. GOVERNING LAW AND JURISDICTION
+
+This Agreement shall be governed by and construed in accordance with the laws
+of the Cayman Islands, without regard to its conflict of laws principles. Any
+dispute arising under this Agreement shall be subject to the exclusive
+jurisdiction of the courts of the Cayman Islands.
+
+9. DATA AND SECURITY
+
+Provider may use, process, and disclose Customer Data for any purpose at its
+sole discretion. Provider makes no representation regarding security standards,
+breach notification, or data protection compliance.
+
+10. ASSIGNMENT
+
+Customer shall not assign this Agreement without Provider's prior written
+consent. Provider may assign this Agreement at any time to any third party
+without notice to Customer.
+
+11. ENTIRE AGREEMENT
+
+This Agreement constitutes the entire agreement between the parties and
+supersedes all prior agreements. No modifications are valid unless in writing
+signed by both parties.
+
+IN WITNESS WHEREOF, the parties have executed this Agreement as of the
+Effective Date.
+
+PROVIDER: Acme SaaS Pvt. Ltd.
+By: ____________________________
+
+CUSTOMER:
+By: ____________________________

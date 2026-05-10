@@ -73,6 +73,16 @@ export default function RedlinePage() {
                     onPartySideChange={rl.setPartySide}
                     jurisdiction={rl.jurisdiction}
                     onJurisdictionChange={rl.setJurisdiction}
+                    tierPreference={rl.tierPreference}
+                    onTierPreferenceChange={rl.setTierPreference}
+                    counterpartyType={rl.counterpartyType}
+                    onCounterpartyTypeChange={rl.setCounterpartyType}
+                    dealSize={rl.dealSize}
+                    onDealSizeChange={rl.setDealSize}
+                    contractSide={rl.contractSide}
+                    onContractSideChange={rl.setContractSide}
+                    complianceLayers={rl.complianceLayers}
+                    onComplianceLayersChange={rl.setComplianceLayers}
                     charCount={rl.contractText.length}
                     isAnalyzing={rl.phase === 'analyzing'}
                     canAnalyze={canAnalyze}

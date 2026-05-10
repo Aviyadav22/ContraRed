@@ -708,10 +708,23 @@ class RuleEngine:
             }
             risk_level = risk_map.get(rule.risk_level.value.lower(), RiskLevel.YELLOW)
 
-            # Get suggested language
-            suggested_text = None
-            if rule.suggested_language:
-                suggested_text = rule.suggested_language.get("text")
+            # Suggested language for this rule. Lawyer-best path (Phase B9):
+            # prefer the typed `primary_position` column (always populated for
+            # both seeded and dashboard-authored rules); only fall back to the
+            # legacy `suggested_language` JSONB for rules edited via the older
+            # dashboard form that wrote {"text": str}. The `{preferred,fallback}`
+            # shape from seeds is read via primary_position/fallback_position
+            # directly.
+            suggested_text: Optional[str] = None
+            if rule.primary_position:
+                suggested_text = rule.primary_position
+            elif rule.suggested_language:
+                # Legacy shapes: {"text": "..."} (dashboard) or
+                # {"preferred": "...", "fallback": "..."} (seeds).
+                suggested_text = (
+                    rule.suggested_language.get("text")
+                    or rule.suggested_language.get("preferred")
+                )
 
             # Phase 4: Create SmartRule with escalation/de-escalation from detection_patterns
             negative_pats = []

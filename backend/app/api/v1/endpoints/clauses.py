@@ -7,7 +7,7 @@ import logging
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select, or_
 
@@ -15,6 +15,7 @@ from app.db.session import get_db
 from app.models.user import User
 from app.models.playbook import ClauseLibrary
 from app.api.v1.endpoints.auth import get_current_user
+from app.services.clause_taxonomy import snap_to_clause_type
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +32,24 @@ class ClauseCreate(BaseModel):
     approved_text: str = Field(..., min_length=1, max_length=10000)
     is_mandatory: bool = False
 
+    @field_validator("clause_type")
+    @classmethod
+    def normalize_clause_type(cls, v: str) -> str:
+        return snap_to_clause_type(v).value
+
 
 class ClauseUpdate(BaseModel):
     name: Optional[str] = Field(default=None, max_length=300)
     approved_text: Optional[str] = Field(default=None, max_length=10000)
     clause_type: Optional[str] = Field(default=None, max_length=200)
     is_mandatory: Optional[bool] = None
+
+    @field_validator("clause_type")
+    @classmethod
+    def normalize_clause_type(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        return snap_to_clause_type(v).value
 
 
 class ClauseResponse(BaseModel):

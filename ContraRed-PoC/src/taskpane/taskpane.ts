@@ -6,7 +6,6 @@
  */
 
 import { api, RedlineItem, AnalysisResult, ClauseAnalysisResult, NegotiationDecision, NegotiationSession, DocumentListItem } from './api';
-import Fuse from 'fuse.js';
 
 // ============================================================================
 // Utility
@@ -594,6 +593,9 @@ function showMainPanel(): void {
   // Load available playbooks
   loadPlaybooks();
 
+  // Load compliance layer overlays (e.g. DPDP)
+  loadComplianceLayers();
+
   // Restore previous scan state if available
   restoreScanState();
 
@@ -870,6 +872,56 @@ async function loadPlaybooks(): Promise<void> {
   }
 }
 
+async function loadComplianceLayers(): Promise<void> {
+  const container = document.getElementById('complianceLayersList');
+  if (!container) return;
+
+  try {
+    const layers = await api.listComplianceLayers();
+    container.innerHTML = '';
+    if (!layers.length) {
+      container.innerHTML = '<span style="font-style:italic;">None active for your org.</span>';
+      return;
+    }
+    for (const layer of layers) {
+      const id = `complianceLayer_${layer.code}`;
+      const wrapper = document.createElement('label');
+      wrapper.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border:1px solid var(--border,#e8e5e0);border-radius:9999px;background:var(--bg-elevated,#fff);font-size:11px;cursor:pointer;user-select:none;';
+      wrapper.title = `${layer.name} (${layer.rule_count} rule${layer.rule_count === 1 ? '' : 's'})`;
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.id = id;
+      cb.value = layer.code;
+      cb.dataset.complianceLayer = layer.code;
+      cb.style.margin = '0';
+      cb.addEventListener('change', () => {
+        wrapper.style.borderColor = cb.checked ? 'var(--accent,#3b82f6)' : 'var(--border,#e8e5e0)';
+        wrapper.style.background = cb.checked ? 'var(--accent-subtle,#dbeafe)' : 'var(--bg-elevated,#fff)';
+        const dot = document.getElementById('negotiationContextDot');
+        if (dot) {
+          const anyChecked = !!container.querySelector('input[type=checkbox]:checked');
+          if (anyChecked) dot.style.display = 'inline';
+        }
+      });
+      const labelText = document.createElement('span');
+      labelText.textContent = layer.name;
+      wrapper.appendChild(cb);
+      wrapper.appendChild(labelText);
+      container.appendChild(wrapper);
+    }
+  } catch (error) {
+    log.warn('Could not load compliance layers:', error);
+    container.innerHTML = '<span style="color:var(--risk-high,#92400e);">Failed to load.</span>';
+  }
+}
+
+function getSelectedComplianceLayers(): string[] {
+  const container = document.getElementById('complianceLayersList');
+  if (!container) return [];
+  const checked = container.querySelectorAll<HTMLInputElement>('input[type=checkbox]:checked');
+  return Array.from(checked).map(cb => cb.dataset.complianceLayer || cb.value).filter(Boolean);
+}
+
 // ============================================================================
 // Authentication
 // ============================================================================
@@ -959,16 +1011,17 @@ function hideLoginError(): void {
 // ============================================================================
 
 /**
- * Three-tier text search in Word document.
+ * Two-tier text search in Word document. The backend's `paragraph_index` is the
+ * authoritative anchor (B3) — call sites should resolve via paragraph_index
+ * first and only fall through here when paragraph_index is null.
  * 1. Exact match using Word API
  * 2. Normalized match (strip punctuation/whitespace)
- * 3. Fuzzy match using fuse.js
  */
 async function findTextInDocument(
   searchText: string,
   context: Word.RequestContext,
   expectedPosition?: number  // approximate paragraph index from AI analysis for position awareness
-): Promise<{ range: Word.Range | null; method: 'exact' | 'normalized' | 'fuzzy' | 'none'; confidence: number }> {
+): Promise<{ range: Word.Range | null; method: 'exact' | 'normalized' | 'none'; confidence: number }> {
   const body = context.document.body;
   const WORD_SEARCH_LIMIT = 255;
 
@@ -1075,53 +1128,8 @@ async function findTextInDocument(
     }
   }
 
-  // Tier 3: Fuzzy match using fuse.js on paragraphs
-  const paragraphs = body.paragraphs;
-  paragraphs.load('items/text');
-  await context.sync();
-
-  const paragraphData = paragraphs.items.map((p, index) => ({
-    text: p.text,
-    index,
-    paragraph: p
-  })).filter(p => p.text.trim().length > 0);
-
-  if (paragraphData.length === 0) {
-    return { range: null, method: 'none', confidence: 0 };
-  }
-
-  const fuse = new Fuse(paragraphData, {
-    keys: ['text'],
-    threshold: 0.25,  // Require 75% similarity minimum
-    distance: 1000,
-    minMatchCharLength: 15,
-    includeScore: true,
-  });
-
-  const fuzzyResults = fuse.search(searchText);
-
-  if (fuzzyResults.length > 0 && fuzzyResults[0].score !== undefined) {
-    const bestMatch = fuzzyResults[0];
-    const confidence = 1 - (bestMatch.score || 0);  // Convert score to confidence
-
-    // Reject fuzzy matches below minimum confidence to avoid highlighting wrong clauses
-    const MIN_FUZZY_CONFIDENCE = 0.6;
-    if (confidence < MIN_FUZZY_CONFIDENCE) {
-      return { range: null, method: 'none', confidence: 0 };
-    }
-
-    // Get the range of the matched paragraph
-    const matchedParagraph = paragraphData[bestMatch.refIndex];
-    if (!matchedParagraph) {
-      return { range: null, method: 'none' as const, confidence: 0 };
-    }
-    const range = matchedParagraph.paragraph.getRange();
-    range.load();
-    await context.sync();
-
-    return { range, method: 'fuzzy', confidence };
-  }
-
+  // No exact or normalized match — let the caller fall back to drift-hash
+  // search via paragraph_index (B3 — fuse.js fuzzy tier removed).
   return { range: null, method: 'none', confidence: 0 };
 }
 
@@ -1170,7 +1178,40 @@ async function scanDocument(): Promise<void> {
     const selectedPartySide = partySideSelect?.value || 'buyer';
     const jurisdictionSelect = document.getElementById('jurisdictionSelect') as HTMLSelectElement;
     const selectedJurisdiction = jurisdictionSelect?.value || 'IN';
-    const aiResult = await api.analyzeWithAI(documentText, docName, selectedPlaybookId, selectedPartySide, selectedJurisdiction, docParagraphs);
+
+    // Phase 6 — negotiation tier + deal context (optional)
+    const tierSelect = document.getElementById('tierPreferenceSelect') as HTMLSelectElement | null;
+    const selectedTier = (tierSelect?.value as 'ideal' | 'acceptable' | 'walk_away' | 'escalate' | undefined) || 'ideal';
+    const counterpartyInput = document.getElementById('counterpartyTypeInput') as HTMLInputElement | null;
+    const counterpartyType = counterpartyInput?.value.trim() || undefined;
+    const dealSizeInput = document.getElementById('dealSizeInput') as HTMLInputElement | null;
+    const dealSizeRaw = dealSizeInput?.value.trim();
+    const dealSize = dealSizeRaw ? Number(dealSizeRaw) : undefined;
+    const contractSideSelect = document.getElementById('contractSideSelect') as HTMLSelectElement | null;
+    const contractSide = (contractSideSelect?.value as 'vendor' | 'customer' | '' | undefined) || undefined;
+
+    const selectedComplianceLayers = getSelectedComplianceLayers();
+
+    // Update the Negotiation Context summary dot when any field is set
+    const ctxDot = document.getElementById('negotiationContextDot');
+    if (ctxDot) {
+      const advancedActive = selectedTier !== 'ideal' || !!counterpartyType || !!dealSize || !!contractSide || selectedComplianceLayers.length > 0;
+      ctxDot.style.display = advancedActive ? 'inline' : 'none';
+    }
+
+    const aiResult = await api.analyzeWithAI(
+      documentText,
+      docName,
+      selectedPlaybookId,
+      selectedPartySide,
+      selectedJurisdiction,
+      docParagraphs,
+      selectedTier,
+      counterpartyType,
+      Number.isFinite(dealSize) ? dealSize : undefined,
+      contractSide || undefined,
+      selectedComplianceLayers.length ? selectedComplianceLayers : undefined,
+    );
 
     currentAIAnalysis = aiResult;
     fixedRisks.clear();
@@ -1688,6 +1729,42 @@ function displayAIResults(result: AnalysisResult): void {
     return;  // Can't continue if no results section
   }
 
+  // AI-first philosophy: when the backend could not use AI, surface a loud
+  // banner so users know they're seeing the secondary rule-engine fallback,
+  // not the primary AI output. Mirrors AnalysisPanel.tsx in the dashboard.
+  const aiDown = result.ai_used === false;
+  const partialIncomplete = result.pipeline_partial === true && !aiDown;
+  const existingBanner = document.getElementById('aiStatusBanner');
+  if (existingBanner) existingBanner.remove();
+  if (aiDown || partialIncomplete) {
+    const banner = document.createElement('div');
+    banner.id = 'aiStatusBanner';
+    banner.setAttribute('role', 'alert');
+    banner.style.cssText = 'margin: 8px 0 12px; padding: 10px 12px; border-radius: 8px; background: #FEF3C7; border: 1px solid #F59E0B; color: #92400E; font-size: 12px; line-height: 1.4; display: flex; gap: 8px; align-items: flex-start;';
+    const icon = document.createElement('span');
+    icon.textContent = '⚠';
+    icon.style.cssText = 'font-size: 14px; flex-shrink: 0;';
+    const body = document.createElement('div');
+    const title = document.createElement('div');
+    title.style.cssText = 'font-weight: 700; margin-bottom: 2px;';
+    title.textContent = aiDown
+      ? 'AI analysis unavailable — showing rule-engine findings only.'
+      : 'Analysis incomplete — some pipeline stages did not finish.';
+    const detail = document.createElement('div');
+    detail.textContent = aiDown
+      ? 'Risk explanations and automatic fixes will be limited. The AI path is primary; this is the secondary fallback. Please retry.'
+      : 'Some findings may be missing. Please retry to get the full analysis.';
+    body.appendChild(title);
+    body.appendChild(detail);
+    banner.appendChild(icon);
+    banner.appendChild(body);
+    if (results.firstChild) {
+      results.insertBefore(banner, results.firstChild);
+    } else {
+      results.appendChild(banner);
+    }
+  }
+
   // Update risk counts
   if (redCount()) redCount()!.textContent = String(result.risk_summary.red || 0);
   if (yellowCount()) yellowCount()!.textContent = String(result.risk_summary.yellow || 0);
@@ -2097,8 +2174,8 @@ function createAIRedlineCard(redline: RedlineItem, _documentId: string): HTMLEle
   const highlightBtn = card.querySelector('.highlight-btn');
   highlightBtn?.addEventListener('click', async () => {
     const matchResult = await highlightAIText(redline.clause_text, redline.risk_level, redline.redline_type);
-    // Fix #17/#25: Show fuzzy match confidence indicator with percentage
-    if (matchResult.method === 'fuzzy') {
+    // Show normalized-match confidence indicator when match wasn't pixel-exact
+    if (matchResult.method === 'normalized') {
       const existingIndicator = card.querySelector('.match-confidence-indicator');
       if (!existingIndicator) {
         const pct = Math.round(matchResult.confidence * 100);
@@ -2157,6 +2234,7 @@ function createAIRedlineCard(redline: RedlineItem, _documentId: string): HTMLEle
         originalText: redline.clause_text,
         recommendation: redline.recommendation,
         ruleName: redline.rule_name,
+        clauseType: redline.clause_type,
         redlineType: redline.redline_type || 'violation',
         surroundingContext,
         playbookId: currentPlaybookId,
@@ -2173,7 +2251,17 @@ function createAIRedlineCard(redline: RedlineItem, _documentId: string): HTMLEle
 
       const fixLabel = document.createElement('div');
       fixLabel.className = 'generate-label';
-      fixLabel.textContent = 'Generated Fix:';
+      // C2 — surface fix provenance to the user
+      const sourceBadge = (() => {
+        if (result.fix_source === 'clause_library') {
+          return ' <span style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:8px;background:#DBEAFE;color:#1E40AF;margin-left:6px;" title="Verbatim approved language from your clause library">From your library</span>';
+        }
+        if (result.fix_source === 'clause_library_adapted') {
+          return ' <span style="font-size:10px;font-weight:600;padding:1px 6px;border-radius:8px;background:#FEF3C7;color:#92400E;margin-left:6px;" title="AI adapted your library\'s reference language">Adapted from library</span>';
+        }
+        return '';
+      })();
+      fixLabel.innerHTML = `Generated Fix:${sourceBadge}`;
       wrapper.appendChild(fixLabel);
 
       // Show word-level diff between original and generated fix
@@ -3151,6 +3239,7 @@ async function applyAllRedlines(): Promise<void> {
           originalText: redline.clause_text,
           recommendation: redline.recommendation,
           ruleName: redline.rule_name,
+          clauseType: redline.clause_type,
           redlineType: redline.redline_type || 'violation',
           surroundingContext,
           playbookId: currentPlaybookId,

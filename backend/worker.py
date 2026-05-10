@@ -62,8 +62,30 @@ async def process_job(job_id: str) -> None:
         await task_queue.update_job_status(job_id, JobStatus.RUNNING)
 
         # Reconstruct the job
-        from app.workers.tasks import AnalysisJob
+        from app.workers.tasks import AnalysisJob, _load_phase6_data
         job = AnalysisJob.from_dict(job_data)
+
+        # Build deal context + load Phase 6 data so the worker has parity
+        # with the sync /analyze surface.
+        from app.services.playbook_conditions_engine import DealContext
+        from app.db.session import AsyncSessionLocal
+        deal_context = DealContext(
+            counterparty_type=job.counterparty_type,
+            deal_size=job.deal_size,
+            jurisdiction=job.jurisdiction,
+            contract_side=job.contract_side,
+        )
+        playbook_conditions = None
+        playbook_dependencies = None
+        rule_tiers_by_rule = None
+        if job.playbook_id:
+            try:
+                async with AsyncSessionLocal() as db:
+                    playbook_conditions, playbook_dependencies, rule_tiers_by_rule = (
+                        await _load_phase6_data(db, job.playbook_id, job.tier_preference)
+                    )
+            except Exception as exc:
+                logger.warning("Worker: Phase 6 load failed for job %s: %s", job_id, exc)
 
         # Run the analysis pipeline
         from app.services.analysis_pipeline import analysis_pipeline
@@ -71,10 +93,17 @@ async def process_job(job_id: str) -> None:
             contract_text=job.contract_text,
             playbook_rules=job.playbook_rules,
             playbook_name=job.playbook_name,
+            party_side=job.party_side,
+            jurisdiction_override=job.jurisdiction,
+            deal_context=deal_context,
+            playbook_conditions=playbook_conditions,
+            playbook_dependencies=playbook_dependencies,
+            rule_tiers_by_rule=rule_tiers_by_rule,
+            tier_preference=job.tier_preference,
         )
 
         await task_queue.update_job_status(job_id, JobStatus.COMPLETED)
-        logger.info("Job %s completed: %d risks found", job_id, result.total_risks)
+        logger.info("Job %s completed: %d risks found", job_id, len(result.redlines))
 
     except Exception as e:
         logger.error("Job %s failed: %s", job_id, e, exc_info=True)

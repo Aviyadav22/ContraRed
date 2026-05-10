@@ -82,10 +82,8 @@ export default function Dashboard() {
     const secondaryActions = [
         {
             to: '/playbooks',
-            title: admin ? 'Manage Playbooks' : 'View Playbooks',
-            desc: admin
-                ? 'Create and edit clause detection rules.'
-                : 'Browse available clause detection playbooks.',
+            title: 'Manage Playbooks',
+            desc: 'Create and edit clause detection rules for your organization.',
             icon: <BookOpen size={18} />,
         },
         {

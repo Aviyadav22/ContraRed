@@ -3,11 +3,13 @@ Multi-Stage Analysis Pipeline - 5-stage orchestrator for AI contract analysis.
 
 Replaces the single-shot Gemini call with a structured pipeline:
 
-  Stage 1: EXTRACTION     -> ContractMap + DefinedTerms + JurisdictionHint  (deterministic, no AI)
+  Stage 1: EXTRACTION     -> ContractMap + DefinedTerms + JurisdictionDetectionResult  (deterministic, no AI)
   Stage 2: CLASSIFICATION -> ClauseInventory via rule engine + Gemini Flash-Lite  (cheap + fast)
+  Phase 6 wiring: tier swap + condition overrides + dependency effects applied between Stage 2 and 3
   Stage 3: RISK ASSESSMENT-> RawRedlines with confidence scores (Gemini Pro, high quality)
   Stage 4: VERIFICATION   -> VerifiedRedlines (hallucinations killed)  (deterministic, no AI)
   Stage 5: ENRICHMENT     -> FinalRedlines with cross-references (Gemini Flash-Lite per-redline)
+  (Stage 6 removed in Phase B5: fix generation is now on-demand via /documents/generate-fix.)
 
 Each stage is a separate async method.  The pipeline tracks timing and costs per stage.
 Graceful degradation: if a stage fails, return partial results from completed stages.
@@ -48,7 +50,11 @@ from app.services.confidence_scorer import (
 from app.services.rule_engine import RuleEngine, RuleMatch, RiskLevel
 from app.services.structure_extractor import ContractMap, StructureExtractor
 from app.services.scope_analyzer import ScopeAnalyzer, ScopeAnalysisResult, scope_analyzer
-from app.services.jurisdiction_detector import apply_jurisdiction_overrides, jurisdiction_detector
+from app.services.jurisdiction_detector import (
+    apply_jurisdiction_overrides,
+    jurisdiction_detector,
+    JurisdictionDetectionResult,
+)
 from app.services.smriti_mcp_client import smriti_client
 
 logger = logging.getLogger(__name__)
@@ -68,21 +74,11 @@ class DefinedTerm:
 
 
 @dataclass
-class JurisdictionHint:
-    """Jurisdiction information extracted from the contract."""
-    governing_law: str = ""
-    jurisdiction: str = ""
-    arbitration_seat: str = ""
-    # is_indian removed — jurisdiction is detected from governing law clause, not keywords
-    raw_text: str = ""
-
-
-@dataclass
 class ExtractionResult:
     """Stage 1 output."""
     contract_map: ContractMap
     defined_terms: List[DefinedTerm]
-    jurisdiction_hint: JurisdictionHint
+    jurisdiction_result: JurisdictionDetectionResult
     full_text: str
 
 
@@ -267,24 +263,8 @@ _DEFINED_TERM_PATTERNS = [
     ),
 ]
 
-_JURISDICTION_PATTERNS = [
-    re.compile(
-        r"(?:govern(?:ed|ing)\s+(?:by\s+)?(?:the\s+)?laws?\s+of\s+)([A-Z][A-Za-z\s,]+?)(?:\.|;|,\s+and)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:jurisdiction\s+of\s+(?:the\s+)?(?:courts?\s+(?:of|in|at)\s+)?)([A-Z][A-Za-z\s,]+?)(?:\.|;)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"(?:arbitration\s+(?:shall\s+)?(?:be\s+)?(?:held|conducted|seated)\s+(?:in|at)\s+)([A-Z][A-Za-z\s,]+?)(?:\.|;)",
-        re.IGNORECASE,
-    ),
-]
-
-# Removed: _INDIAN_JURISDICTION_MARKERS — jurisdiction detection is now
-# handled entirely by JurisdictionDetector which reads the governing law
-# clause from the contract, not keyword mentions of country names.
+# Jurisdiction detection delegated to jurisdiction_detector.detect() (Phase B2);
+# the prior _JURISDICTION_PATTERNS regexes were a parallel implementation.
 
 
 # ---------------------------------------------------------------------------
@@ -293,22 +273,10 @@ _JURISDICTION_PATTERNS = [
 
 
 def _infer_clause_type(rule_name: str) -> str:
-    """Map rule name to clause_type for display."""
-    name = rule_name.lower()
-    mapping = {
-        "liability": "liability", "indemnif": "indemnification",
-        "confiden": "confidentiality", "terminat": "termination",
-        "ip ": "intellectual_property", "intellectual": "intellectual_property",
-        "non-compete": "restrictive_covenant", "non-solicit": "restrictive_covenant",
-        "govern": "governing_law", "jurisdict": "jurisdiction",
-        "arbitrat": "dispute_resolution", "force majeure": "force_majeure",
-        "warrant": "reps_warranties", "data": "data_protection",
-        "payment": "payment", "sla": "service_level", "assign": "assignment",
-    }
-    for key, ctype in mapping.items():
-        if key in name:
-            return ctype
-    return "general"
+    """Phase C1 — taxonomy-aware mapping. Wraps snap_to_clause_type so
+    callers always get a value from the canonical ClauseType enum."""
+    from app.services.clause_taxonomy import snap_to_clause_type
+    return snap_to_clause_type(rule_name).value
 
 
 # ---------------------------------------------------------------------------
@@ -353,9 +321,19 @@ class AnalysisPipeline:
         party_side: str = "seller",
         org_context: str = "",
         jurisdiction_override: Optional[str] = None,
+        deal_context: Optional[Any] = None,           # Phase C3 — DealContext (kept Any to avoid hard import)
+        playbook_conditions: Optional[List[Any]] = None,  # Pre-loaded PlaybookCondition rows w/ rule_overrides
+        playbook_dependencies: Optional[List[Any]] = None,  # Pre-loaded PlaybookRuleDependency rows
+        rule_tiers_by_rule: Optional[Dict[str, Any]] = None,  # rule_id -> PlaybookRuleTier (selected tier)
+        tier_preference: str = "ideal",
     ) -> PipelineResult:
         """
         Run the full 5-stage pipeline.
+
+        Phase C3: ``deal_context`` and the pre-loaded Phase-6 rows let the
+        pipeline apply conditional overrides, cross-rule dependencies, and
+        negotiation-tier position swaps without owning a DB session. The
+        endpoint is responsible for loading and passing them in.
 
         Graceful degradation: if any stage fails, returns partial results
         from completed stages with `partial=True`.
@@ -398,7 +376,9 @@ class AnalysisPipeline:
         try:
             s1_start = time.monotonic()
             loop = asyncio.get_running_loop()
-            extraction = await loop.run_in_executor(None, self._stage1_extraction, contract_text)
+            extraction = await loop.run_in_executor(
+                None, self._stage1_extraction, contract_text, jurisdiction_override
+            )
             s1_metrics = StageMetrics(
                 stage_name="extraction",
                 duration_seconds=time.monotonic() - s1_start,
@@ -474,8 +454,8 @@ class AnalysisPipeline:
                     classification.rule_matches
                 )
 
-                # Apply jurisdiction overrides to rule matches
-                jur_result = jurisdiction_detector.detect(contract_text, user_override=jurisdiction_override)
+                # Apply jurisdiction overrides using the result from Stage 1 (B2)
+                jur_result = extraction.jurisdiction_result
                 if jur_result.detected_jurisdiction:
                     detected_jurisdiction = jur_result.detected_jurisdiction
                     classification.rule_matches = apply_jurisdiction_overrides(
@@ -484,6 +464,22 @@ class AnalysisPipeline:
                     )
         except Exception as e:
             logger.warning("Scope analysis/jurisdiction overrides failed (non-fatal): %s", e)
+
+        # ---- Phase 6 wiring (C3): conditions + dependencies + tier overrides ----
+        # Operates between Stage 2 and Stage 3 so both the AI prompt and the
+        # rule-engine fallback see the same overridden state.
+        try:
+            playbook_rules, classification.rule_matches = self._apply_phase6_wiring(
+                playbook_rules=playbook_rules,
+                rule_matches=classification.rule_matches,
+                deal_context=deal_context,
+                conditions=playbook_conditions,
+                dependencies=playbook_dependencies,
+                rule_tiers_by_rule=rule_tiers_by_rule,
+                tier_preference=tier_preference,
+            )
+        except Exception as e:
+            logger.warning("Phase 6 wiring failed (non-fatal): %s", e, exc_info=True)
 
         # ---- Pre-Stage 3: Contract type detection (deterministic) ----
         contract_type = self._detect_contract_type(contract_text)
@@ -664,24 +660,10 @@ class AnalysisPipeline:
                 logger.warning("Smriti enrichment failed (non-fatal): %s", e)
                 stage_metrics.append(StageMetrics(stage_name="smriti_enrichment", error=str(e)))
 
-        # ---- Stage 6: FIX GENERATION ----
-        s6_start = time.monotonic()
-        try:
-            final_redlines = await self._stage6_fix_generation(
-                final_redlines,
-                extraction=extraction,
-                playbook_rules=playbook_rules,
-            )
-        except Exception as e:
-            logger.error("Pipeline Stage 6 (fix_generation) failed: %s", e)
-            stage_metrics.append(StageMetrics(stage_name="fix_generation", duration_seconds=time.monotonic() - s6_start, error=str(e)))
-        else:
-            s6_duration = time.monotonic() - s6_start
-            stage_metrics.append(StageMetrics(
-                stage_name="fix_generation",
-                duration_seconds=s6_duration,
-                items_processed=sum(1 for r in final_redlines if r.suggested_fix),
-            ))
+        # Stage 6 (fix generation) was removed in Phase B5 — most users only apply
+        # 2-3 fixes per scan, so batch-generating fixes for every redline wasted
+        # 50-80% of fix-generation tokens. Fixes are now produced on demand by
+        # POST /documents/generate-fix when the user clicks "Apply Fix".
 
         total_duration = time.monotonic() - pipeline_start
 
@@ -708,24 +690,28 @@ class AnalysisPipeline:
     # Stage 1: EXTRACTION (deterministic, no AI cost)
     # ======================================================================
 
-    def _stage1_extraction(self, contract_text: str) -> ExtractionResult:
+    def _stage1_extraction(
+        self,
+        contract_text: str,
+        jurisdiction_override: Optional[str] = None,
+    ) -> ExtractionResult:
         """
-        Extract structure, defined terms, and jurisdiction hints.
-        All deterministic regex — no AI cost.
+        Extract structure, defined terms, and jurisdiction. All deterministic
+        — no AI cost. Jurisdiction is detected once here via the canonical
+        jurisdiction_detector and reused by downstream stages (B2).
         """
         extractor = StructureExtractor()
         contract_map = extractor.extract_from_text(contract_text)
 
-        # Extract defined terms
         defined_terms = self._extract_defined_terms(contract_text)
-
-        # Extract jurisdiction hint
-        jurisdiction_hint = self._extract_jurisdiction(contract_text)
+        jurisdiction_result = jurisdiction_detector.detect(
+            contract_text, user_override=jurisdiction_override
+        )
 
         return ExtractionResult(
             contract_map=contract_map,
             defined_terms=defined_terms,
-            jurisdiction_hint=jurisdiction_hint,
+            jurisdiction_result=jurisdiction_result,
             full_text=contract_text,
         )
 
@@ -748,25 +734,6 @@ class AnalysisPipeline:
                     ))
 
         return terms
-
-    def _extract_jurisdiction(self, text: str) -> JurisdictionHint:
-        """Extract governing law and jurisdiction hints."""
-        hint = JurisdictionHint()
-        text_lower = text.lower()
-
-        for pattern in _JURISDICTION_PATTERNS:
-            match = pattern.search(text)
-            if match:
-                location = match.group(1).strip()
-                if not hint.governing_law:
-                    hint.governing_law = location
-                    hint.raw_text = match.group(0)
-                elif not hint.jurisdiction:
-                    hint.jurisdiction = location
-                elif not hint.arbitration_seat:
-                    hint.arbitration_seat = location
-
-        return hint
 
     # ======================================================================
     # Stage 2: CLASSIFICATION (rule engine, deterministic)
@@ -844,10 +811,8 @@ class AnalysisPipeline:
             filtered_rules = playbook_rules
             type_label = CONTRACT_TYPE_LABELS.get("general", "General Commercial Agreement")
 
-        # Pass jurisdiction hint from stage 1 to avoid redundant detection
-        jurisdiction_hint = None
-        if extraction.jurisdiction_hint and extraction.jurisdiction_hint.governing_law:
-            jurisdiction_hint = extraction.jurisdiction_hint.governing_law
+        # Pass detected jurisdiction code from Stage 1 (B2 — single detection path)
+        jurisdiction_hint = extraction.jurisdiction_result.detected_jurisdiction or None
 
         ai_result: AIAnalysisResult = await self._analyzer.analyze_full_contract(
             contract_text=extraction.full_text,
@@ -889,11 +854,14 @@ class AnalysisPipeline:
                 is_db = pb_rule.get("is_deal_breaker", False)
 
             # Determine clause_type from playbook rule or infer from rule name
-            clause_type = ""
+            # — always snap through the canonical taxonomy (Phase C1).
+            from app.services.clause_taxonomy import snap_to_clause_type
+            raw_clause_type = ""
             if pb_rule:
-                clause_type = pb_rule.get("clause_type", "")
-            if not clause_type:
-                clause_type = _infer_clause_type(ai_redline.rule_name)
+                raw_clause_type = pb_rule.get("clause_type", "")
+            if not raw_clause_type:
+                raw_clause_type = ai_redline.rule_name
+            clause_type = snap_to_clause_type(raw_clause_type).value
 
             raw_redlines.append(RawRedline(
                 rule_name=ai_redline.rule_name,
@@ -1183,108 +1151,163 @@ class AnalysisPipeline:
         return [redlines[i] for i in sorted(keep)]
 
     # ======================================================================
-    # Stage 6: FIX GENERATION (batched AI calls)
-    # ======================================================================
-
-    _FIX_BATCH_SIZE = 10  # Max findings per batch API call
-
-    async def _stage6_fix_generation(
-        self,
-        redlines: List[FinalRedline],
-        extraction: "ExtractionResult",
-        playbook_rules: Optional[List[Dict[str, Any]]] = None,
-    ) -> List[FinalRedline]:
-        """Generate suggested_fix for RED and YELLOW redlines using batched AI calls.
-
-        Instead of one API call per finding (N calls), batches findings into groups
-        and generates fixes in bulk (N/10 calls). Dramatically reduces API usage.
-        Falls back to per-finding generation if batch fails.
-        """
-        fixable = [r for r in redlines if r.risk_level in ("RED", "YELLOW")]
-        if not fixable:
-            return redlines
-
-        defined_terms = ""
-        if extraction.defined_terms:
-            terms = extraction.defined_terms
-            if isinstance(terms, dict):
-                defined_terms = "\n".join(f"- {k}: {v}" for k, v in list(terms.items())[:20])
-            elif isinstance(terms, list):
-                defined_terms = "\n".join(f"- {t}" for t in terms[:20])
-
-        # Build finding descriptors with stable IDs
-        finding_map = {}  # id_str -> FinalRedline
-        for i, r in enumerate(fixable):
-            finding_map[f"finding-{i}"] = r
-
-        # Batch findings into groups
-        batch_items = []
-        for id_str, r in finding_map.items():
-            batch_items.append({
-                "id": id_str,
-                "rule_name": r.rule_name,
-                "original_text": r.verified_text or r.original_text,
-                "recommendation": r.recommendation,
-            })
-
-        fix_results: Dict[str, str] = {}
-        for batch_start in range(0, len(batch_items), self._FIX_BATCH_SIZE):
-            batch = batch_items[batch_start:batch_start + self._FIX_BATCH_SIZE]
-            try:
-                batch_fixes = await self._analyzer.generate_fixes_batch(
-                    findings=batch,
-                    playbook_rules=playbook_rules,
-                    defined_terms=defined_terms,
-                )
-                fix_results.update(batch_fixes)
-            except Exception as e:
-                logger.warning("Batch fix generation failed for batch %d: %s",
-                             batch_start // self._FIX_BATCH_SIZE + 1, e)
-
-        # Apply fixes to redlines
-        for id_str, redline in finding_map.items():
-            fix_data = fix_results.get(id_str)
-            if not fix_data:
-                continue
-
-            # Handle both dict (new) and string (legacy) formats
-            if isinstance(fix_data, str):
-                fix_text = fix_data.strip()
-                fix_edits = []
-                fix_reasoning = ""
-            elif isinstance(fix_data, dict):
-                fix_text = fix_data.get("fix_text", "").strip()
-                fix_edits = fix_data.get("fix_edits", [])
-                fix_reasoning = fix_data.get("reasoning", "")
-            else:
-                continue
-
-            if not fix_text:
-                continue
-
-            # Scope guard: reject fixes that expanded far beyond the original
-            original_len = len(redline.verified_text or redline.original_text)
-            if original_len > 0 and len(fix_text) > original_len * 2.0 and not fix_edits:
-                logger.warning(
-                    "Fix rejected (scope creep, no edits): %s — original %d chars, fix %d chars",
-                    redline.rule_name, original_len, len(fix_text),
-                )
-                continue
-
-            redline.suggested_fix = fix_text
-            redline.fix_edits = fix_edits
-            redline.fix_reasoning = fix_reasoning
-
-        fixed_count = sum(1 for r in fixable if r.suggested_fix)
-        logger.info("Fix generation: %d/%d findings got fixes (%d API calls)",
-                    fixed_count, len(fixable),
-                    (len(batch_items) + self._FIX_BATCH_SIZE - 1) // self._FIX_BATCH_SIZE)
-
-        return redlines
-
-    # ======================================================================
     # Helpers
     # ======================================================================
+
+    def _apply_phase6_wiring(
+        self,
+        playbook_rules: Optional[List[Dict[str, Any]]],
+        rule_matches: List[Any],
+        deal_context: Optional[Any],
+        conditions: Optional[List[Any]],
+        dependencies: Optional[List[Any]],
+        rule_tiers_by_rule: Optional[Dict[str, Any]],
+        tier_preference: str,
+    ) -> Tuple[Optional[List[Dict[str, Any]]], List[Any]]:
+        """Apply Phase-6 features to both the prompt-input dicts and RuleMatch list.
+
+        Returns the (possibly-modified) playbook_rules and rule_matches.
+
+        Effects, in order:
+          1. Tier swap — if `tier_preference` is not "ideal" and a matching
+             PlaybookRuleTier was preloaded for a rule, swap the rule's
+             primary_position with the tier's position_text in the prompt
+             input. The rule_matches list is left unchanged because the rule
+             engine already produced its match against the contract text.
+          2. Conditions + Overrides — evaluate `conditions` against
+             `deal_context`; collect overrides from matching conditions and
+             apply to BOTH playbook_rules dicts (so the AI sees the override)
+             AND the rule_matches list (so the fallback path stays consistent).
+          3. Dependencies — apply cross-rule effects to the rule_matches list
+             via `dependency_resolver.resolve`. Effects on the AI prompt are
+             out of scope for this pass; the dependency effects surface in the
+             rule-engine fallback and via Stage-5 risk_level tweaks if the AI
+             also flags both source and target.
+        """
+        from app.services.playbook_conditions_engine import conditions_engine
+        from app.services.dependency_resolver import dependency_resolver
+
+        modified_rules: Optional[List[Dict[str, Any]]] = (
+            list(playbook_rules) if playbook_rules else None
+        )
+
+        # ---- (1) Tier swap on playbook_rules dicts ----
+        tier_pref_normalized = (tier_preference or "ideal").lower()
+        if (
+            tier_pref_normalized != "ideal"
+            and modified_rules
+            and rule_tiers_by_rule
+        ):
+            swapped = 0
+            for rule_dict in modified_rules:
+                rule_id = rule_dict.get("id") or rule_dict.get("rule_id")
+                if not rule_id:
+                    continue
+                tier = rule_tiers_by_rule.get(str(rule_id))
+                if tier is None:
+                    continue
+                position_text = getattr(tier, "position_text", None)
+                if position_text:
+                    rule_dict["primary_position"] = position_text
+                    swapped += 1
+            if swapped:
+                logger.info(
+                    "Phase 6 tier swap: replaced primary_position on %d rule(s) with tier=%r",
+                    swapped, tier_pref_normalized,
+                )
+
+        # ---- (2) Conditions + Overrides ----
+        if deal_context is not None and conditions:
+            try:
+                matched = conditions_engine.evaluate_conditions(conditions, deal_context)
+            except Exception as exc:
+                logger.warning("Condition evaluation failed: %s", exc)
+                matched = []
+
+            if matched:
+                all_overrides: List[Any] = []
+                rule_id_to_clause_type: Dict[str, str] = {}
+                for cond in matched:
+                    for ov in getattr(cond, "rule_overrides", []) or []:
+                        all_overrides.append(ov)
+                        rel_rule = getattr(ov, "rule", None)
+                        if rel_rule is not None:
+                            rule_id_to_clause_type[str(ov.rule_id)] = rel_rule.clause_type
+
+                if all_overrides:
+                    # Apply to RuleMatch (fallback path)
+                    try:
+                        rule_matches = conditions_engine.apply_overrides(
+                            rule_matches, all_overrides, rule_id_to_clause_type
+                        )
+                    except Exception as exc:
+                        logger.warning("apply_overrides on RuleMatch failed: %s", exc)
+
+                    # Apply to playbook_rules dicts (AI prompt)
+                    if modified_rules:
+                        modified_rules = self._apply_overrides_to_rule_dicts(
+                            modified_rules, all_overrides, rule_id_to_clause_type
+                        )
+
+        # ---- (3) Dependencies ----
+        if dependencies:
+            try:
+                rule_matches, _actions = dependency_resolver.resolve(rule_matches, dependencies)
+            except Exception as exc:
+                logger.warning("dependency_resolver.resolve failed: %s", exc)
+
+        return modified_rules, rule_matches
+
+    @staticmethod
+    def _apply_overrides_to_rule_dicts(
+        rule_dicts: List[Dict[str, Any]],
+        overrides: List[Any],
+        rule_id_to_clause_type: Dict[str, str],
+    ) -> List[Dict[str, Any]]:
+        """Mirror conditions_engine.apply_overrides for the dict shape used in
+        the AI prompt. Suppression drops the dict; risk/position/deal-breaker
+        overrides mutate in place. Higher-priority overrides win (callers must
+        provide a sorted list)."""
+        out: List[Dict[str, Any]] = []
+        suppress_ids: set = set()
+        modified_ids: set = set()
+
+        # Index dicts by id and clause_type for lookup
+        for ov in overrides:
+            rule_uuid = str(ov.rule_id)
+            target_ct = rule_id_to_clause_type.get(rule_uuid)
+            for rd in rule_dicts:
+                rd_id = str(rd.get("id") or rd.get("rule_id") or "")
+                rd_ct = (rd.get("clause_type") or "").strip().lower()
+                target_ct_norm = (target_ct or "").strip().lower()
+
+                matches_id = rd_id == rule_uuid
+                matches_ct = bool(target_ct_norm) and rd_ct == target_ct_norm
+                if not (matches_id or matches_ct):
+                    continue
+
+                key = rd_id or rd_ct
+                if key in suppress_ids or key in modified_ids:
+                    continue
+
+                if getattr(ov, "suppress_rule", False):
+                    suppress_ids.add(key)
+                    continue
+                modified_ids.add(key)
+
+                if getattr(ov, "override_risk_level", None):
+                    rd["risk_level"] = str(ov.override_risk_level).upper()
+                if getattr(ov, "override_position_text", None):
+                    rd["primary_position"] = ov.override_position_text
+                if getattr(ov, "override_is_deal_breaker", None) is not None:
+                    rd["is_deal_breaker"] = bool(ov.override_is_deal_breaker)
+
+        for rd in rule_dicts:
+            key = str(rd.get("id") or rd.get("rule_id") or "") or (rd.get("clause_type") or "").strip().lower()
+            if key in suppress_ids:
+                continue
+            out.append(rd)
+        return out
 
     @staticmethod
     def _detect_contract_type(text: str) -> str:

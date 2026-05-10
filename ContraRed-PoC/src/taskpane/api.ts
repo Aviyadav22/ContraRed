@@ -37,7 +37,8 @@ interface RedlineResponse {
     redline_type?: string;  // "violation" or "missing"
 }
 
-// Unified Analysis Types (matches backend RedlineItem + AnalysisResult)
+// Unified Analysis Types (mirror dashboard's authoritative shape — Phase B6).
+// Keep this file in sync with dashboard/src/api/client.ts when fields change.
 interface RedlineItem {
     id: string;
     risk_level: 'RED' | 'YELLOW' | 'GREEN';
@@ -49,12 +50,16 @@ interface RedlineItem {
     suggested_fix?: string;         // Exact replacement text (composed from edits)
     fix_edits?: Array<{find: string; replace: string}>;  // Surgical edit pairs
     fix_reasoning?: string;
+    fix_verified?: boolean;
+    fix_warnings?: string[];
     redline_type: 'violation' | 'missing';
     confidence?: number;
     confidence_level?: string;
+    confidence_breakdown?: Record<string, number>;
     verification_status?: string;
     is_deal_breaker?: boolean;
     cross_references?: string[];
+    statutory_references?: string[];
     paragraph_hash?: string;
     paragraph_index?: number;       // Backend-reported paragraph index for precise targeting
 }
@@ -70,6 +75,9 @@ interface AnalysisResult {
     jurisdiction?: string;
     jurisdiction_name?: string;
     pipeline_partial?: boolean;
+    ai_used?: boolean;
+    hallucination_stats?: Record<string, unknown>;
+    compliance_scores?: Record<string, Record<string, unknown>>;
     source_type?: string;
 }
 
@@ -112,11 +120,18 @@ interface PlaybookRule {
     clause_type: string;
     primary_position: string;
     fallback_position?: string;
-    risk_level: 'red' | 'yellow' | 'green';
+    risk_level: string; // 'red' | 'yellow' | 'green' (case-insensitive across surfaces)
     is_deal_breaker: boolean;
     detection_patterns: string[];
+    match_type?: string;
     suggested_language?: string;
     order_index: number;
+    detection_mode?: string;
+    risk_description?: string;
+    acceptable_position?: string;
+    unacceptable_signals?: string[];
+    acceptable_signals?: string[];
+    clause_context?: string;
 }
 
 interface PlaybookDetail extends Playbook {
@@ -469,7 +484,12 @@ class ContraRedAPI {
         playbookId?: string,
         partySide?: string,
         jurisdiction?: string,
-        paragraphs?: Array<{ index: number; text: string; style: string }>
+        paragraphs?: Array<{ index: number; text: string; style: string }>,
+        tierPreference?: 'ideal' | 'acceptable' | 'walk_away' | 'escalate',
+        counterpartyType?: string,
+        dealSize?: number,
+        contractSide?: 'vendor' | 'customer',
+        complianceLayers?: string[]
     ): Promise<AnalysisResult> {
         if (this.analyzeInFlight) {
             throw new Error('Analysis already in progress. Please wait for it to complete.');
@@ -485,11 +505,23 @@ class ContraRedAPI {
                     party_side: partySide || 'buyer',
                     jurisdiction: jurisdiction || undefined,
                     paragraphs: paragraphs || undefined,
+                    tier_preference: tierPreference || undefined,
+                    counterparty_type: counterpartyType || undefined,
+                    deal_size: dealSize ?? undefined,
+                    contract_side: contractSide || undefined,
+                    compliance_layers: complianceLayers && complianceLayers.length ? complianceLayers : undefined,
                 }),
             });
         } finally {
             this.analyzeInFlight = false;
         }
+    }
+
+    /**
+     * List active compliance layers (e.g. DPDP) the org can apply to a scan.
+     */
+    async listComplianceLayers(): Promise<Array<{ code: string; name: string; description?: string; jurisdiction?: string; rule_count: number }>> {
+        return this.request('/documents/compliance-layers');
     }
 
     /**
@@ -544,17 +576,26 @@ class ContraRedAPI {
         originalText: string;
         recommendation: string;
         ruleName: string;
+        clauseType?: string;
         redlineType?: string;
         surroundingContext?: string;
         playbookId?: string;
         contractText?: string;
-    }): Promise<{ fix_text: string; fix_edits?: Array<{find: string; replace: string}>; reasoning: string; fix_verified?: boolean; fix_warnings?: string[] }> {
+    }): Promise<{
+        fix_text: string;
+        fix_edits?: Array<{find: string; replace: string}>;
+        reasoning: string;
+        fix_verified?: boolean;
+        fix_warnings?: string[];
+        fix_source?: 'clause_library' | 'clause_library_adapted' | 'ai_generated';
+    }> {
         return this.request('/documents/generate-fix', {
             method: 'POST',
             body: JSON.stringify({
                 original_text: params.originalText,
                 recommendation: params.recommendation,
                 rule_name: params.ruleName,
+                clause_type: params.clauseType,
                 redline_type: params.redlineType || 'violation',
                 surrounding_context: params.surroundingContext,
                 playbook_id: params.playbookId,

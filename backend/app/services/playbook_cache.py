@@ -78,7 +78,9 @@ def get_cached_rules_dicts(
     rules = []
     for rule in (playbook.rules_list or []):
         d: dict = {
+            "id": str(rule.id),  # Phase C3 — needed for tier/override targeting
             "name": rule.clause_type,
+            "clause_type": rule.clause_type,  # Phase C3 — explicit field
             "risk_level": (
                 rule.risk_level.value.upper()
                 if hasattr(rule.risk_level, "value")

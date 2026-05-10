@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { useState, type CSSProperties } from 'react';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
-import { listPlaybooks, createPlaybook, deletePlaybook, togglePlaybookPublish, isAdmin, type Playbook } from '@/api/client';
+import { listPlaybooks, createPlaybook, deletePlaybook, togglePlaybookPublish, type Playbook } from '@/api/client';
 import { AppLayout } from '@/components/layout';
 import { Button, Badge, Modal, TextInput, TextareaInput } from '@/components/ui';
 import { Plus, Globe, Lock, FileText } from 'lucide-react';
@@ -62,7 +62,6 @@ export default function Playbooks() {
     const [showCreate, setShowCreate] = useState(false);
     const [newName, setNewName] = useState('');
     const [newDescription, setNewDescription] = useState('');
-    const admin = isAdmin();
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
     const modalRef = useFocusTrap(showCreate);
 
@@ -113,11 +112,9 @@ export default function Playbooks() {
                         Define custom rule sets for different contract types.
                     </p>
                 </div>
-                {admin && (
-                    <Button onClick={() => setShowCreate(true)} icon={<Plus size={16} />}>
-                        New Playbook
-                    </Button>
-                )}
+                <Button onClick={() => setShowCreate(true)} icon={<Plus size={16} />}>
+                    New Playbook
+                </Button>
             </div>
 
             {/* Create Modal */}
@@ -224,10 +221,11 @@ export default function Playbooks() {
                                             {playbook.rules_count} rules
                                         </td>
                                         <td style={tableCellStyle}>
-                                            {admin ? (
+                                            {playbook.is_owner ? (
                                                 <button
                                                     onClick={() => publishMutation.mutate(playbook.id)}
                                                     style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                                                    title={playbook.is_public ? 'Click to unpublish' : 'Click to publish to your org'}
                                                 >
                                                     <Badge
                                                         variant={playbook.is_public ? 'low' : 'neutral'}
@@ -246,31 +244,27 @@ export default function Playbooks() {
                                             )}
                                         </td>
                                         <td style={{ ...tableCellStyle, textAlign: 'right' }}>
-                                            {admin ? (
-                                                <>
-                                                    <Link
-                                                        to={`/playbooks/${playbook.id}`}
-                                                        style={{ fontSize: 13, fontWeight: 600, color: 'var(--info)', textDecoration: 'none', marginRight: 16 }}
+                                            <Link
+                                                to={`/playbooks/${playbook.id}`}
+                                                style={{ fontSize: 13, fontWeight: 600, color: 'var(--info)', textDecoration: 'none', marginRight: 16 }}
+                                            >
+                                                {playbook.is_owner ? 'Edit' : 'View'}
+                                            </Link>
+                                            {playbook.is_owner && (
+                                                confirmDeleteId === playbook.id ? (
+                                                    <InlineConfirm
+                                                        message="Delete?"
+                                                        onConfirm={() => { deleteMutation.mutate(playbook.id); setConfirmDeleteId(null); }}
+                                                        onCancel={() => setConfirmDeleteId(null)}
+                                                    />
+                                                ) : (
+                                                    <button
+                                                        onClick={() => setConfirmDeleteId(playbook.id)}
+                                                        style={{ fontSize: 13, fontWeight: 600, color: 'var(--risk-critical)', background: 'none', border: 'none', cursor: 'pointer' }}
                                                     >
-                                                        Edit
-                                                    </Link>
-                                                    {confirmDeleteId === playbook.id ? (
-                                                        <InlineConfirm
-                                                            message="Delete?"
-                                                            onConfirm={() => { deleteMutation.mutate(playbook.id); setConfirmDeleteId(null); }}
-                                                            onCancel={() => setConfirmDeleteId(null)}
-                                                        />
-                                                    ) : (
-                                                        <button
-                                                            onClick={() => setConfirmDeleteId(playbook.id)}
-                                                            style={{ fontSize: 13, fontWeight: 600, color: 'var(--risk-critical)', background: 'none', border: 'none', cursor: 'pointer' }}
-                                                        >
-                                                            Delete
-                                                        </button>
-                                                    )}
-                                                </>
-                                            ) : (
-                                                <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>View only</span>
+                                                        Delete
+                                                    </button>
+                                                )
                                             )}
                                         </td>
                                     </tr>
@@ -291,13 +285,9 @@ export default function Playbooks() {
                     <FileText size={48} style={{ color: 'var(--text-muted)', marginBottom: 16 }} />
                     <h3 style={{ fontSize: 18, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>No playbooks yet</h3>
                     <p style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 24 }}>
-                        {admin
-                            ? 'Create your first playbook to start detecting contract risks.'
-                            : 'No playbooks are available yet. Ask your admin to create one.'}
+                        Create your first playbook to start detecting contract risks.
                     </p>
-                    {admin && (
-                        <Button onClick={() => setShowCreate(true)}>Create Playbook</Button>
-                    )}
+                    <Button onClick={() => setShowCreate(true)}>Create Playbook</Button>
                 </div>
             )}
         </AppLayout>

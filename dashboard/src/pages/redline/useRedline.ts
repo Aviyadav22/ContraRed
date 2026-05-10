@@ -18,6 +18,13 @@ export function useRedline(): UseRedlineReturn {
     const [playbookId, setPlaybookId] = useState('');
     const [partySide, setPartySide] = useState<'buyer' | 'seller' | 'neutral'>('buyer');
     const [jurisdiction, setJurisdiction] = useState('');
+    // Phase 6 — negotiation tier + deal context
+    const [tierPreference, setTierPreference] = useState<'ideal' | 'acceptable' | 'walk_away' | 'escalate'>('ideal');
+    const [counterpartyType, setCounterpartyType] = useState('');
+    const [dealSize, setDealSize] = useState('');
+    const [contractSide, setContractSide] = useState<'' | 'vendor' | 'customer'>('');
+    // Compliance overlays (e.g. DPDP)
+    const [complianceLayers, setComplianceLayers] = useState<string[]>([]);
 
     // ---- Analysis state ----
     const [phase, setPhase] = useState<PagePhase>('input');
@@ -54,12 +61,19 @@ export function useRedline(): UseRedlineReturn {
 
     // ---- Analysis mutation ----
     const analyzeMutation = useMutation({
-        mutationFn: (text: string) =>
-            analyzeContract(text, {
+        mutationFn: (text: string) => {
+            const parsedDealSize = dealSize.trim() ? Number(dealSize) : undefined;
+            return analyzeContract(text, {
                 playbook_id: playbookId || undefined,
                 party_side: partySide,
                 jurisdiction: jurisdiction || undefined,
-            }),
+                tier_preference: tierPreference !== 'ideal' ? tierPreference : undefined,
+                counterparty_type: counterpartyType.trim() || undefined,
+                deal_size: Number.isFinite(parsedDealSize) ? parsedDealSize : undefined,
+                contract_side: contractSide || undefined,
+                compliance_layers: complianceLayers.length ? complianceLayers : undefined,
+            });
+        },
         onMutate: () => {
             setPhase('analyzing');
             setAnalyzeError(null);
@@ -115,6 +129,7 @@ export function useRedline(): UseRedlineReturn {
                 original_text: risk.clause_text,
                 recommendation: risk.recommendation,
                 rule_name: risk.rule_name,
+                clause_type: risk.clause_type || undefined,  // Phase C2 — drives ClauseLibrary lookup
                 redline_type: risk.redline_type,
                 surrounding_context: getSurroundingContext(editedTextRef.current, risk.clause_text),
                 playbook_id: playbookId || undefined,
@@ -474,6 +489,11 @@ export function useRedline(): UseRedlineReturn {
         playbookId, setPlaybookId,
         partySide, setPartySide,
         jurisdiction, setJurisdiction,
+        tierPreference, setTierPreference,
+        counterpartyType, setCounterpartyType,
+        dealSize, setDealSize,
+        contractSide, setContractSide,
+        complianceLayers, setComplianceLayers,
         phase, analysis, analyzeError, startAnalysis,
         fixStates, generatedFixes, generateFixForRisk, applyFix, revertFix, applyAllFixes, bulkProgress,
         editedText, appliedEdits,

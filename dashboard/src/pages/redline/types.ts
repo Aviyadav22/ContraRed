@@ -29,6 +29,9 @@ export interface TextEdit {
     riskId: string;
 }
 
+export type TierPreference = 'ideal' | 'acceptable' | 'walk_away' | 'escalate';
+export type ContractSide = '' | 'vendor' | 'customer';
+
 export interface UseRedlineReturn {
     // Input state
     contractText: string;
@@ -39,6 +42,18 @@ export interface UseRedlineReturn {
     setPartySide: (side: 'buyer' | 'seller' | 'neutral') => void;
     jurisdiction: string;
     setJurisdiction: (j: string) => void;
+    // Phase 6 (negotiation tiers + conditional logic)
+    tierPreference: TierPreference;
+    setTierPreference: (t: TierPreference) => void;
+    counterpartyType: string;
+    setCounterpartyType: (s: string) => void;
+    dealSize: string;  // raw input; coerced to number when sent
+    setDealSize: (s: string) => void;
+    contractSide: ContractSide;
+    setContractSide: (s: ContractSide) => void;
+    // Compliance layer overlays (e.g. DPDP)
+    complianceLayers: string[];
+    setComplianceLayers: (codes: string[]) => void;
 
     // Analysis
     phase: PagePhase;

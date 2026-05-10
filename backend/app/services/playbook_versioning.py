@@ -131,7 +131,6 @@ def _build_snapshot(
             "name": playbook.name,
             "description": playbook.description,
             "category": playbook.category.value if hasattr(playbook.category, "value") else playbook.category,
-            "rules": _ser(playbook.rules),
             "is_public": playbook.is_public,
             "is_default": playbook.is_default,
             "version": playbook.version,

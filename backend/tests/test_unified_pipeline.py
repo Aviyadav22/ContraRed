@@ -95,10 +95,11 @@ async def test_dedup_removes_overlapping_findings():
 
 
 def test_infer_clause_type():
-    """clause_type inference from rule names."""
+    """clause_type inference now snaps into the canonical ClauseType taxonomy
+    (Phase C1). Returned values are enum strings, not free-form labels."""
     from app.services.analysis_pipeline import _infer_clause_type
-    assert _infer_clause_type("Liability Cap") == "liability"
-    assert _infer_clause_type("Non-Compete Clause") == "restrictive_covenant"
+    assert _infer_clause_type("Liability Cap") == "liability_cap"
+    assert _infer_clause_type("Non-Compete Clause") == "non_compete"
     assert _infer_clause_type("Governing Law") == "governing_law"
     assert _infer_clause_type("Data Protection") == "data_protection"
-    assert _infer_clause_type("Random Unknown") == "general"
+    assert _infer_clause_type("Random Unknown") == "unknown"

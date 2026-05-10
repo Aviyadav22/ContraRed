@@ -32,7 +32,6 @@ class Playbook(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     category: Mapped[PlaybookCategory] = mapped_column(SQLEnum(PlaybookCategory), default=PlaybookCategory.CUSTOM)
-    rules: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     is_public: Mapped[bool] = mapped_column(Boolean, default=False)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     version: Mapped[int] = mapped_column(Integer, default=1)

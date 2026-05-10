@@ -48,6 +48,14 @@ class AnalysisJob:
     playbook_id: Optional[str] = None
     playbook_name: str = "Default"
     playbook_rules: List[Dict] = field(default_factory=list)
+    # Scan-time inputs (parity with /analyze sync path)
+    party_side: str = "buyer"
+    jurisdiction: Optional[str] = None
+    compliance_layers: List[str] = field(default_factory=list)
+    tier_preference: str = "ideal"
+    counterparty_type: Optional[str] = None
+    deal_size: Optional[float] = None
+    contract_side: Optional[str] = None
     status: JobStatus = JobStatus.QUEUED
     created_at: str = ""
     completed_at: Optional[str] = None
@@ -62,6 +70,13 @@ class AnalysisJob:
             "playbook_id": self.playbook_id,
             "playbook_name": self.playbook_name,
             "playbook_rules": self.playbook_rules,
+            "party_side": self.party_side,
+            "jurisdiction": self.jurisdiction,
+            "compliance_layers": self.compliance_layers,
+            "tier_preference": self.tier_preference,
+            "counterparty_type": self.counterparty_type,
+            "deal_size": self.deal_size,
+            "contract_side": self.contract_side,
             "status": self.status.value,
             "created_at": self.created_at,
             "completed_at": self.completed_at,
@@ -79,6 +94,13 @@ class AnalysisJob:
             playbook_id=data.get("playbook_id"),
             playbook_name=data.get("playbook_name", "Default"),
             playbook_rules=data.get("playbook_rules", []),
+            party_side=data.get("party_side", "buyer"),
+            jurisdiction=data.get("jurisdiction"),
+            compliance_layers=data.get("compliance_layers", []),
+            tier_preference=data.get("tier_preference", "ideal"),
+            counterparty_type=data.get("counterparty_type"),
+            deal_size=data.get("deal_size"),
+            contract_side=data.get("contract_side"),
             status=JobStatus(data.get("status", "queued")),
             created_at=data.get("created_at", ""),
             completed_at=data.get("completed_at"),
@@ -211,15 +233,50 @@ class TaskQueue:
 
         Used when Redis is unavailable. Runs the pipeline in the current
         process but still returns immediately via asyncio.create_task().
+        Loads Phase-6 data (conditions, dependencies, tiers) from a fresh
+        DB session so the async path matches the sync /analyze surface.
         """
         from app.services.analysis_pipeline import analysis_pipeline
+        from app.services.playbook_conditions_engine import DealContext
+        from app.db.session import AsyncSessionLocal
 
         await self.update_job_status(job.job_id, JobStatus.RUNNING)
         try:
+            deal_context = DealContext(
+                counterparty_type=job.counterparty_type,
+                deal_size=job.deal_size,
+                jurisdiction=job.jurisdiction,
+                contract_side=job.contract_side,
+            )
+
+            playbook_conditions = None
+            playbook_dependencies = None
+            rule_tiers_by_rule = None
+            if job.playbook_id:
+                try:
+                    async with AsyncSessionLocal() as db:
+                        playbook_conditions, playbook_dependencies, rule_tiers_by_rule = (
+                            await _load_phase6_data(
+                                db, job.playbook_id, job.tier_preference
+                            )
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to load Phase 6 data for async job %s: %s",
+                        job.job_id, exc,
+                    )
+
             result = await analysis_pipeline.run(
                 contract_text=job.contract_text,
                 playbook_rules=job.playbook_rules,
                 playbook_name=job.playbook_name,
+                party_side=job.party_side,
+                jurisdiction_override=job.jurisdiction,
+                deal_context=deal_context,
+                playbook_conditions=playbook_conditions,
+                playbook_dependencies=playbook_dependencies,
+                rule_tiers_by_rule=rule_tiers_by_rule,
+                tier_preference=job.tier_preference,
             )
             await self.update_job_status(job.job_id, JobStatus.COMPLETED)
             return result.to_dict()
@@ -227,6 +284,59 @@ class TaskQueue:
             logger.error("Inline analysis failed for job %s: %s", job.job_id, e)
             await self.update_job_status(job.job_id, JobStatus.FAILED, str(e))
             return {"error": str(e)}
+
+
+async def _load_phase6_data(db, playbook_id: str, tier_preference: str):
+    """Load PlaybookCondition + Dependency + Tier rows for the given playbook.
+
+    Returns (conditions, dependencies, rule_tiers_by_rule). Mirrors the
+    inline loader in /documents/analyze so the async + sync paths produce
+    the same Phase 6 behavior.
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from uuid import UUID
+    from app.models.playbook import (
+        PlaybookCondition, PlaybookRuleOverride,
+        PlaybookRuleDependency, PlaybookRuleTier, PlaybookRule,
+    )
+
+    pb_uuid = UUID(playbook_id)
+    cond_q = (
+        select(PlaybookCondition)
+        .where(
+            PlaybookCondition.playbook_id == pb_uuid,
+            PlaybookCondition.is_active == True,  # noqa: E712
+        )
+        .options(
+            selectinload(PlaybookCondition.rule_overrides).selectinload(
+                PlaybookRuleOverride.rule
+            )
+        )
+        .order_by(PlaybookCondition.priority.desc())
+    )
+    conditions = list((await db.execute(cond_q)).scalars().all())
+
+    dep_q = select(PlaybookRuleDependency).where(
+        PlaybookRuleDependency.playbook_id == pb_uuid,
+        PlaybookRuleDependency.is_active == True,  # noqa: E712
+    )
+    dependencies = list((await db.execute(dep_q)).scalars().all())
+
+    tier_level_map = {"ideal": 1, "acceptable": 2, "walk_away": 3, "escalate": 4}
+    target_tier_level = tier_level_map.get((tier_preference or "ideal").lower(), 1)
+    rule_tiers_by_rule = None
+    if target_tier_level != 1:
+        tier_q = select(PlaybookRuleTier).where(
+            PlaybookRuleTier.tier_level == target_tier_level,
+            PlaybookRuleTier.rule_id.in_(
+                select(PlaybookRule.id).where(PlaybookRule.playbook_id == pb_uuid)
+            ),
+        )
+        tiers = list((await db.execute(tier_q)).scalars().all())
+        rule_tiers_by_rule = {str(t.rule_id): t for t in tiers}
+
+    return conditions, dependencies, rule_tiers_by_rule
 
 
 # Singleton

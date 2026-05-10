@@ -41,6 +41,8 @@ export interface Playbook {
     is_default: boolean;
     version: number;
     rules_count: number;
+    /** True when the requesting user owns this playbook — drives Edit/Delete UI. */
+    is_owner?: boolean;
 }
 
 export interface PlaybookRule {
@@ -158,6 +160,7 @@ export interface GenerateFixResponse {
     reasoning: string;
     fix_verified: boolean;
     fix_warnings?: string[];
+    fix_source?: 'clause_library' | 'clause_library_adapted' | 'ai_generated';
 }
 
 // ============================================================================
@@ -167,12 +170,25 @@ export interface GenerateFixResponse {
 const USER_KEY = 'contrared_user';
 
 function getCsrfToken(): string {
-    // First try localStorage (set from login/refresh response body for cross-origin)
-    const stored = localStorage.getItem('contrared_csrf');
+    // sessionStorage so the token doesn't outlive the tab (B7).
+    // Migrate any prior localStorage value on first read.
+    let stored = sessionStorage.getItem('contrared_csrf');
+    if (!stored) {
+        const legacy = localStorage.getItem('contrared_csrf');
+        if (legacy) {
+            sessionStorage.setItem('contrared_csrf', legacy);
+            localStorage.removeItem('contrared_csrf');
+            stored = legacy;
+        }
+    }
     if (stored) return stored;
     // Fallback: try cookie (same-origin scenarios)
     const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]*)/);
     return match ? decodeURIComponent(match[1]) : '';
+}
+
+function setCsrfToken(token: string): void {
+    sessionStorage.setItem('contrared_csrf', token);
 }
 
 export function getStoredTokens(): AuthTokens | null {
@@ -208,7 +224,8 @@ export function saveAuth(_tokens: AuthTokens, user: User): void {
 export function clearAuth(): void {
     sessionStorage.removeItem(USER_KEY);
     localStorage.removeItem(USER_KEY);  // Clean up any legacy data
-    localStorage.removeItem('contrared_csrf');
+    sessionStorage.removeItem('contrared_csrf');
+    localStorage.removeItem('contrared_csrf');  // Clean up any legacy data
 }
 
 export function isAuthenticated(): boolean {
@@ -226,6 +243,34 @@ export function isAdmin(): boolean {
 // ============================================================================
 // API Request Helper
 // ============================================================================
+
+// Mutex for token refresh — prevents thundering-herd refreshes when many
+// requests fire and all hit 401 simultaneously (B8).
+let inFlightRefresh: Promise<boolean> | null = null;
+
+async function refreshAuth(): Promise<boolean> {
+    if (inFlightRefresh) return inFlightRefresh;
+    inFlightRefresh = (async () => {
+        try {
+            const refreshResp = await fetch(`${API_BASE_URL}/auth/refresh`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'include',
+            });
+            if (refreshResp.ok) {
+                const data = await refreshResp.clone().json().catch(() => ({}));
+                if (data?.csrf_token) setCsrfToken(data.csrf_token);
+                return true;
+            }
+            return false;
+        } catch {
+            return false;
+        } finally {
+            inFlightRefresh = null;
+        }
+    })();
+    return inFlightRefresh;
+}
 
 async function request<T>(endpoint: string, options: RequestInit = {}, retryCount: number = 0, timeoutMs: number = 120000): Promise<T> {
     const headers: Record<string, string> = {
@@ -275,34 +320,22 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retryCoun
 
     if (!response.ok) {
         if (response.status === 401) {
-            // Try cookie-based refresh (server reads refresh_token from cookie)
-            try {
-                const refreshResp = await fetch(`${API_BASE_URL}/auth/refresh`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+            // Cookie-based refresh, deduped via mutex (B8).
+            const refreshed = await refreshAuth();
+            if (refreshed) {
+                const retryHeaders: Record<string, string> = { ...headers };
+                const newCsrf = getCsrfToken();
+                if (newCsrf) retryHeaders['X-CSRF-Token'] = newCsrf;
+                const retryResp = await fetch(url, {
+                    ...options,
+                    headers: retryHeaders,
                     credentials: 'include',
                 });
-                if (refreshResp.ok) {
-                    // Store new CSRF token from refresh response
-                    const refreshData = await refreshResp.json().catch(() => ({}));
-                    if (refreshData.csrf_token) {
-                        localStorage.setItem('contrared_csrf', refreshData.csrf_token);
-                    }
-                    // Cookies updated by server, retry original request
-                    const retryHeaders: Record<string, string> = { ...headers };
-                    const newCsrf = getCsrfToken();
-                    if (newCsrf) retryHeaders['X-CSRF-Token'] = newCsrf;
-                    const retryResp = await fetch(url, {
-                        ...options,
-                        headers: retryHeaders,
-                        credentials: 'include',
-                    });
-                    if (retryResp.ok || retryResp.status !== 401) {
-                        if (retryResp.status === 204) return undefined as T;
-                        return retryResp.json();
-                    }
+                if (retryResp.ok || retryResp.status !== 401) {
+                    if (retryResp.status === 204) return undefined as T;
+                    return retryResp.json();
                 }
-            } catch { /* refresh failed */ }
+            }
             clearAuth();
             window.location.href = '/login';
             throw new Error('Session expired');
@@ -370,7 +403,7 @@ export async function login(email: string, password: string): Promise<{ user: Us
     const data = await response.json();
     // Store CSRF token from response body (cross-origin cookies aren't readable via JS)
     if (data.csrf_token) {
-        localStorage.setItem('contrared_csrf', data.csrf_token);
+        setCsrfToken(data.csrf_token);
     }
     // Server sets HttpOnly cookies; only store user profile locally
     saveAuth({ access_token: '', refresh_token: '' }, data.user);
@@ -1194,7 +1227,7 @@ export async function batchAnalyze(files: File[], playbookId?: string): Promise<
             if (refreshResp.ok) {
                 const refreshData = await refreshResp.json().catch(() => ({}));
                 if (refreshData.csrf_token) {
-                    localStorage.setItem('contrared_csrf', refreshData.csrf_token);
+                    setCsrfToken(refreshData.csrf_token);
                 }
                 const retryHeaders: Record<string, string> = {};
                 const newCsrf = getCsrfToken();
@@ -2033,6 +2066,11 @@ export async function analyzeContract(text: string, options: {
     party_side?: 'buyer' | 'seller' | 'neutral';
     jurisdiction?: string;
     filename?: string;
+    tier_preference?: 'ideal' | 'acceptable' | 'walk_away' | 'escalate';
+    counterparty_type?: string;
+    deal_size?: number;
+    contract_side?: 'vendor' | 'customer';
+    compliance_layers?: string[];
 } = {}): Promise<AnalysisResult> {
     return request('/documents/analyze', {
         method: 'POST',
@@ -2042,8 +2080,27 @@ export async function analyzeContract(text: string, options: {
             party_side: options.party_side || 'buyer',
             jurisdiction: options.jurisdiction || undefined,
             filename: options.filename || 'pasted-contract.txt',
+            tier_preference: options.tier_preference || undefined,
+            counterparty_type: options.counterparty_type || undefined,
+            deal_size: options.deal_size ?? undefined,
+            contract_side: options.contract_side || undefined,
+            compliance_layers: options.compliance_layers && options.compliance_layers.length
+                ? options.compliance_layers
+                : undefined,
         }),
     }, 0, 600000); // 10 min — AI analysis with thinking model
+}
+
+export interface ComplianceLayerSummary {
+    code: string;
+    name: string;
+    description?: string;
+    jurisdiction?: string;
+    rule_count: number;
+}
+
+export async function listComplianceLayers(): Promise<ComplianceLayerSummary[]> {
+    return request('/documents/compliance-layers');
 }
 
 export async function analyzeClause(clause_text: string, options: {
@@ -2064,6 +2121,7 @@ export async function generateFix(params: {
     original_text: string;
     recommendation: string;
     rule_name: string;
+    clause_type?: string;
     redline_type: 'violation' | 'missing';
     surrounding_context?: string;
     playbook_id?: string;
