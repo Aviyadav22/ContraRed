@@ -10,6 +10,34 @@ import asyncpg
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import declarative_base
+from sqlalchemy.pool import NullPool
+
+
+class _PgBouncerAnonStmtConnection(asyncpg.Connection):
+    """asyncpg Connection that forces ANONYMOUS prepared statements.
+
+    Required when running through Supabase's pgbouncer transaction-mode
+    pooler (port 6543): pgbouncer multiplexes Postgres backends across
+    client connections without resetting prepared-statement state. Even
+    with `statement_cache_size=0`, asyncpg auto-names statements
+    `__asyncpg_stmt_N__`; the next request lands on a backend that already
+    has that name from a prior tx and fails with
+    `DuplicatePreparedStatementError`.
+
+    Forcing the statement name to `""` makes Postgres use the unnamed
+    statement slot, which is session-private and reused atomically on
+    each Parse — pgbouncer can't collide on it.
+    """
+
+    async def _prepare(self, query, *, name=None, timeout=None,
+                       use_cache=False, record_class=None):
+        return await super()._prepare(
+            query,
+            name=name if name else "",
+            timeout=timeout,
+            use_cache=use_cache,
+            record_class=record_class,
+        )
 
 from app.core.config import settings
 
@@ -42,18 +70,29 @@ _DIALECT_ONLY_CONNECT_ARGS = {"prepared_statement_name_func"}
 _asyncpg_kwargs = {k: v for k, v in connect_args.items() if k not in _DIALECT_ONLY_CONNECT_ARGS}
 
 
+_is_transaction_pooler = ":6543/" in settings.DATABASE_URL
+
+
 async def _connect_with_retry() -> asyncpg.Connection:
     """One-retry wrapper around asyncpg.connect to mask transient cross-cloud flakes.
+
+    On the Supabase transaction pooler (port 6543), connect with the custom
+    `_PgBouncerAnonStmtConnection` class so every prepared statement uses the
+    unnamed slot — required because pgbouncer reuses backends across requests.
 
     Retries only on network-level transients. CancelledError is re-raised
     untouched — that signal means the client disconnected, and resurrecting
     the attempt would be wrong. Non-transient errors (auth, bad DSN, etc.)
     also fall through on the first attempt.
     """
+    kwargs = dict(_asyncpg_kwargs)
+    if _is_transaction_pooler:
+        kwargs["connection_class"] = _PgBouncerAnonStmtConnection
+
     last_exc: BaseException | None = None
     for attempt in (1, 2):
         try:
-            return await asyncpg.connect(_async_dsn, **_asyncpg_kwargs)
+            return await asyncpg.connect(_async_dsn, **kwargs)
         except asyncio.CancelledError:
             raise
         except (asyncio.TimeoutError, ConnectionError, OSError,
@@ -69,20 +108,40 @@ async def _connect_with_retry() -> asyncpg.Connection:
     raise last_exc
 
 
-# Create async engine
-engine = create_async_engine(
-    settings.DATABASE_URL,
-    echo=settings.DEBUG,
-    pool_pre_ping=True,
-    pool_size=settings.DB_POOL_SIZE,
-    max_overflow=settings.DB_MAX_OVERFLOW,
-    pool_recycle=1800,    # Recycle every 30 min; pool_pre_ping catches Supabase's ~600s idle close.
-    pool_timeout=10,      # Wait up to 10s for a connection from the pool
-    async_creator=_connect_with_retry,
-    connect_args=connect_args,  # Still read by SQLAlchemy internals (e.g. dialect inspection).
-)
-
-_is_transaction_pooler = ":6543/" in settings.DATABASE_URL
+# Create async engine.
+#
+# When connected through Supabase's transaction-mode pooler (port 6543),
+# pgbouncer multiplexes Postgres backends across client connections without
+# resetting prepared-statement state. Even with `statement_cache_size=0`,
+# asyncpg auto-names statements like `__asyncpg_stmt_1__`; the second
+# request lands on a backend that already has that name from a prior tx
+# and fails with `DuplicatePreparedStatementError`. NullPool sidesteps the
+# whole problem by NOT reusing connections — every request opens a fresh
+# asyncpg connection and closes it on release. The connection-open cost is
+# small (~50ms over the existing TCP/TLS round-trip we already pay).
+#
+# When using a direct connection (port 5432), the standard QueuePool with
+# pre-ping + recycle is fine.
+if _is_transaction_pooler:
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=settings.DEBUG,
+        poolclass=NullPool,
+        async_creator=_connect_with_retry,
+        connect_args=connect_args,
+    )
+else:
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=settings.DEBUG,
+        pool_pre_ping=True,
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
+        pool_recycle=1800,    # Recycle every 30 min; pool_pre_ping catches Supabase's ~600s idle close.
+        pool_timeout=10,      # Wait up to 10s for a connection from the pool
+        async_creator=_connect_with_retry,
+        connect_args=connect_args,  # Still read by SQLAlchemy internals (e.g. dialect inspection).
+    )
 
 # Create async session factory
 AsyncSessionLocal = async_sessionmaker(
