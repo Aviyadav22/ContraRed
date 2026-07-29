@@ -34,15 +34,11 @@ class ComplianceAgent:
         AI review runs second (best-effort, may be unavailable).
         """
         rule_annotations = self._run_hard_rules(draft)
-
-        try:
-            from app.core.vertex_client import is_available
-        except ImportError:
-            is_available = lambda: False  # noqa: E731
-
-        ai_annotations = (
-            await self._ai_review(draft, jurisdiction) if is_available() else []
-        )
+        # `_ai_review` owns provider-availability handling. Calling it here
+        # unconditionally keeps the orchestration path deterministic and makes
+        # alternate/mock review providers usable without requiring Vertex
+        # configuration in the caller's environment.
+        ai_annotations = await self._ai_review(draft, jurisdiction)
         return rule_annotations + ai_annotations
 
     # ------------------------------------------------------------------ #
