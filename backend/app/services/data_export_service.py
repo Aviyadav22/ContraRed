@@ -6,7 +6,6 @@ Respects Zero Data Retention: contract text is never stored, so it won't
 appear in the export. Only metadata (filenames, timestamps, risk counts) is exported.
 """
 
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -17,10 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
 from app.models.audit_log import AuditLog
+from app.models.billing import Invoice
 from app.models.consent import (
     ConsentRecord, ConsentPurposeGrant, ConsentEvent, ConsentReceipt,
     RightsRequest, Grievance, ConsentNomination,
 )
+from app.models.document import Document, DocumentRisk, UsageLog
+from app.models.feedback import RuleFeedback
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +178,106 @@ async def export_user_data(db: AsyncSession, user_id: uuid.UUID) -> Dict[str, An
         for n in nom_result.scalars().all()
     ]
 
+    # 9. Document metadata and, only when ZDR is disabled, stored findings.
+    document_result = await db.execute(
+        select(Document)
+        .where(Document.user_id == user_id)
+        .order_by(desc(Document.created_at))
+    )
+    documents = []
+    document_ids = []
+    for document in document_result.scalars().all():
+        document_ids.append(document.id)
+        documents.append({
+            "id": str(document.id),
+            "filename": document.filename,
+            "status": document.status.value if document.status else None,
+            "contract_type": document.contract_type,
+            "counterparty": document.counterparty,
+            "contract_value": str(document.contract_value) if document.contract_value is not None else None,
+            "expiry_date": document.expiry_date.isoformat() if document.expiry_date else None,
+            "risk_summary": document.risk_summary,
+            "total_risks": document.total_risks,
+            "created_at": document.created_at.isoformat(),
+            "processed_at": document.processed_at.isoformat() if document.processed_at else None,
+        })
+
+    stored_findings = []
+    if not settings.ZERO_DATA_RETENTION and document_ids:
+        finding_result = await db.execute(
+            select(DocumentRisk).where(DocumentRisk.document_id.in_(document_ids))
+        )
+        stored_findings = [
+            {
+                "document_id": str(f.document_id),
+                "rule_name": f.rule_name,
+                "clause_text": f.clause_text,
+                "risk_level": f.risk_level.value if f.risk_level else None,
+                "explanation": f.ai_explanation,
+                "suggested_fix": f.suggested_fix,
+                "created_at": f.created_at.isoformat(),
+            }
+            for f in finding_result.scalars().all()
+        ]
+
+    # 10. Usage records.
+    usage_result = await db.execute(
+        select(UsageLog)
+        .where(UsageLog.user_id == user_id)
+        .order_by(desc(UsageLog.created_at))
+    )
+    usage_logs = [
+        {
+            "action": u.action.value if u.action else None,
+            "tokens_used": u.tokens_used,
+            "cost_usd": str(u.cost_usd),
+            "metadata": u.extra_data,
+            "created_at": u.created_at.isoformat(),
+        }
+        for u in usage_result.scalars().all()
+    ]
+
+    # 11. Billing records retained for the account.
+    invoice_result = await db.execute(
+        select(Invoice)
+        .where(Invoice.user_id == user_id)
+        .order_by(desc(Invoice.created_at))
+    )
+    invoices = [
+        {
+            "id": str(invoice.id),
+            "amount": invoice.amount,
+            "currency": invoice.currency,
+            "status": invoice.status,
+            "plan": invoice.plan,
+            "description": invoice.description,
+            "gateway": invoice.gateway,
+            "gateway_payment_id": invoice.gateway_payment_id,
+            "gateway_invoice_id": invoice.gateway_invoice_id,
+            "created_at": invoice.created_at.isoformat(),
+            "paid_at": invoice.paid_at.isoformat() if invoice.paid_at else None,
+        }
+        for invoice in invoice_result.scalars().all()
+    ]
+
+    # 12. Lawyer feedback submitted by the user.
+    feedback_result = await db.execute(
+        select(RuleFeedback)
+        .where(RuleFeedback.user_id == user_id)
+        .order_by(desc(RuleFeedback.created_at))
+    )
+    feedback = [
+        {
+            "id": str(item.id),
+            "feedback_type": item.feedback_type,
+            "clause_text": item.clause_text,
+            "comment": item.user_comment,
+            "suggested_risk_level": item.suggested_risk_level,
+            "created_at": item.created_at.isoformat(),
+        }
+        for item in feedback_result.scalars().all()
+    ]
+
     return {
         "export_metadata": {
             "exported_at": datetime.now(timezone.utc).isoformat(),
@@ -190,5 +293,15 @@ async def export_user_data(db: AsyncSession, user_id: uuid.UUID) -> Dict[str, An
         "rights_requests": rights_requests,
         "grievances": grievance_list,
         "nominations": nominations,
-        "note": "Contract text is not included in this export because ContraRed operates in Zero Data Retention mode — contract content is processed in-memory and never stored on our servers.",
+        "documents": documents,
+        "stored_findings": stored_findings,
+        "usage_logs": usage_logs,
+        "invoices": invoices,
+        "feedback": feedback,
+        "note": (
+            "Contract text is not included because this deployment operates in "
+            "Zero Data Retention mode; only document metadata is stored."
+            if settings.ZERO_DATA_RETENTION
+            else "Stored finding text is included because Zero Data Retention is disabled."
+        ),
     }

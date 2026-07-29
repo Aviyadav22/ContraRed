@@ -19,6 +19,7 @@ GeminiAnalyzer internally for AI calls.
 """
 
 import asyncio
+import copy
 import logging
 import re
 import time
@@ -27,11 +28,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.services.gemini_analyzer import (
     AIAnalysisResult,
-    AIRedline,
-    AIServiceError,
     AIServiceUnavailable,
-    AIRateLimited,
-    AIServiceTimeout,
     GeminiAnalyzer,
     gemini_analyzer,
     _sanitize_for_prompt,
@@ -39,7 +36,6 @@ from app.services.gemini_analyzer import (
 from app.services.hallucination_guard import (
     HallucinationGuard,
     HallucinationStats,
-    VerificationResult,
 )
 from app.services.confidence_scorer import (
     ConfidenceBreakdown,
@@ -47,9 +43,9 @@ from app.services.confidence_scorer import (
     ConfidenceScore,
     ConfidenceScorer,
 )
-from app.services.rule_engine import RuleEngine, RuleMatch, RiskLevel
+from app.services.rule_engine import RuleEngine, RuleMatch
 from app.services.structure_extractor import ContractMap, StructureExtractor
-from app.services.scope_analyzer import ScopeAnalyzer, ScopeAnalysisResult, scope_analyzer
+from app.services.scope_analyzer import scope_analyzer
 from app.services.jurisdiction_detector import (
     apply_jurisdiction_overrides,
     jurisdiction_detector,
@@ -114,6 +110,8 @@ class RawRedline:
     playbook_rule: Optional[Dict[str, Any]] = None
     clause_type: str = ""
     suggested_fix: Optional[str] = None
+    rule_id: str = ""
+    statutory_references: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -134,6 +132,8 @@ class VerifiedRedline:
     model_confidence: Optional[float] = None
     clause_type: str = ""
     suggested_fix: Optional[str] = None
+    rule_id: str = ""
+    statutory_references: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -157,6 +157,8 @@ class FinalRedline:
     # Smriti MCP enrichment (optional — empty when Smriti unavailable)
     statutory_basis: Optional[Dict[str, Any]] = None
     case_law_context: List[Dict[str, Any]] = field(default_factory=list)
+    rule_id: str = ""
+    statutory_references: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -201,7 +203,10 @@ class PipelineResult:
     scope_analysis: Optional[Dict[str, Any]] = None
     coverage_report: Optional[Dict[str, Any]] = None
     jurisdiction_code: Optional[str] = None
+    jurisdiction_name: Optional[str] = None
     contract_type: Optional[str] = None  # Detected contract type (nda, saas, employment, msa, ma, general)
+    review_perspective: Optional[str] = None
+    playbook_coverage: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d: Dict[str, Any] = {
@@ -209,6 +214,7 @@ class PipelineResult:
             "redlines": [
                 {
                     "rule_name": r.rule_name,
+                    "rule_id": r.rule_id,
                     "risk_level": r.risk_level,
                     "original_text": r.original_text,
                     "verified_text": r.verified_text,
@@ -225,6 +231,7 @@ class PipelineResult:
                     "fix_reasoning": r.fix_reasoning,
                     "statutory_basis": r.statutory_basis,
                     "case_law_context": r.case_law_context,
+                    "statutory_references": r.statutory_references,
                 }
                 for r in self.redlines
             ],
@@ -241,8 +248,14 @@ class PipelineResult:
             d["coverage_report"] = self.coverage_report
         if self.jurisdiction_code:
             d["jurisdiction_code"] = self.jurisdiction_code
+        if self.jurisdiction_name:
+            d["jurisdiction_name"] = self.jurisdiction_name
         if self.contract_type:
             d["contract_type"] = self.contract_type
+        if self.review_perspective:
+            d["review_perspective"] = self.review_perspective
+        if self.playbook_coverage:
+            d["playbook_coverage"] = self.playbook_coverage
         return d
 
 
@@ -276,7 +289,12 @@ def _infer_clause_type(rule_name: str) -> str:
     """Phase C1 — taxonomy-aware mapping. Wraps snap_to_clause_type so
     callers always get a value from the canonical ClauseType enum."""
     from app.services.clause_taxonomy import snap_to_clause_type
-    return snap_to_clause_type(rule_name).value
+    raw = (rule_name or "").strip()
+    snapped = snap_to_clause_type(raw).value
+    if snapped != "unknown" or raw.lower() == "unknown":
+        return snapped
+    slug = re.sub(r"[^a-z0-9]+", "_", raw.lower()).strip("_")
+    return (slug or "custom_rule")[:100]
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +336,7 @@ class AnalysisPipeline:
         contract_text: str,
         playbook_rules: Optional[List[Dict[str, Any]]] = None,
         playbook_name: str = "Default",
-        party_side: str = "seller",
+        party_side: str = "neutral",
         org_context: str = "",
         jurisdiction_override: Optional[str] = None,
         deal_context: Optional[Any] = None,           # Phase C3 — DealContext (kept Any to avoid hard import)
@@ -346,6 +364,7 @@ class AnalysisPipeline:
         executive_summary: List[str] = []
         final_redlines: List[FinalRedline] = []
         hallucination_stats: Dict[str, Any] = {}
+        playbook_coverage: Optional[Dict[str, Any]] = None
         warnings: List[str] = []
 
         # ---- Pre-Stage: Input validation ----
@@ -421,7 +440,11 @@ class AnalysisPipeline:
         # ---- Phase 5: SCOPE ANALYSIS (deterministic, between Stage 2 and 3) ----
         scope_data: Optional[Dict[str, Any]] = None
         coverage_data: Optional[Dict[str, Any]] = None
-        detected_jurisdiction: Optional[str] = None
+        # Jurisdiction detection is a document-level fact and must not depend
+        # on whether the regex engine happened to find a risky phrase.
+        detected_jurisdiction: Optional[str] = (
+            extraction.jurisdiction_result.detected_jurisdiction
+        )
         try:
             if classification.rule_matches:
                 # Run scope analysis on rule matches
@@ -455,15 +478,22 @@ class AnalysisPipeline:
                 )
 
                 # Apply jurisdiction overrides using the result from Stage 1 (B2)
-                jur_result = extraction.jurisdiction_result
-                if jur_result.detected_jurisdiction:
-                    detected_jurisdiction = jur_result.detected_jurisdiction
+                if detected_jurisdiction:
                     classification.rule_matches = apply_jurisdiction_overrides(
                         classification.rule_matches,
-                        jur_result.detected_jurisdiction,
+                        detected_jurisdiction,
                     )
         except Exception as e:
-            logger.warning("Scope analysis/jurisdiction overrides failed (non-fatal): %s", e)
+            logger.warning(
+                "Scope analysis/jurisdiction overrides failed: %s",
+                e,
+                exc_info=True,
+            )
+            partial = True
+            warnings.append(
+                "Scope or jurisdiction-specific review could not be completed; "
+                "treat this analysis as partial."
+            )
 
         # ---- Phase 6 wiring (C3): conditions + dependencies + tier overrides ----
         # Operates between Stage 2 and Stage 3 so both the AI prompt and the
@@ -479,7 +509,22 @@ class AnalysisPipeline:
                 tier_preference=tier_preference,
             )
         except Exception as e:
-            logger.warning("Phase 6 wiring failed (non-fatal): %s", e, exc_info=True)
+            logger.error("Phase 6 wiring failed: %s", e, exc_info=True)
+            if (
+                playbook_conditions
+                or playbook_dependencies
+                or rule_tiers_by_rule
+            ):
+                raise RuntimeError(
+                    "Playbook conditions, dependencies, or negotiation tiers "
+                    "could not be applied; analysis was stopped to avoid using "
+                    "the wrong legal position."
+                ) from e
+            partial = True
+            warnings.append(
+                "Advanced playbook logic could not be evaluated; treat this "
+                "analysis as partial."
+            )
 
         # ---- Pre-Stage 3: Contract type detection (deterministic) ----
         contract_type = self._detect_contract_type(contract_text)
@@ -489,28 +534,36 @@ class AnalysisPipeline:
         raw_redlines: List[RawRedline] = []
         try:
             s3_start = time.monotonic()
-            raw_redlines, ai_summary, s3_tokens = await self._stage3_risk_assessment(
+            raw_redlines, ai_summary, s3_tokens, playbook_coverage = await self._stage3_risk_assessment(
                 extraction, classification, playbook_rules, playbook_name,
                 party_side, contract_type=contract_type, org_context=org_context,
             )
             executive_summary = ai_summary
 
-            # Inject contract-type summary line
-            from app.services.prompt_templates import (
-                CONTRACT_TYPE_LABELS,
-                filter_rules_by_contract_type,
-            )
+            # Inject factual review context. Do not claim complete evaluation
+            # unless the returned rule ledger actually proves it.
+            from app.services.prompt_templates import CONTRACT_TYPE_LABELS
             type_label = CONTRACT_TYPE_LABELS.get(contract_type, contract_type)
-            total_rule_count = len(playbook_rules) if playbook_rules else 0
-            if contract_type != "general" and playbook_rules:
-                filtered_count = len(filter_rules_by_contract_type(playbook_rules, contract_type))
-                type_summary = (
-                    f"Document type: {type_label} "
-                    f"({filtered_count} of {total_rule_count} rules applicable)"
-                )
-            else:
-                type_summary = f"Document type: {type_label} (all {total_rule_count} rules evaluated)"
+            type_summary = (
+                f"Document type: {type_label}. "
+                f"Review perspective: {party_side}."
+            )
             executive_summary.insert(0, type_summary)
+
+            if playbook_coverage:
+                assessed = playbook_coverage.get("assessed_rules", 0)
+                total_rules = playbook_coverage.get("total_rules", 0)
+                executive_summary.insert(
+                    1,
+                    f"Playbook coverage: {assessed} of {total_rules} selected rules received an explicit AI assessment.",
+                )
+                if not playbook_coverage.get("complete", True):
+                    partial = True
+                    unassessed = len(playbook_coverage.get("unassessed_rule_ids", []))
+                    executive_summary.insert(
+                        2,
+                        f"Coverage warning: {unassessed} selected rule(s) require manual review.",
+                    )
 
             total_tokens += s3_tokens
             s3_metrics = StageMetrics(
@@ -531,6 +584,8 @@ class AnalysisPipeline:
                 classification.rule_matches, playbook_rules
             )
             executive_summary = ["AI analysis unavailable. Results based on rule engine only."]
+            if playbook_rules:
+                playbook_coverage = self._build_playbook_coverage(playbook_rules, [])
         except Exception as e:
             logger.error("Pipeline Stage 3 (risk_assessment) failed: %s", e)
             stage_metrics.append(StageMetrics(stage_name="risk_assessment", error=str(e)))
@@ -540,10 +595,12 @@ class AnalysisPipeline:
                 classification.rule_matches, playbook_rules
             )
             executive_summary = ["AI analysis encountered an error. Results based on rule engine only."]
+            if playbook_rules:
+                playbook_coverage = self._build_playbook_coverage(playbook_rules, [])
 
         if not raw_redlines:
             return PipelineResult(
-                executive_summary=executive_summary or ["No issues found."],
+                executive_summary=warnings + (executive_summary or ["No issues found."]),
                 redlines=[],
                 hallucination_stats={},
                 stage_metrics=stage_metrics,
@@ -551,6 +608,17 @@ class AnalysisPipeline:
                 total_tokens_used=total_tokens,
                 partial=partial,
                 ai_used=ai_used,
+                scope_analysis=scope_data,
+                coverage_report=coverage_data,
+                jurisdiction_code=detected_jurisdiction,
+                jurisdiction_name=(
+                    extraction.jurisdiction_result.profile.name
+                    if extraction.jurisdiction_result.profile
+                    else None
+                ),
+                contract_type=contract_type,
+                review_perspective=party_side,
+                playbook_coverage=playbook_coverage,
             )
 
         # ---- Stage 4: VERIFICATION (hallucination guard, CPU-bound → thread pool) ----
@@ -589,9 +657,27 @@ class AnalysisPipeline:
                     playbook_rule=r.playbook_rule,
                     model_confidence=r.model_confidence,
                     clause_type=r.clause_type,
+                    suggested_fix=r.suggested_fix,
+                    rule_id=r.rule_id,
+                    statutory_references=list(r.statutory_references),
                 )
                 for r in raw_redlines
             ]
+
+        if playbook_coverage is not None:
+            playbook_coverage = self._reconcile_playbook_coverage(
+                playbook_coverage,
+                raw_redlines,
+                verified_redlines,
+            )
+            unresolved = playbook_coverage.get("unverified_finding_rule_ids", [])
+            if unresolved:
+                partial = True
+                executive_summary.append(
+                    "Verification warning: "
+                    f"{len(unresolved)} playbook finding(s) could not be anchored "
+                    "to verbatim contract text and require manual review."
+                )
 
         # ---- Stage 5: ENRICHMENT (confidence scoring, CPU-bound → thread pool) ----
         try:
@@ -628,6 +714,9 @@ class AnalysisPipeline:
                     ),
                     verification_status=v.verification_status,
                     clause_type=v.clause_type,
+                    suggested_fix=v.suggested_fix,
+                    rule_id=v.rule_id,
+                    statutory_references=list(v.statutory_references),
                 )
                 for v in verified_redlines
             ]
@@ -683,7 +772,14 @@ class AnalysisPipeline:
             scope_analysis=scope_data,
             coverage_report=coverage_data,
             jurisdiction_code=detected_jurisdiction,
+            jurisdiction_name=(
+                extraction.jurisdiction_result.profile.name
+                if extraction.jurisdiction_result.profile
+                else None
+            ),
             contract_type=contract_type,
+            review_perspective=party_side,
+            playbook_coverage=playbook_coverage,
         )
 
     # ======================================================================
@@ -745,10 +841,22 @@ class AnalysisPipeline:
         playbook_rules: Optional[List[Dict[str, Any]]],
     ) -> PipelineClassificationResult:
         """
-        Classify clauses using rule engine pattern matching.
+        Classify clauses using both the baseline engine and the selected
+        playbook's actual detection patterns.
+
+        Playbook patterns used to be omitted from serialization and ignored by
+        this stage, which meant a custom playbook affected only prompt prose.
+        The selected playbook now takes precedence when it covers the same
+        clause type and source region as a generic rule.
         """
         full_text = extraction.full_text
-        rule_matches = self._rule_engine.evaluate(full_text)
+        default_matches = self._rule_engine.evaluate(full_text)
+        playbook_matches: List[RuleMatch] = []
+        if playbook_rules:
+            playbook_engine = RuleEngine.from_rule_dicts(playbook_rules)
+            playbook_matches = playbook_engine.evaluate(full_text)
+
+        rule_matches = self._merge_rule_matches(default_matches, playbook_matches)
 
         # Build clause inventory from rule matches
         inventory: List[ClauseInventoryItem] = []
@@ -766,6 +874,50 @@ class AnalysisPipeline:
             rule_matches=rule_matches,
         )
 
+    @staticmethod
+    def _merge_rule_matches(
+        default_matches: List[RuleMatch],
+        playbook_matches: List[RuleMatch],
+    ) -> List[RuleMatch]:
+        """Merge baseline and playbook candidates without losing legal issues.
+
+        A playbook rule supersedes a generic rule only when both address the
+        same normalized clause type and overlap the same source region.
+        Different legal issues in one clause are deliberately preserved.
+        """
+        if not playbook_matches:
+            return default_matches
+
+        def _type(match: RuleMatch) -> str:
+            raw = match.clause_type or match.rule_name
+            snapped = _infer_clause_type(raw)
+            return snapped if snapped != "unknown" else str(raw).strip().lower()
+
+        kept_defaults: List[RuleMatch] = []
+        for generic in default_matches:
+            superseded = any(
+                _type(generic) == _type(custom)
+                and generic.start_offset < custom.end_offset
+                and custom.start_offset < generic.end_offset
+                for custom in playbook_matches
+            )
+            if not superseded:
+                kept_defaults.append(generic)
+
+        merged = kept_defaults + playbook_matches
+        seen = set()
+        unique: List[RuleMatch] = []
+        for match in sorted(merged, key=lambda m: (m.start_offset, m.rule_id)):
+            key = (
+                match.rule_id,
+                match.start_offset,
+                " ".join(match.match_text.lower().split()),
+            )
+            if key not in seen:
+                unique.append(match)
+                seen.add(key)
+        return unique
+
     # ======================================================================
     # Stage 3: RISK ASSESSMENT (Gemini Pro, full AI analysis)
     # ======================================================================
@@ -776,47 +928,27 @@ class AnalysisPipeline:
         classification: PipelineClassificationResult,
         playbook_rules: Optional[List[Dict[str, Any]]],
         playbook_name: str,
-        party_side: str = "seller",
+        party_side: str = "neutral",
         contract_type: str = "general",
         org_context: str = "",
-    ) -> Tuple[List[RawRedline], List[str], int]:
+    ) -> Tuple[List[RawRedline], List[str], int, Optional[Dict[str, Any]]]:
         """
         Full AI analysis using GeminiAnalyzer.
 
-        When *contract_type* is not ``"general"``, playbook rules are
-        pre-filtered to only those applicable to the detected type.  This
-        saves 50-70% of prompt tokens for typed contracts.
+        Every rule in an explicitly selected playbook is sent to the model.
+        The returned coverage ledger proves which rules were actually assessed.
 
         Returns:
-            Tuple of (raw_redlines, executive_summary, tokens_used)
+            Tuple of (raw_redlines, executive_summary, tokens_used, coverage)
         """
-        from app.services.prompt_templates import (
-            CONTRACT_TYPE_LABELS,
-            filter_rules_by_contract_type,
-        )
-
-        # Pre-filter playbook rules by detected contract type
-        total_rules = len(playbook_rules) if playbook_rules else 0
-        if playbook_rules and contract_type != "general":
-            filtered_rules = filter_rules_by_contract_type(playbook_rules, contract_type)
-            type_label = CONTRACT_TYPE_LABELS.get(contract_type, contract_type)
-            logger.info(
-                "Contract type '%s' — filtered %d → %d rules (saved %d)",
-                contract_type,
-                total_rules,
-                len(filtered_rules),
-                total_rules - len(filtered_rules),
-            )
-        else:
-            filtered_rules = playbook_rules
-            type_label = CONTRACT_TYPE_LABELS.get("general", "General Commercial Agreement")
-
         # Pass detected jurisdiction code from Stage 1 (B2 — single detection path)
         jurisdiction_hint = extraction.jurisdiction_result.detected_jurisdiction or None
 
         ai_result: AIAnalysisResult = await self._analyzer.analyze_full_contract(
             contract_text=extraction.full_text,
-            playbook_rules=filtered_rules,
+            # The selected playbook is authoritative.  Do not silently remove
+            # rules through a generic contract-type applicability table.
+            playbook_rules=playbook_rules,
             playbook_name=playbook_name,
             jurisdiction_override=jurisdiction_hint,
             party_side=party_side,
@@ -828,13 +960,17 @@ class AnalysisPipeline:
         for rm in classification.rule_matches:
             regex_matched_texts.add(rm.match_text.lower().strip())
 
-        # Build playbook rule lookup by name
+        # Build playbook rule lookup by stable id and normalized name.
         playbook_lookup: Dict[str, Dict[str, Any]] = {}
+        playbook_by_id: Dict[str, Dict[str, Any]] = {}
         if playbook_rules:
             for pr in playbook_rules:
                 name = pr.get("name", pr.get("rule_name", "")).lower()
                 if name:
                     playbook_lookup[name] = pr
+                rule_id = str(pr.get("id") or pr.get("rule_id") or "")
+                if rule_id:
+                    playbook_by_id[rule_id] = pr
 
         # Convert AI redlines to RawRedline
         raw_redlines: List[RawRedline] = []
@@ -846,8 +982,11 @@ class AnalysisPipeline:
                 for rt in regex_matched_texts
             ) if regex_matched_texts else False
 
-            # Find matching playbook rule
-            pb_rule = playbook_lookup.get(ai_redline.rule_name.lower())
+            # IDs survive harmless formatting changes to a rule label.
+            ai_rule_id = str(getattr(ai_redline, "rule_id", "") or "")
+            pb_rule = playbook_by_id.get(ai_rule_id)
+            if pb_rule is None:
+                pb_rule = playbook_lookup.get(ai_redline.rule_name.lower())
 
             is_db = False
             if pb_rule:
@@ -855,13 +994,12 @@ class AnalysisPipeline:
 
             # Determine clause_type from playbook rule or infer from rule name
             # — always snap through the canonical taxonomy (Phase C1).
-            from app.services.clause_taxonomy import snap_to_clause_type
             raw_clause_type = ""
             if pb_rule:
                 raw_clause_type = pb_rule.get("clause_type", "")
             if not raw_clause_type:
                 raw_clause_type = ai_redline.rule_name
-            clause_type = snap_to_clause_type(raw_clause_type).value
+            clause_type = _infer_clause_type(raw_clause_type)
 
             raw_redlines.append(RawRedline(
                 rule_name=ai_redline.rule_name,
@@ -875,9 +1013,169 @@ class AnalysisPipeline:
                 regex_matched=regex_matched,
                 playbook_rule=pb_rule,
                 clause_type=clause_type,
+                rule_id=(
+                    str(pb_rule.get("id") or pb_rule.get("rule_id") or "")
+                    if pb_rule else ai_rule_id
+                ),
+                statutory_references=list(
+                    getattr(ai_redline, "statutory_references", None) or []
+                ),
             ))
 
-        return raw_redlines, ai_result.executive_summary, ai_result.tokens_used
+        rule_results = list(getattr(ai_result, "rule_results", None) or [])
+        coverage = (
+            self._build_playbook_coverage(playbook_rules, rule_results)
+            if playbook_rules else None
+        )
+
+        # Recover a finding when the model completed the rule ledger but
+        # accidentally omitted its redline object.  Exact ledger evidence is
+        # still passed through the hallucination guard below.
+        existing_rule_ids = {r.rule_id for r in raw_redlines if r.rule_id}
+        existing_rule_names = {r.rule_name.strip().lower() for r in raw_redlines}
+        for outcome in rule_results:
+            if not isinstance(outcome, dict):
+                continue
+            outcome_status = str(outcome.get("status") or "").lower()
+            if outcome_status not in {"violation", "missing"}:
+                continue
+            outcome_id = str(outcome.get("rule_id") or "")
+            outcome_name = str(outcome.get("rule_name") or "").strip()
+            if outcome_id in existing_rule_ids or outcome_name.lower() in existing_rule_names:
+                continue
+
+            pb_rule = playbook_by_id.get(outcome_id) or playbook_lookup.get(outcome_name.lower())
+            evidence = str(
+                outcome.get("evidence")
+                or outcome.get("anchor_text")
+                or outcome.get("original_text")
+                or ""
+            ).strip()
+            if not evidence:
+                continue
+
+            raw_name = outcome_name or (
+                str(pb_rule.get("name") or pb_rule.get("clause_type") or "Playbook Rule")
+                if pb_rule else "Playbook Rule"
+            )
+            raw_clause_type = str(pb_rule.get("clause_type") or raw_name) if pb_rule else raw_name
+            try:
+                confidence = float(outcome.get("confidence", 0.8) or 0.8)
+            except (TypeError, ValueError):
+                confidence = 0.8
+            raw_redlines.append(RawRedline(
+                rule_name=raw_name,
+                risk_level=str(
+                    outcome.get("risk_level")
+                    or (pb_rule.get("risk_level") if pb_rule else "YELLOW")
+                ).upper(),
+                original_text=evidence,
+                explanation=str(
+                    outcome.get("reasoning")
+                    or outcome.get("explanation")
+                    or "The contract does not meet the selected playbook position."
+                ),
+                recommendation=(
+                    str(pb_rule.get("primary_position") or "Review and revise to the playbook position.")
+                    if pb_rule else "Review and revise to the playbook position."
+                ),
+                redline_type=outcome_status,
+                is_deal_breaker=bool(pb_rule and pb_rule.get("is_deal_breaker", False)),
+                model_confidence=max(0.0, min(confidence, 1.0)),
+                regex_matched=False,
+                playbook_rule=pb_rule,
+                clause_type=_infer_clause_type(raw_clause_type),
+                rule_id=(
+                    str(pb_rule.get("id") or pb_rule.get("rule_id") or "")
+                    if pb_rule else outcome_id
+                ),
+                statutory_references=list(outcome.get("statutory_references") or []),
+            ))
+
+        return raw_redlines, ai_result.executive_summary, ai_result.tokens_used, coverage
+
+    @staticmethod
+    def _build_playbook_coverage(
+        playbook_rules: List[Dict[str, Any]],
+        rule_results: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Build a transparent rule-by-rule completion ledger."""
+        expected: Dict[str, str] = {}
+        expected_by_name: Dict[str, str] = {}
+        for rule in playbook_rules:
+            rule_name = str(rule.get("name") or rule.get("rule_name") or "").strip()
+            rule_id = str(
+                rule.get("id") or rule.get("rule_id") or rule_name
+            ).strip()
+            if not rule_id:
+                continue
+            expected[rule_id] = rule_name
+            if rule_name:
+                expected_by_name[rule_name.lower()] = rule_id
+
+        counts = {"compliant": 0, "violation": 0, "missing": 0, "not_applicable": 0}
+        statuses: Dict[str, str] = {}
+
+        for result in rule_results:
+            if not isinstance(result, dict):
+                continue
+            status = str(result.get("status") or "").lower()
+            if status not in counts:
+                continue
+            result_id = str(result.get("rule_id") or "").strip()
+            result_name = str(result.get("rule_name") or "").strip().lower()
+            if result_id not in expected:
+                result_id = expected_by_name.get(result_name, "")
+            # Ignore beyond-playbook ledger rows and duplicate model rows. The
+            # coverage counts must never exceed the selected playbook size.
+            if not result_id or result_id in statuses:
+                continue
+            statuses[result_id] = status
+
+        for status in statuses.values():
+            counts[status] += 1
+
+        unassessed = [rule_id for rule_id in expected if rule_id not in statuses]
+        return {
+            "total_rules": len(expected),
+            "assessed_rules": len(expected) - len(unassessed),
+            **counts,
+            "rule_statuses": statuses,
+            "unassessed_rule_ids": unassessed,
+            "complete": not unassessed,
+        }
+
+    @staticmethod
+    def _reconcile_playbook_coverage(
+        coverage: Dict[str, Any],
+        raw_redlines: List[RawRedline],
+        verified_redlines: List[VerifiedRedline],
+    ) -> Dict[str, Any]:
+        """Make coverage depend on both model assessment and source anchoring."""
+        reconciled = copy.deepcopy(coverage)
+        expected_ids = (
+            set(reconciled.get("rule_statuses", {}))
+            | set(reconciled.get("unassessed_rule_ids", []))
+        )
+        flagged_ids = {
+            redline.rule_id
+            for redline in raw_redlines
+            if redline.rule_id in expected_ids
+            and redline.redline_type in {"violation", "missing"}
+        }
+        anchored_ids = {
+            redline.rule_id
+            for redline in verified_redlines
+            if redline.rule_id in expected_ids
+            and not redline.verification_status.startswith("unverified")
+        }
+        unresolved = sorted(flagged_ids - anchored_ids)
+        ledger_complete = bool(reconciled.get("complete", False))
+        reconciled["ledger_complete"] = ledger_complete
+        reconciled["verification_complete"] = not unresolved
+        reconciled["unverified_finding_rule_ids"] = unresolved
+        reconciled["complete"] = ledger_complete and not unresolved
+        return reconciled
 
     # ======================================================================
     # Stage 4: VERIFICATION (hallucination guard, deterministic)
@@ -896,21 +1194,20 @@ class AnalysisPipeline:
         verified: List[VerifiedRedline] = []
 
         for redline in raw_redlines:
-            # Missing clauses won't have exact quotes — verify more leniently
+            # Missing clauses still need a real insertion anchor. If the anchor
+            # cannot be found in the source, the finding is not actionable and
+            # is surfaced through the incomplete coverage ledger instead.
             if redline.redline_type == "missing":
-                # For missing clauses, we verify the anchor text exists
                 result = guard.verify_quote(
                     redline.original_text,
                     is_deal_breaker=redline.is_deal_breaker,
                 )
-                # Be lenient for missing clauses — only reject if completely bogus
-                if result.status == "rejected" and result.similarity_score < 0.5:
+                if result.status == "rejected":
                     logger.info(
                         "Rejecting hallucinated anchor for missing clause: '%.60s...'",
                         redline.original_text,
                     )
                     continue
-                # Accept missing clause even with fuzzy match
                 verified.append(VerifiedRedline(
                     rule_name=redline.rule_name,
                     risk_level=redline.risk_level,
@@ -920,12 +1217,15 @@ class AnalysisPipeline:
                     recommendation=redline.recommendation,
                     redline_type=redline.redline_type,
                     is_deal_breaker=redline.is_deal_breaker,
-                    verification_status=result.status if result.passed else "fuzzy_accepted",
-                    verification_confidence=max(result.confidence, 0.6),
+                    verification_status=result.status,
+                    verification_confidence=result.confidence,
                     regex_matched=redline.regex_matched,
                     playbook_rule=redline.playbook_rule,
                     model_confidence=redline.model_confidence,
                     clause_type=redline.clause_type,
+                    suggested_fix=redline.suggested_fix,
+                    rule_id=redline.rule_id,
+                    statutory_references=list(redline.statutory_references),
                 ))
             else:
                 # Violation — strict verification
@@ -935,30 +1235,6 @@ class AnalysisPipeline:
                 )
 
                 if result.status == "rejected":
-                    if guard.needs_requery(result, redline.is_deal_breaker):
-                        # Deal-breaker: keep with degraded status rather than silently dropping
-                        logger.warning(
-                            "Deal-breaker quote rejected (score=%.2f) — kept with low confidence: '%.60s...'",
-                            result.similarity_score,
-                            redline.original_text,
-                        )
-                        verified.append(VerifiedRedline(
-                            rule_name=redline.rule_name,
-                            risk_level=redline.risk_level,
-                            original_text=redline.original_text,
-                            verified_text=redline.original_text,
-                            explanation="⚠️ UNVERIFIED QUOTE — The exact text could not be located in the document. Review the original contract to confirm this finding. " + redline.explanation,
-                            recommendation=redline.recommendation,
-                            redline_type=redline.redline_type,
-                            is_deal_breaker=True,
-                            verification_status="unverified_deal_breaker",
-                            verification_confidence=0.3,
-                            regex_matched=redline.regex_matched,
-                            playbook_rule=redline.playbook_rule,
-                            model_confidence=redline.model_confidence,
-                            clause_type=redline.clause_type,
-                        ))
-                        continue
                     logger.info(
                         "Rejecting hallucinated quote (score=%.2f): '%.60s...'",
                         result.similarity_score,
@@ -981,6 +1257,9 @@ class AnalysisPipeline:
                     playbook_rule=redline.playbook_rule,
                     model_confidence=redline.model_confidence,
                     clause_type=redline.clause_type,
+                    suggested_fix=redline.suggested_fix,
+                    rule_id=redline.rule_id,
+                    statutory_references=list(redline.statutory_references),
                 ))
 
         return verified, guard.get_stats()
@@ -1028,6 +1307,9 @@ class AnalysisPipeline:
                 verification_status=vr.verification_status,
                 cross_references=cross_refs,
                 clause_type=vr.clause_type,
+                suggested_fix=vr.suggested_fix,
+                rule_id=vr.rule_id,
+                statutory_references=list(vr.statutory_references),
             ))
 
         # Sort by confidence (highest first), then by risk level
@@ -1096,49 +1378,52 @@ class AnalysisPipeline:
         redlines: List[FinalRedline],
         full_text: str,
     ) -> List[FinalRedline]:
-        """Remove duplicate findings that reference overlapping text regions.
+        """Collapse only duplicate findings for the same rule and source.
 
-        When two findings overlap in the source text, keep the higher-risk one.
-        Tie-break by confidence score (higher wins).
+        One clause can contain several independent legal defects.  Text-only
+        overlap de-duplication erased those issues, so rule identity is now a
+        required part of the duplicate key.
         """
         if len(redlines) <= 1:
             return redlines
 
         risk_order = {"RED": 0, "YELLOW": 1, "GREEN": 2}
 
-        # Find character offset for each redline's text in the contract
-        located: List[tuple] = []  # (start, end, index, redline)
+        located: List[tuple] = []  # (start, end, index, rule_key, redline)
         for i, r in enumerate(redlines):
             search_text = r.verified_text or r.original_text
             idx = full_text.find(search_text)
+            rule_key = r.rule_id or " ".join(r.rule_name.lower().split())
             if idx >= 0:
-                located.append((idx, idx + len(search_text), i, r))
+                located.append((idx, idx + len(search_text), i, rule_key, r))
             else:
-                # Couldn't locate — keep it (missing clause or fuzzy match)
-                located.append((-1, -1, i, r))
+                located.append((-1, -1, i, rule_key, r))
 
-        # Sort by start position
         located.sort(key=lambda x: (x[0], x[1]))
-
         keep = set(range(len(redlines)))
 
         for i in range(len(located)):
-            if i not in keep:
+            s1, e1, idx1, key1, r1 = located[i]
+            if idx1 not in keep:
                 continue
-            s1, e1, idx1, r1 = located[i]
-            if s1 < 0:
-                continue  # unlocated, always keep
 
             for j in range(i + 1, len(located)):
-                if j not in keep:
+                s2, e2, idx2, key2, r2 = located[j]
+                if idx2 not in keep or key1 != key2:
                     continue
-                s2, e2, idx2, r2 = located[j]
-                if s2 < 0:
-                    continue
-                if s2 >= e1:
-                    break  # no more overlaps (sorted by start)
 
-                # Overlap detected — remove the lower-priority one
+                overlaps = s1 >= 0 and s2 >= 0 and s1 < e2 and s2 < e1
+                same_unlocated_text = (
+                    s1 < 0
+                    and s2 < 0
+                    and " ".join((r1.verified_text or r1.original_text).lower().split())
+                    == " ".join((r2.verified_text or r2.original_text).lower().split())
+                )
+                if not overlaps and not same_unlocated_text:
+                    if s1 >= 0 and s2 >= e1:
+                        break
+                    continue
+
                 rank1 = (risk_order.get(r1.risk_level, 3), -(r1.confidence.score if r1.confidence else 0))
                 rank2 = (risk_order.get(r2.risk_level, 3), -(r2.confidence.score if r2.confidence else 0))
 
@@ -1146,7 +1431,7 @@ class AnalysisPipeline:
                     keep.discard(idx2)
                 else:
                     keep.discard(idx1)
-                    break  # r1 was removed, stop comparing it
+                    break
 
         return [redlines[i] for i in sorted(keep)]
 
@@ -1178,17 +1463,15 @@ class AnalysisPipeline:
              `deal_context`; collect overrides from matching conditions and
              apply to BOTH playbook_rules dicts (so the AI sees the override)
              AND the rule_matches list (so the fallback path stays consistent).
-          3. Dependencies — apply cross-rule effects to the rule_matches list
-             via `dependency_resolver.resolve`. Effects on the AI prompt are
-             out of scope for this pass; the dependency effects surface in the
-             rule-engine fallback and via Stage-5 risk_level tweaks if the AI
-             also flags both source and target.
+          3. Dependencies — apply cross-rule effects to both RuleMatch objects
+             and the rule dictionaries sent to the AI, including AI-only rules
+             that intentionally have no deterministic match.
         """
         from app.services.playbook_conditions_engine import conditions_engine
         from app.services.dependency_resolver import dependency_resolver
 
         modified_rules: Optional[List[Dict[str, Any]]] = (
-            list(playbook_rules) if playbook_rules else None
+            copy.deepcopy(playbook_rules) if playbook_rules else None
         )
 
         # ---- (1) Tier swap on playbook_rules dicts ----
@@ -1252,11 +1535,59 @@ class AnalysisPipeline:
         # ---- (3) Dependencies ----
         if dependencies:
             try:
-                rule_matches, _actions = dependency_resolver.resolve(rule_matches, dependencies)
+                rule_matches, actions = dependency_resolver.resolve(rule_matches, dependencies)
+                if modified_rules and actions:
+                    modified_rules = self._apply_dependency_actions_to_rule_dicts(
+                        modified_rules,
+                        actions,
+                    )
             except Exception as exc:
                 logger.warning("dependency_resolver.resolve failed: %s", exc)
 
         return modified_rules, rule_matches
+
+    @staticmethod
+    def _apply_dependency_actions_to_rule_dicts(
+        rule_dicts: List[Dict[str, Any]],
+        actions: List[Any],
+    ) -> List[Dict[str, Any]]:
+        """Mirror resolved dependency effects into the AI prompt rule shape."""
+        working = copy.deepcopy(rule_dicts)
+        suppressed: set[str] = set()
+
+        def _matches(rule: Dict[str, Any], target: str) -> bool:
+            rule_id = str(rule.get("id") or rule.get("rule_id") or "")
+            clause_type = str(rule.get("clause_type") or rule.get("name") or "")
+            return target in {rule_id, clause_type}
+
+        for action in actions:
+            target = str(getattr(action, "target_clause", "") or "")
+            effect = str(getattr(action, "effect", "") or "")
+            params = dict(getattr(action, "effect_params", None) or {})
+            if not target:
+                continue
+            if effect == "suppress":
+                suppressed.add(target)
+                continue
+
+            for rule in working:
+                if not _matches(rule, target):
+                    continue
+                if effect == "escalate_risk" and params.get("new_risk"):
+                    rule["risk_level"] = str(params["new_risk"]).upper()
+                elif effect == "change_position" and params.get("new_position"):
+                    rule["primary_position"] = str(params["new_position"])
+                elif effect == "add_flag" and params.get("message"):
+                    flags = list(rule.get("dependency_flags") or [])
+                    flags.append(str(params["message"]))
+                    rule["dependency_flags"] = flags
+                break
+
+        return [
+            rule
+            for rule in working
+            if not any(_matches(rule, target) for target in suppressed)
+        ]
 
     @staticmethod
     def _apply_overrides_to_rule_dicts(
@@ -1324,6 +1655,11 @@ class AnalysisPipeline:
         text_lower = text[:5000].lower()
 
         type_signals = {
+            "dpa": [
+                r"\b(data\s+processing\s+(addendum|agreement)|dpa)\b",
+                r"\b(data\s+(controller|processor)|data\s+fiduciary|data\s+principal)\b",
+                r"\b(data\s+subject|personal\s+data|subprocessor)\b",
+            ],
             "nda": [
                 r"\b(non[\s-]?disclosure|confidentiality\s+agreement|nda)\b",
                 r"\b(disclosing\s+party|receiving\s+party)\b",
@@ -1349,6 +1685,41 @@ class AnalysisPipeline:
                 r"\b(due\s+diligence|closing\s+conditions|representations?\s+and\s+warranties)\b",
                 r"\b(indemnification\s+escrow|earn[\s-]?out|purchase\s+price)\b",
             ],
+            "consulting": [
+                r"\b(consulting\s+agreement|consultant\s+agreement|independent\s+contractor)\b",
+                r"\b(consultant|professional\s+services)\b",
+                r"\b(deliverables|statement\s+of\s+work|milestones)\b",
+            ],
+            "vendor": [
+                r"\b(vendor\s+agreement|procurement\s+agreement|supplier\s+agreement)\b",
+                r"\b(purchase\s+order|goods|products|delivery)\b",
+                r"\b(vendor|supplier|purchaser)\b",
+            ],
+            "joint_venture": [
+                r"\b(joint\s+venture|joint\s+venture\s+agreement)\b",
+                r"\b(venture\s+company|management\s+committee|reserved\s+matters)\b",
+                r"\b(capital\s+contribution|profit\s+sharing|deadlock)\b",
+            ],
+            "lease": [
+                r"\b(lease\s+agreement|leave\s+and\s+license|tenancy\s+agreement)\b",
+                r"\b(landlord|tenant|lessor|lessee|licensor|licensee)\b",
+                r"\b(premises|rent|security\s+deposit)\b",
+            ],
+            "healthcare": [
+                r"\b(healthcare\s+vendor|health\s+services|hospital|clinical)\b",
+                r"\b(patient\s+(data|records)|protected\s+health\s+information|hipaa)\b",
+                r"\b(medical\s+records|healthcare\s+provider)\b",
+            ],
+            "fintech": [
+                r"\b(fintech|payment\s+services|financial\s+technology)\b",
+                r"\b(payment\s+aggregator|payment\s+gateway|regulated\s+entity)\b",
+                r"\b(rbi|reserve\s+bank\s+of\s+india|pci[\s-]?dss)\b",
+            ],
+            "it_services": [
+                r"\b(it\s+services\s+agreement|information\s+technology\s+services)\b",
+                r"\b(system\s+integration|software\s+development|managed\s+services)\b",
+                r"\b(acceptance\s+testing|source\s+code|change\s+request)\b",
+            ],
         }
 
         scores = {}
@@ -1358,6 +1729,15 @@ class AnalysisPipeline:
 
         best_type = max(scores, key=scores.get)
         if scores[best_type] >= 2:  # Need at least 2 signals
+            if best_type == "nda":
+                mutual_signals = (
+                    r"\bmutual\b",
+                    r"\beach\s+party\s+(?:may\s+be|is)\s+(?:a\s+)?(?:disclosing|receiving)\s+party\b",
+                    r"\bboth\s+parties\b",
+                )
+                if any(re.search(pattern, text_lower) for pattern in mutual_signals):
+                    return "nda_mutual"
+                return "nda_unilateral"
             return best_type
         return "general"  # Fallback — send all rules
 
@@ -1434,15 +1814,24 @@ class AnalysisPipeline:
     ) -> List[RawRedline]:
         """Convert rule engine matches to RawRedline (fallback when AI is unavailable)."""
         playbook_lookup: Dict[str, Dict[str, Any]] = {}
+        playbook_by_id: Dict[str, Dict[str, Any]] = {}
         if playbook_rules:
             for pr in playbook_rules:
                 name = pr.get("name", pr.get("rule_name", "")).lower()
                 if name:
                     playbook_lookup[name] = pr
+                rule_id = str(pr.get("id") or pr.get("rule_id") or "")
+                if rule_id:
+                    playbook_by_id[rule_id] = pr
 
         redlines: List[RawRedline] = []
         for rm in rule_matches:
-            pb_rule = playbook_lookup.get(rm.rule_name.lower())
+            # Keyword matches for semantic rules are candidate locators, not a
+            # legal conclusion.  Showing them as violations when AI is down
+            # produces false positives for perfectly compliant clauses.
+            if getattr(rm, "detection_mode", "keywords_only") != "keywords_only":
+                continue
+            pb_rule = playbook_by_id.get(str(rm.rule_id)) or playbook_lookup.get(rm.rule_name.lower())
             clause_type = ""
             if pb_rule:
                 clause_type = pb_rule.get("clause_type", "")
@@ -1459,6 +1848,7 @@ class AnalysisPipeline:
                 regex_matched=True,
                 playbook_rule=pb_rule,
                 clause_type=clause_type,
+                rule_id=str(rm.rule_id or ""),
             ))
         return redlines
 
@@ -1473,6 +1863,7 @@ class AnalysisPipeline:
         playbook_rules: list = None,
         playbook_name: str = "Default",
         jurisdiction: str = None,
+        party_side: str = "neutral",
     ) -> dict:
         """Analyze a single clause with hallucination guard + confidence scoring.
 
@@ -1488,6 +1879,7 @@ class AnalysisPipeline:
             playbook_rules=playbook_rules,
             playbook_name=playbook_name,
             jurisdiction=jurisdiction,
+            party_side=party_side,
         )
 
         raw_redlines = ai_result.get("redlines", [])

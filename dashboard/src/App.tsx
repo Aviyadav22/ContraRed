@@ -1,7 +1,7 @@
 import React, { Suspense, useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { isAuthenticated, validateSession, clearAuth } from '@/api/client';
+import { isAuthenticated, validateSession, clearAuth, getStoredUser, type User } from '@/api/client';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { ToastProvider } from '@/contexts/ToastContext';
@@ -9,30 +9,71 @@ import { ToastContainer } from '@/components/ui/Toast';
 import { ConsentBanner } from '@/components/ConsentBanner';
 import { ConsentPromptModal } from '@/components/ConsentPromptModal';
 
-const Landing = React.lazy(() => import('@/pages/Landing'));
-const Login = React.lazy(() => import('@/pages/Login'));
-const Register = React.lazy(() => import('@/pages/Register'));
-const Dashboard = React.lazy(() => import('@/pages/Dashboard'));
-const Playbooks = React.lazy(() => import('@/pages/Playbooks'));
-const PlaybookEditor = React.lazy(() => import('@/pages/playbook-editor'));
-const Billing = React.lazy(() => import('@/pages/Billing'));
-const AuditLogs = React.lazy(() => import('@/pages/AuditLogs'));
-const Team = React.lazy(() => import('@/pages/Team'));
-const NotFound = React.lazy(() => import('@/pages/NotFound'));
-const ClauseLibrary = React.lazy(() => import('@/pages/ClauseLibrary'));
-const Analytics = React.lazy(() => import('@/pages/Analytics'));
-const Compare = React.lazy(() => import('@/pages/Compare'));
-const BatchUpload = React.lazy(() => import('@/pages/BatchUpload'));
-const Executive = React.lazy(() => import('@/pages/Executive'));
-const Reports = React.lazy(() => import('@/pages/Reports'));
-const Marketplace = React.lazy(() => import('@/pages/Marketplace'));
-const ForgotPassword = React.lazy(() => import('@/pages/ForgotPassword'));
-const Drafting = React.lazy(() => import('@/pages/drafting'));
-const ConsentPreferences = React.lazy(() => import('@/pages/ConsentPreferences'));
-const DataRights = React.lazy(() => import('@/pages/DataRights'));
-const ComplianceDashboard = React.lazy(() => import('@/pages/ComplianceDashboard'));
-const DPDPCommandCenter = React.lazy(() => import('@/pages/DPDPCommandCenter'));
-const Redline = React.lazy(() => import('@/pages/redline'));
+const pageImports = {
+  landing: () => import('@/pages/Landing'),
+  login: () => import('@/pages/Login'),
+  register: () => import('@/pages/Register'),
+  dashboard: () => import('@/pages/Dashboard'),
+  playbooks: () => import('@/pages/Playbooks'),
+  playbookEditor: () => import('@/pages/playbook-editor'),
+  billing: () => import('@/pages/Billing'),
+  auditLogs: () => import('@/pages/AuditLogs'),
+  team: () => import('@/pages/Team'),
+  notFound: () => import('@/pages/NotFound'),
+  clauseLibrary: () => import('@/pages/ClauseLibrary'),
+  analytics: () => import('@/pages/Analytics'),
+  compare: () => import('@/pages/Compare'),
+  batchUpload: () => import('@/pages/BatchUpload'),
+  executive: () => import('@/pages/Executive'),
+  reports: () => import('@/pages/Reports'),
+  marketplace: () => import('@/pages/Marketplace'),
+  forgotPassword: () => import('@/pages/ForgotPassword'),
+  drafting: () => import('@/pages/drafting'),
+  consentPreferences: () => import('@/pages/ConsentPreferences'),
+  dataRights: () => import('@/pages/DataRights'),
+  dpdpCommandCenter: () => import('@/pages/DPDPCommandCenter'),
+  redline: () => import('@/pages/redline'),
+};
+
+const Landing = React.lazy(pageImports.landing);
+const Login = React.lazy(pageImports.login);
+const Register = React.lazy(pageImports.register);
+const Dashboard = React.lazy(pageImports.dashboard);
+const Playbooks = React.lazy(pageImports.playbooks);
+const PlaybookEditor = React.lazy(pageImports.playbookEditor);
+const Billing = React.lazy(pageImports.billing);
+const AuditLogs = React.lazy(pageImports.auditLogs);
+const Team = React.lazy(pageImports.team);
+const NotFound = React.lazy(pageImports.notFound);
+const ClauseLibrary = React.lazy(pageImports.clauseLibrary);
+const Analytics = React.lazy(pageImports.analytics);
+const Compare = React.lazy(pageImports.compare);
+const BatchUpload = React.lazy(pageImports.batchUpload);
+const Executive = React.lazy(pageImports.executive);
+const Reports = React.lazy(pageImports.reports);
+const Marketplace = React.lazy(pageImports.marketplace);
+const ForgotPassword = React.lazy(pageImports.forgotPassword);
+const Drafting = React.lazy(pageImports.drafting);
+const ConsentPreferences = React.lazy(pageImports.consentPreferences);
+const DataRights = React.lazy(pageImports.dataRights);
+const DPDPCommandCenter = React.lazy(pageImports.dpdpCommandCenter);
+const Redline = React.lazy(pageImports.redline);
+
+const protectedPageImports = [
+  pageImports.dashboard,
+  pageImports.playbooks,
+  pageImports.playbookEditor,
+  pageImports.redline,
+  pageImports.drafting,
+  pageImports.batchUpload,
+  pageImports.clauseLibrary,
+  pageImports.compare,
+  pageImports.auditLogs,
+  pageImports.marketplace,
+  pageImports.dpdpCommandCenter,
+];
+
+let protectedChunksWarmed = false;
 
 
 const queryClient = new QueryClient({
@@ -44,46 +85,83 @@ const queryClient = new QueryClient({
   },
 });
 
-// Protected route wrapper with server-side session validation
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const [validated, setValidated] = useState<boolean | null>(null);
+function isAdminUser(user: User | null): boolean {
+  return user?.role === 'admin' || user?.role === 'super_admin';
+}
+
+function RouteSpinner() {
+  return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: 'var(--bg-app)' }}>
+    <div style={{ width: 32, height: 32, border: '2px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+  </div>;
+}
+
+function RouteChunkWarmup() {
+  const location = useLocation();
 
   useEffect(() => {
-    // Quick client check first
-    if (!isAuthenticated()) {
-      setValidated(false);
-      return;
-    }
-    // Server-side validation
+    if (protectedChunksWarmed || !isAuthenticated()) return;
+    protectedChunksWarmed = true;
+
+    const timer = window.setTimeout(() => {
+      void Promise.allSettled(protectedPageImports.map(loadPage => loadPage()));
+    }, 1200);
+
+    return () => window.clearTimeout(timer);
+  }, [location.pathname]);
+
+  return null;
+}
+
+// Protected route wrapper: render immediately from the stored login profile,
+// then validate the HttpOnly cookie session in the background.
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const [authenticated, setAuthenticated] = useState(() => isAuthenticated());
+
+  useEffect(() => {
+    if (!isAuthenticated()) return;
+
+    let active = true;
     validateSession()
-      .then((user) => setValidated(!!user))
+      .then((user) => {
+        if (!active) return;
+        if (user) {
+          setAuthenticated(true);
+        } else {
+          clearAuth();
+          setAuthenticated(false);
+        }
+      })
       .catch(() => {
+        if (!active) return;
         clearAuth();
-        setValidated(false);
+        setAuthenticated(false);
       });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
-  if (validated === null) {
-    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: 'var(--bg-app)' }}>
-      <div style={{ width: 32, height: 32, border: '2px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
-    </div>;
-  }
-  if (!validated) return <Navigate to="/login" replace />;
+  if (!authenticated) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
 
 // Admin-only route wrapper with server-side session + role validation
 function AdminRoute({ children }: { children: React.ReactNode }) {
-  const [validated, setValidated] = useState<'loading' | 'admin' | 'user' | 'unauthenticated'>('loading');
+  const [validated, setValidated] = useState<'loading' | 'admin' | 'user' | 'unauthenticated'>(() => {
+    const user = getStoredUser();
+    if (!user) return 'unauthenticated';
+    return isAdminUser(user) ? 'admin' : 'user';
+  });
 
   useEffect(() => {
-    if (!isAuthenticated()) {
-      setValidated('unauthenticated');
-      return;
-    }
+    if (!isAuthenticated()) return;
+
+    let active = true;
     validateSession()
       .then((user) => {
-        if (user && (user.role === 'admin' || user.role === 'super_admin')) {
+        if (!active) return;
+        if (isAdminUser(user)) {
           setValidated('admin');
         } else if (user) {
           setValidated('user');
@@ -93,15 +171,18 @@ function AdminRoute({ children }: { children: React.ReactNode }) {
         }
       })
       .catch(() => {
+        if (!active) return;
         clearAuth();
         setValidated('unauthenticated');
       });
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   if (validated === 'loading') {
-    return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', backgroundColor: 'var(--bg-app)' }}>
-      <div style={{ width: 32, height: 32, border: '2px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
-    </div>;
+    return <RouteSpinner />;
   }
   if (validated === 'unauthenticated') return <Navigate to="/login" replace />;
   if (validated === 'user') return <Navigate to="/dashboard" replace />;
@@ -116,6 +197,7 @@ export default function App() {
       <BrowserRouter>
         <Suspense fallback={<div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: 'var(--bg-app)', gap: 16 }}><div style={{ fontSize: 24, fontWeight: 700, color: 'var(--accent)' }}>ContraRed</div><div style={{ width: 32, height: 32, border: '2px solid var(--border)', borderTopColor: 'var(--accent)', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} /></div>}>
           <ErrorBoundary>
+          <RouteChunkWarmup />
           <Routes>
             {/* Public routes */}
             <Route path="/" element={<Landing />} />
@@ -146,7 +228,7 @@ export default function App() {
             <Route path="/team" element={<AdminRoute><Team /></AdminRoute>} />
             <Route path="/executive" element={<AdminRoute><Executive /></AdminRoute>} />
             <Route path="/reports" element={<AdminRoute><Reports /></AdminRoute>} />
-            <Route path="/compliance" element={<AdminRoute><ComplianceDashboard /></AdminRoute>} />
+            <Route path="/compliance" element={<Navigate to="/dpdp" replace />} />
             <Route path="/dpdp" element={<ProtectedRoute><DPDPCommandCenter /></ProtectedRoute>} />
 
             {/* Catch-all 404 */}

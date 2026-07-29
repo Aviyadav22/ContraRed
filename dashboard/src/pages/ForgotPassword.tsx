@@ -21,7 +21,7 @@ export default function ForgotPassword() {
             await forgotPassword(email);
             // Always show success to prevent email enumeration
             setSubmitted(true);
-        } catch (err) {
+        } catch {
             // Still show success to prevent email enumeration
             setSubmitted(true);
         } finally {

@@ -299,16 +299,16 @@ async def run_e2e_quality_test(analysis_pipeline):
             print(f"    Partial (fallback): {score['partial']}")
 
             if score['missed_issues']:
-                print(f"\n    MISSED issues:")
+                print("\n    MISSED issues:")
                 for issue in score['missed_issues']:
                     print(f"      - {issue}")
 
-            print(f"\n    Found issues:")
+            print("\n    Found issues:")
             for issue in score['found_issues']:
                 print(f"      + {issue}")
 
             # Print each finding
-            print(f"\n    All findings:")
+            print("\n    All findings:")
             for i, f in enumerate(result.redlines or [], 1):
                 fix_status = "HAS FIX" if getattr(f, 'suggested_fix', None) else "NO FIX"
                 conf = f.confidence.score if hasattr(f.confidence, 'score') else f.confidence
@@ -316,7 +316,7 @@ async def run_e2e_quality_test(analysis_pipeline):
                 print(f"         {f.explanation[:100]}...")
 
             if result.executive_summary:
-                print(f"\n    Executive Summary:")
+                print("\n    Executive Summary:")
                 for line in result.executive_summary[:5]:
                     print(f"      - {line[:120]}")
 
@@ -335,7 +335,7 @@ async def run_e2e_quality_test(analysis_pipeline):
 
     # ── OVERALL QUALITY REPORT ──
     print(f"\n\n{'='*60}")
-    print(f"  E2E QUALITY REPORT")
+    print("  E2E QUALITY REPORT")
     print(f"{'='*60}")
     print(f"  Total time: {total_time:.1f}s")
 
@@ -379,7 +379,7 @@ async def run_e2e_quality_test(analysis_pipeline):
     # Save results
     with open("e2e_quality_results.json", "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, default=str)
-    print(f"\n  Results saved to e2e_quality_results.json")
+    print("\n  Results saved to e2e_quality_results.json")
 
     return results
 

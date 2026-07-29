@@ -7,7 +7,7 @@ Phase 7: Output format support for structured issue export.
 import io
 import csv
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)

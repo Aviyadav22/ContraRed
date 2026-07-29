@@ -20,8 +20,12 @@ if %errorLevel% neq 0 (
 echo [1/4] Creating C:\ContraRed-Addin folder...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "$folderPath = 'C:\ContraRed-Addin'; if (-not (Test-Path $folderPath)) { New-Item -ItemType Directory -Force -Path $folderPath | Out-Null }"
 
-echo [2/4] Downloading latest manifest from secure server...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$folderPath = 'C:\ContraRed-Addin'; Invoke-WebRequest -Uri 'https://contrared-api.onrender.com/api/v1/documents/manifest' -OutFile \"$folderPath\manifest.xml\""
+echo [2/4] Installing the add-in manifest...
+if exist "%~dp0manifest.xml" (
+    copy /Y "%~dp0manifest.xml" "C:\ContraRed-Addin\manifest.xml" >nul
+) else (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$folderPath = 'C:\ContraRed-Addin'; Invoke-WebRequest -Uri 'https://contrared-addin.netlify.app/manifest.xml' -OutFile \"$folderPath\manifest.xml\""
+)
 
 :: Check if the download succeeded
 if not exist "C:\ContraRed-Addin\manifest.xml" (
@@ -51,6 +55,6 @@ echo 1. Please completely close and RESTART Microsoft Word.
 echo 2. Open any document, go to the "Insert" tab.
 echo 3. Click "Get Add-ins" (or "My Add-ins").
 echo 4. Click the "SHARED FOLDER" tab at the top.
-echo 5. Select "ContraRed PoC" and click "Add".
+echo 5. Select "ContraRed" and click "Add".
 echo.
 pause

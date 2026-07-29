@@ -73,22 +73,6 @@ def clear_auth_cookies(response: Response) -> None:
         response.delete_cookie(key=key, **common)
 
 
-def get_token_from_request(request: Request) -> str | None:
-    """
-    Extract access token from request.
-    Priority: Authorization header > access_token cookie.
-    """
-    # 1. Check Authorization header (Bearer token)
-    auth_header = request.headers.get("Authorization")
-    if auth_header and auth_header.startswith("Bearer "):
-        token = auth_header[7:].strip()
-        if token:
-            return token
-
-    # 2. Fall back to HttpOnly cookie
-    return request.cookies.get("access_token")
-
-
 def validate_csrf(request: Request) -> bool:
     """
     Validate CSRF double-submit: X-CSRF-Token header must match csrf_token cookie.

@@ -108,9 +108,10 @@
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `ANALYSIS_MODE` | production | No | "demo" (mock data) or "production" (real AI) |
 | `FUZZY_MATCH_THRESHOLD` | 0.85 | No | Text matching threshold (0-1) |
 | `ZERO_DATA_RETENTION` | true | No | Never store contract text (RAM only) |
+| `CONSENT_EVENT_RETENTION_DAYS` | 365 | No | Deployment retention policy for consent evidence |
+| `REGISTERED_CONSENT_MANAGER` | false | No | Enforce the seven-year Rule 4 minimum for registered Consent Managers |
 
 ### Monitoring
 

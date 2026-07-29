@@ -1,6 +1,6 @@
 import { type CSSProperties } from 'react';
 import { CheckCircle, XCircle, AlertTriangle, Info, X } from 'lucide-react';
-import { useToast, type ToastVariant } from '@/contexts/ToastContext';
+import { useToast, type ToastVariant } from '@/contexts/toast';
 
 const iconMap: Record<ToastVariant, { Icon: typeof Info; color: string }> = {
   success: { Icon: CheckCircle, color: 'var(--risk-low)' },

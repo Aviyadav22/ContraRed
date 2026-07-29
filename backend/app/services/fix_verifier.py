@@ -180,14 +180,18 @@ class FixVerifier:
         playbook_text = " ".join(positions).lower()
 
         for word_a, word_b in _CONTRADICTION_PAIRS:
+            has_playbook_a = self._contains_term(playbook_text, word_a)
+            has_playbook_b = self._contains_term(playbook_text, word_b)
+            has_fix_a = self._contains_term(fix_lower, word_a)
+            has_fix_b = self._contains_term(fix_lower, word_b)
             # Check both directions: playbook says A but fix says B, or vice-versa
-            if word_a in playbook_text and word_b in fix_lower:
+            if has_playbook_a and has_fix_b:
                 warnings.append(
                     f"Playbook position contains '{word_a}' but fix contains "
                     f"'{word_b}' — possible misalignment"
                     + (f" (rule: {rule_name})" if rule_name else "")
                 )
-            elif word_b in playbook_text and word_a in fix_lower:
+            elif has_playbook_b and has_fix_a:
                 warnings.append(
                     f"Playbook position contains '{word_b}' but fix contains "
                     f"'{word_a}' — possible misalignment"
@@ -195,3 +199,14 @@ class FixVerifier:
                 )
 
         return warnings
+
+    @staticmethod
+    def _contains_term(text: str, term: str) -> bool:
+        """Match complete terms, not substrings such as limited/unlimited."""
+        return bool(
+            re.search(
+                rf"(?<!\w){re.escape(term)}(?!\w)",
+                text,
+                flags=re.IGNORECASE,
+            )
+        )

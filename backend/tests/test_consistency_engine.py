@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import pytest
 
-from app.services.drafting.models import DraftSection, RawDraft, DraftMetadata, Annotation
+from app.services.drafting.models import DraftSection, RawDraft, DraftMetadata
 from app.services.drafting.consistency_engine import ConsistencyEngine
 
 

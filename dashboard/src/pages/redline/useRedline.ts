@@ -9,14 +9,14 @@ import {
     type GenerateFixResponse,
 } from '@/api/client';
 import { applyFixEdits, findClausePosition } from './textEngine';
-import { useToast } from '@/contexts/ToastContext';
-import type { PagePhase, FixState, RiskFilter, AppliedFix, UseRedlineReturn } from './types';
+import { useToast } from '@/contexts/toast';
+import type { PagePhase, FixState, RiskFilter, AppliedFix, UseRedlineReturn, PartySide } from './types';
 
 export function useRedline(): UseRedlineReturn {
     // ---- Input state ----
     const [contractText, setContractText] = useState('');
     const [playbookId, setPlaybookId] = useState('');
-    const [partySide, setPartySide] = useState<'buyer' | 'seller' | 'neutral'>('buyer');
+    const [partySide, setPartySide] = useState<PartySide>('');
     const [jurisdiction, setJurisdiction] = useState('');
     // Phase 6 — negotiation tier + deal context
     const [tierPreference, setTierPreference] = useState<'ideal' | 'acceptable' | 'walk_away' | 'escalate'>('ideal');
@@ -43,16 +43,22 @@ export function useRedline(): UseRedlineReturn {
 
     // Ref to track the latest edited text for sequential fix applications
     const editedTextRef = useRef('');
-    editedTextRef.current = editedText;
+    useEffect(() => {
+        editedTextRef.current = editedText;
+    }, [editedText]);
 
     // Ref-synced fix states so async loops (e.g. applyAllFixes) can read
     // the latest values without being trapped in a stale closure.
     const fixStatesRef = useRef<Map<string, FixState>>(new Map());
-    fixStatesRef.current = fixStates;
+    useEffect(() => {
+        fixStatesRef.current = fixStates;
+    }, [fixStates]);
 
     // Ref-synced generated fixes for the same reason.
     const generatedFixesRef = useRef<Map<string, GenerateFixResponse>>(new Map());
-    generatedFixesRef.current = generatedFixes;
+    useEffect(() => {
+        generatedFixesRef.current = generatedFixes;
+    }, [generatedFixes]);
 
     const { addToast } = useToast();
     // Keep a ref so memoised callbacks don't have to re-create when addToast identity changes.
@@ -65,7 +71,7 @@ export function useRedline(): UseRedlineReturn {
             const parsedDealSize = dealSize.trim() ? Number(dealSize) : undefined;
             return analyzeContract(text, {
                 playbook_id: playbookId || undefined,
-                party_side: partySide,
+                party_side: partySide || undefined,
                 jurisdiction: jurisdiction || undefined,
                 tier_preference: tierPreference !== 'ideal' ? tierPreference : undefined,
                 counterparty_type: counterpartyType.trim() || undefined,

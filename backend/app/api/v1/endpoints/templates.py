@@ -10,7 +10,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -39,8 +39,7 @@ class TemplateListItem(BaseModel):
     paired_playbook_id: Optional[str] = None
     paired_playbook_name: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class TemplateDetail(TemplateListItem):
@@ -76,7 +75,7 @@ async def list_templates(
     # Free users only see non-premium templates
     is_free = current_user.subscription_tier == SubscriptionTier.FREE
     if is_free:
-        query = query.where(ContractTemplate.is_premium == False)
+        query = query.where(ContractTemplate.is_premium.is_(False))
 
     query = query.order_by(ContractTemplate.name)
     try:

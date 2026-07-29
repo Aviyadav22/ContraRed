@@ -67,6 +67,7 @@ class DependencyAction:
     trigger: str
     effect: str
     message: str
+    effect_params: Dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -157,12 +158,6 @@ class DependencyResolver:
             Accumulated list of DependencyAction records.
         """
         if effect == "escalate_risk":
-            if target_match is None:
-                logger.debug(
-                    "escalate_risk: target clause %r not in results — no-op",
-                    dep.target_rule_id,
-                )
-                return
             raw = effect_params.get("new_risk", "").upper()
             try:
                 new_level = RiskLevel(raw)
@@ -173,99 +168,105 @@ class DependencyResolver:
                     dep.target_rule_id,
                 )
                 return
-            old_level = target_match.risk_level
-            target_match.risk_level = new_level
-            msg = (
-                f"Risk escalated {old_level.value} → {new_level.value} "
-                f"due to dependency from {dep.source_rule_id}"
-            )
+            if target_match is not None:
+                old_level = target_match.risk_level
+                target_match.risk_level = new_level
+                msg = (
+                    f"Risk escalated {old_level.value} → {new_level.value} "
+                    f"due to dependency from {dep.source_rule_id}"
+                )
+            else:
+                msg = (
+                    f"Risk set to {new_level.value} for {dep.target_rule_id} "
+                    f"due to dependency from {dep.source_rule_id}"
+                )
             actions.append(
                 DependencyAction(
-                    source_clause=dep.source_rule_id,
-                    target_clause=dep.target_rule_id,
+                    source_clause=str(dep.source_rule_id),
+                    target_clause=str(dep.target_rule_id),
                     trigger=dep.trigger_condition,
                     effect=effect,
                     message=msg,
+                    effect_params=dict(effect_params or {}),
                 )
             )
             logger.debug(msg)
 
         elif effect == "add_flag":
-            if target_match is None:
-                logger.debug(
-                    "add_flag: target clause %r not in results — no-op",
-                    dep.target_rule_id,
-                )
-                return
             message = effect_params.get("message", "")
-            # Store flags in escalation_reason (append, |-separated) since
-            # RuleMatch has no dedicated flags list.  Callers can split on "|".
-            if target_match.escalation_reason:
-                target_match.escalation_reason = (
-                    f"{target_match.escalation_reason} | {message}"
-                )
-            else:
-                target_match.escalation_reason = message
+            if target_match is not None:
+                # Store flags in escalation_reason (append, |-separated) since
+                # RuleMatch has no dedicated flags list. Callers can split on "|".
+                if target_match.escalation_reason:
+                    target_match.escalation_reason = (
+                        f"{target_match.escalation_reason} | {message}"
+                    )
+                else:
+                    target_match.escalation_reason = message
             msg = (
                 f"Flag added to {dep.target_rule_id}: {message!r} "
                 f"(triggered by {dep.source_rule_id})"
             )
             actions.append(
                 DependencyAction(
-                    source_clause=dep.source_rule_id,
-                    target_clause=dep.target_rule_id,
+                    source_clause=str(dep.source_rule_id),
+                    target_clause=str(dep.target_rule_id),
                     trigger=dep.trigger_condition,
                     effect=effect,
                     message=msg,
+                    effect_params=dict(effect_params or {}),
                 )
             )
             logger.debug(msg)
 
         elif effect == "change_position":
-            if target_match is None:
-                logger.debug(
-                    "change_position: target clause %r not in results — no-op",
+            new_pos = effect_params.get("new_position", "")
+            if not new_pos:
+                logger.warning(
+                    "change_position: missing new_position for target %r",
                     dep.target_rule_id,
                 )
                 return
-            new_pos = effect_params.get("new_position", "")
-            old_pos = target_match.primary_position
-            target_match.primary_position = new_pos
-            msg = (
-                f"Position overridden on {dep.target_rule_id}: "
-                f"{old_pos!r} → {new_pos!r} "
-                f"(triggered by {dep.source_rule_id})"
-            )
+            if target_match is not None:
+                old_pos = target_match.primary_position
+                target_match.primary_position = new_pos
+                msg = (
+                    f"Position overridden on {dep.target_rule_id}: "
+                    f"{old_pos!r} → {new_pos!r} "
+                    f"(triggered by {dep.source_rule_id})"
+                )
+            else:
+                msg = (
+                    f"Position set on {dep.target_rule_id} "
+                    f"(triggered by {dep.source_rule_id})"
+                )
             actions.append(
                 DependencyAction(
-                    source_clause=dep.source_rule_id,
-                    target_clause=dep.target_rule_id,
+                    source_clause=str(dep.source_rule_id),
+                    target_clause=str(dep.target_rule_id),
                     trigger=dep.trigger_condition,
                     effect=effect,
                     message=msg,
+                    effect_params=dict(effect_params or {}),
                 )
             )
             logger.debug(msg)
 
         elif effect == "suppress":
-            if target_match is None:
-                logger.debug(
-                    "suppress: target clause %r not in results — no-op",
-                    dep.target_rule_id,
-                )
-                return
-            results.remove(target_match)
+            if target_match is not None:
+                results.remove(target_match)
             msg = (
                 f"Clause {dep.target_rule_id} suppressed "
                 f"due to dependency from {dep.source_rule_id}"
             )
             actions.append(
                 DependencyAction(
-                    source_clause=dep.source_rule_id,
-                    target_clause=dep.target_rule_id,
+                    source_clause=str(dep.source_rule_id),
+                    target_clause=str(dep.target_rule_id),
                     trigger=dep.trigger_condition,
                     effect=effect,
                     message=msg,
+                    effect_params=dict(effect_params or {}),
                 )
             )
             logger.debug(msg)
@@ -381,11 +382,14 @@ class DependencyResolver:
         graph = self._build_adjacency(active_deps)
         cyclic_edges = self._detect_cycles(graph)
 
-        # Build clause_type → RuleMatch lookup (first occurrence wins).
+        # Production dependencies reference PlaybookRule UUIDs, while older
+        # imports and fixtures may still use clause-type strings. Index both.
         clause_map: Dict[str, RuleMatch] = {}
+        rule_id_map: Dict[str, RuleMatch] = {}
         for m in results:
             if m.clause_type not in clause_map:
                 clause_map[m.clause_type] = m
+            rule_id_map.setdefault(str(m.rule_id), m)
 
         for dep in active_deps:
             # Skip cyclic edges.
@@ -397,17 +401,16 @@ class DependencyResolver:
                 )
                 continue
 
-            source_match = clause_map.get(dep.source_rule_id)
+            source_key = str(dep.source_rule_id)
+            source_match = rule_id_map.get(source_key) or clause_map.get(source_key)
             triggered = self._evaluate_trigger(dep.trigger_condition, source_match)
 
             if not triggered:
                 continue
 
             # Re-fetch target from results (it may have been suppressed already).
-            target_match: Optional[RuleMatch] = next(
-                (m for m in results if m.clause_type == dep.target_rule_id),
-                None,
-            )
+            target_key = str(dep.target_rule_id)
+            target_match = rule_id_map.get(target_key) or clause_map.get(target_key)
 
             self._apply_effect(
                 effect=dep.effect,
@@ -420,9 +423,11 @@ class DependencyResolver:
 
             # Refresh clause_map after potential suppression.
             clause_map = {}
+            rule_id_map = {}
             for m in results:
                 if m.clause_type not in clause_map:
                     clause_map[m.clause_type] = m
+                rule_id_map.setdefault(str(m.rule_id), m)
 
         logger.info(
             "DependencyResolver: %d dependencies evaluated, %d actions applied",

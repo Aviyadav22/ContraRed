@@ -11,7 +11,7 @@ import json
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, List, Callable, Awaitable
+from typing import Optional, List, Callable
 
 logger = logging.getLogger(__name__)
 

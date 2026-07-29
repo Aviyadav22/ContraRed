@@ -17,7 +17,7 @@ import time
 from typing import Dict, Optional, List
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import sqlalchemy.exc
@@ -217,8 +217,7 @@ class UserResponse(BaseModel):
     organization_id: Optional[str] = None
     mfa_enabled: bool = False
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LoginResponse(BaseModel):
@@ -270,7 +269,7 @@ async def get_current_user(
     4. Token not on Redis blacklist (via token_service)
     5. User exists and is active
     """
-    from app.core.cookies import get_token_from_request, validate_csrf
+    from app.core.cookies import validate_csrf
 
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -298,7 +297,7 @@ async def get_current_user(
             raise credentials_exception
 
     # mfa_setup tokens can ONLY be used for MFA setup/verify endpoints
-    if hasattr(token_data, "token_type") and token_data.token_type == "mfa_setup":
+    if token_data.token_type == "mfa_setup":
         if request and not any(seg in str(request.url.path) for seg in ["/mfa/setup", "/mfa/verify"]):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -362,6 +361,12 @@ async def register(
                 organization_id=str(existing_user.organization_id) if existing_user.organization_id else None,
             )
 
+        # Startup seeding is best-effort and may be skipped on a cold database.
+        # Registration must not create an account without its required consent
+        # purpose, so ensure the idempotent definitions exist in this session.
+        from app.services.seed_consent_defaults import seed_all_consent_defaults
+        await seed_all_consent_defaults(db)
+
         # Create new user (is_verified=False until email confirmation)
         user = User(
             email=user_data.email,
@@ -383,35 +388,30 @@ async def register(
         if "account_management" not in consent_purposes:
             consent_purposes.append("account_management")
         if consent_purposes:
-            try:
-                from app.services.consent_service import consent_service
-                # consent_purposes already validated above
+            from app.services.consent_service import consent_service
 
-                # Look up policy version if checksum provided
-                policy_version_id = None
-                if user_data.privacy_policy_version:
-                    from app.models.consent import ConsentPolicy
-                    policy_result = await db.execute(
-                        select(ConsentPolicy.id)
-                        .where(ConsentPolicy.checksum == user_data.privacy_policy_version)
-                        .limit(1)
-                    )
-                    policy_version_id = policy_result.scalar()
-
-                await consent_service.grant_consent(
-                    db=db,
-                    subject_id=user.id,
-                    purpose_codes=consent_purposes,
-                    policy_version_id=policy_version_id,
-                    organization_id=user.organization_id,
-                    ip_address=_get_client_ip(request),
-                    user_agent=request.headers.get("user-agent"),
-                    collection_method="web_form",
-                    expression_method="checkbox",
+            # Look up policy version if checksum provided
+            policy_version_id = None
+            if user_data.privacy_policy_version:
+                from app.models.consent import ConsentPolicy
+                policy_result = await db.execute(
+                    select(ConsentPolicy.id)
+                    .where(ConsentPolicy.checksum == user_data.privacy_policy_version)
+                    .limit(1)
                 )
-            except Exception as consent_err:
-                # Consent recording should not block registration
-                logger.warning("Consent recording failed during registration: %s", consent_err)
+                policy_version_id = policy_result.scalar()
+
+            await consent_service.grant_consent(
+                db=db,
+                subject_id=user.id,
+                purpose_codes=consent_purposes,
+                policy_version_id=policy_version_id,
+                organization_id=user.organization_id,
+                ip_address=_get_client_ip(request),
+                user_agent=request.headers.get("user-agent"),
+                collection_method="web_form",
+                expression_method="checkbox",
+            )
 
         # Audit log
         await log_audit_event(
@@ -441,7 +441,7 @@ async def register(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed. Please try again."
         )
-    except Exception as e:
+    except Exception:
         logger.error("Registration failed", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

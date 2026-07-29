@@ -7,7 +7,7 @@ import {
     type GenerateRequest,
     type GenerateResponse,
 } from '@/api/client';
-import { useToast } from '@/contexts/ToastContext';
+import { useToast } from '@/contexts/toast';
 import { type DraftingFormData, DEFAULT_FORM } from './types';
 
 // Framework hint → contract jurisdiction code. User-selected compliance

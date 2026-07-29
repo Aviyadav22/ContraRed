@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { warmupApi } from '@/api/client';
 
 /* -------------------------------------------------------------------------- */
 /*  Data                                                                       */
@@ -116,6 +117,10 @@ export default function Landing() {
     const onScroll = () => setScrolled(window.scrollY > 20);
     window.addEventListener('scroll', onScroll, { passive: true });
     return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
+  useEffect(() => {
+    void warmupApi();
   }, []);
 
   return (

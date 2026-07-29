@@ -91,17 +91,17 @@ def test_merge_rules_both_empty():
 # DPDP layer validation
 # ============================================================
 
-def test_dpdp_layer_has_12_rules():
-    """DPDP layer must have exactly 12 rules."""
+def test_dpdp_layer_has_18_rules():
+    """The current lawyer-reviewed DPDP layer contains 18 rules."""
     from scripts.compliance_layers.dpdp import DPDP_LAYER
-    assert len(DPDP_LAYER["rules"]) == 12
+    assert len(DPDP_LAYER["rules"]) == 18
 
 
 def test_dpdp_deal_breakers():
-    """DPDP should have 4 deal-breaker rules."""
+    """The current DPDP pack has six expressly escalated deal-breakers."""
     from scripts.compliance_layers.dpdp import DPDP_LAYER
     deal_breakers = [r for r in DPDP_LAYER["rules"] if r.get("is_deal_breaker")]
-    assert len(deal_breakers) == 4
+    assert len(deal_breakers) == 6
     db_types = {r["clause_type"] for r in deal_breakers}
     assert "dpdp_consent_mechanism" in db_types
     assert "dpdp_data_principal_rights" in db_types
@@ -113,7 +113,7 @@ def test_dpdp_all_rules_have_required_fields():
     """Every DPDP rule must have clause_type, risk_level, primary_position, detection_patterns."""
     from scripts.compliance_layers.dpdp import DPDP_LAYER
     for rule in DPDP_LAYER["rules"]:
-        assert "clause_type" in rule, f"Missing clause_type in rule"
+        assert "clause_type" in rule, "Missing clause_type in rule"
         assert "risk_level" in rule, f"Missing risk_level in {rule['clause_type']}"
         assert "primary_position" in rule, f"Missing primary_position in {rule['clause_type']}"
         assert "detection_patterns" in rule, f"Missing detection_patterns in {rule['clause_type']}"
@@ -172,6 +172,36 @@ def test_compliance_score_empty():
     score = calculate_compliance_score([])
     assert score["score"] == 0
     assert score["total_rules"] == 0
+    assert score["status"] == "not_assessed"
+
+
+def test_compliance_score_does_not_reward_unassessed_rules():
+    results = [
+        {"status": "compliant", "risk_level": "GREEN"},
+        {"status": "unassessed", "risk_level": ""},
+    ]
+    score = calculate_compliance_score(results)
+    assert score["score"] == 50
+    assert score["unassessed"] == 1
+    assert score["complete"] is False
+
+
+def test_merge_preserves_compliance_provenance_when_playbook_is_stricter():
+    playbook = [{
+        "id": "pb-rule",
+        "name": "data_retention",
+        "risk_level": "RED",
+    }]
+    layer = [{
+        "id": "compliance:dpdp:1",
+        "name": "dpdp_data_retention",
+        "risk_level": "YELLOW",
+        "_compliance_layer": "dpdp",
+        "_compliance_layers": ["dpdp"],
+    }]
+    merged = merge_rules(playbook, layer)
+    assert merged[0]["id"] == "pb-rule"
+    assert merged[0]["_compliance_layers"] == ["dpdp"]
 
 
 # ============================================================
@@ -246,7 +276,7 @@ async def test_list_compliance_layers_after_seed(client, db_session, test_user_d
     assert resp.status_code == 200
     layers = resp.json()
     assert len(layers) >= 1
-    codes = [l["code"] for l in layers]
+    codes = [layer["code"] for layer in layers]
     assert "dpdp" in codes
 
 
@@ -264,10 +294,10 @@ async def test_get_compliance_layer_detail(client, db_session, test_user_data):
     assert resp.status_code == 200
     data = resp.json()
     assert data["code"] == "dpdp"
-    assert len(data["rules"]) == 12
+    assert len(data["rules"]) == 18
     # Verify deal-breaker count
     deal_breakers = [r for r in data["rules"] if r["is_deal_breaker"]]
-    assert len(deal_breakers) == 4
+    assert len(deal_breakers) == 6
 
 
 @pytest.mark.asyncio

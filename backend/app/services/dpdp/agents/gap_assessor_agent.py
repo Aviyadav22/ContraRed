@@ -8,11 +8,10 @@ section-by-section breakdown and remediation priorities.
 
 import json
 import logging
-from datetime import date, datetime, timezone
+from datetime import date
 
 from app.services.dpdp.models import (
     AssessmentRequest,
-    AssessmentAnswer,
     AssessmentQuestion,
     AssessmentCategory,
     GapAssessmentResult,
@@ -23,8 +22,8 @@ from app.services.dpdp.models import (
 
 logger = logging.getLogger(__name__)
 
-# Enforcement deadline
-DPDP_ENFORCEMENT_DATE = date(2027, 5, 13)
+# Main substantive commencement date
+DPDP_SUBSTANTIVE_COMMENCEMENT_DATE = date(2027, 5, 13)
 
 # ---- Assessment Questions (40 questions across 10 categories) ----
 
@@ -34,7 +33,7 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "id": "cg_01",
         "category": "consent_governance",
         "section": "section_6",
-        "question": "Do you collect free, specific, informed, and unambiguous consent before processing personal data?",
+        "question": "Where consent is the processing basis, do you collect free, specific, informed, unconditional, and unambiguous consent through clear affirmative action?",
         "guidance": "DPDP Section 6 requires consent to be free, specific, informed, unconditional, and unambiguous.",
         "weight": 2.0,
         "is_critical": True,
@@ -43,8 +42,8 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "id": "cg_02",
         "category": "consent_governance",
         "section": "section_6",
-        "question": "Is consent collected separately for each processing purpose (no bundling)?",
-        "guidance": "Each purpose must have its own consent toggle. Bundled consent is non-compliant.",
+        "question": "Does each consent request identify a specified purpose and only the personal data necessary for it?",
+        "guidance": "Section 6 requires consent to relate to a specified purpose and necessary personal data. Separate controls are a strong implementation pattern, but the Rules do not prescribe a particular toggle or checkbox interface.",
         "weight": 1.5,
         "is_critical": True,
     },
@@ -53,7 +52,7 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "consent_governance",
         "section": "section_6",
         "question": "Can data principals easily withdraw consent at any time?",
-        "guidance": "Withdrawal must be as easy as giving consent. No friction or penalties.",
+        "guidance": "Section 6 requires the ease of withdrawal to be comparable to the ease of giving consent.",
         "weight": 1.5,
         "is_critical": True,
     },
@@ -62,7 +61,10 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "consent_governance",
         "section": "section_6",
         "question": "Do you maintain auditable records of all consent actions (grant, withdrawal, modification)?",
-        "guidance": "Immutable consent records must be maintained for at least 7 years.",
+        "guidance": (
+            "Keep sufficient evidence to prove compliant notice and consent under section 6(10). "
+            "The seven-year minimum applies specifically to registered Consent Managers."
+        ),
         "weight": 1.0,
         "is_critical": False,
     },
@@ -71,8 +73,8 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "id": "nr_01",
         "category": "consent_governance",
         "section": "section_5",
-        "question": "Do you provide a clear privacy notice before or at the time of data collection?",
-        "guidance": "Notice must describe data collected, purposes, rights, and how to exercise them.",
+        "question": "Does every consent request have the required clear notice before or with the request?",
+        "guidance": "Section 5 and Rule 3 require the personal data and specified purpose plus means to withdraw consent, exercise rights, use grievance redressal, and complain to the Board.",
         "weight": 1.5,
         "is_critical": True,
     },
@@ -80,8 +82,11 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "id": "nr_02",
         "category": "consent_governance",
         "section": "section_5",
-        "question": "Is the privacy notice available in English and Hindi (or the language of the data principal)?",
-        "guidance": "DPDP requires notice in languages specified in Schedule VIII of the Constitution.",
+        "question": "Can the Data Principal access the notice in English or a language in the Eighth Schedule?",
+        "guidance": (
+            "The Act requires an option to access the notice in English or any Eighth Schedule language; "
+            "it does not require every notice to be bilingual."
+        ),
         "weight": 1.0,
         "is_critical": False,
     },
@@ -91,7 +96,7 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "data_principal_rights",
         "section": "section_11",
         "question": "Can data principals request a summary of their personal data and processing activities?",
-        "guidance": "Section 11: Right to information about processing, categories, and third-party sharing.",
+        "guidance": "Section 11 covers a summary of personal data and processing plus prescribed information about sharing with other Data Fiduciaries and Data Processors, subject to statutory exceptions.",
         "weight": 1.5,
         "is_critical": True,
     },
@@ -108,8 +113,8 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "id": "dpr_03",
         "category": "data_principal_rights",
         "section": "section_13",
-        "question": "Do you have a grievance redressal mechanism with a designated officer?",
-        "guidance": "Section 13: Must have a grievance officer; respond within prescribed time.",
+        "question": "Do you provide a readily available grievance mechanism and publish an accountable privacy contact?",
+        "guidance": "Sections 8 and 13 require an effective grievance mechanism and published business contact or DPO information. The published response period must respect the prescribed maximum.",
         "weight": 1.5,
         "is_critical": True,
     },
@@ -128,7 +133,7 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "fiduciary_obligations",
         "section": "section_8",
         "question": "Do you implement reasonable security safeguards to protect personal data?",
-        "guidance": "Section 8(4): Encryption, access controls, audit logging, incident detection.",
+        "guidance": "Sections 8(4) and 8(5), read with Rule 6, require appropriate organisational measures and reasonable safeguards. Controls are risk- and deployment-specific; the Rule gives non-exhaustive examples.",
         "weight": 2.0,
         "is_critical": True,
     },
@@ -145,8 +150,8 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "id": "fo_03",
         "category": "fiduciary_obligations",
         "section": "section_8",
-        "question": "Do you have Data Processing Agreements with all third-party processors?",
-        "guidance": "Section 8(2): Processor must act only per fiduciary instructions.",
+        "question": "Are all processors engaged under valid contracts with processing and safeguard terms appropriate to the service?",
+        "guidance": "Section 8(2) requires a valid contract for processor engagement in the covered context; Rule 6 requires appropriate security-safeguard provisions. Instruction, assistance, audit, deletion, and subprocessor terms are risk-based contractual controls.",
         "weight": 1.5,
         "is_critical": True,
     },
@@ -165,7 +170,10 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "breach_readiness",
         "section": "section_8",
         "question": "Do you have a documented incident response plan for personal data breaches?",
-        "guidance": "Must notify DPB and affected principals 'without undue delay' (effectively 72 hours).",
+        "guidance": (
+            "Notify affected principals and give the initial Board notice without delay; "
+            "the updated detailed Board report is due within 72 hours unless extended."
+        ),
         "weight": 2.0,
         "is_critical": True,
     },
@@ -173,8 +181,11 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "id": "br_02",
         "category": "breach_readiness",
         "section": "section_8",
-        "question": "Can you detect data breaches within 24 hours?",
-        "guidance": "CERT-In requires 6-hour reporting; DPDP requires 72-hour notification.",
+        "question": "Can you detect, assess, and route personal-data and cyber incidents without delay?",
+        "guidance": (
+            "DPDP Rule 7 uses without-delay notices plus a 72-hour detailed Board report. "
+            "CERT-In's six-hour direction applies to specified cyber incidents; classify scope separately."
+        ),
         "weight": 1.5,
         "is_critical": True,
     },
@@ -183,7 +194,7 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "breach_readiness",
         "section": "section_8",
         "question": "Do you have pre-drafted breach notification templates for DPB and data principals?",
-        "guidance": "Speed is critical; templates ensure compliance under pressure.",
+        "guidance": "Pre-approved templates are a recommended readiness control, not a separately stated statutory duty.",
         "weight": 1.0,
         "is_critical": False,
     },
@@ -192,7 +203,7 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "breach_readiness",
         "section": "section_8",
         "question": "Have you conducted breach simulation exercises in the last 12 months?",
-        "guidance": "Regular drills ensure the team can execute the plan under real conditions.",
+        "guidance": "Exercises are a recommended operational control; the DPDP Act and Rules do not prescribe an annual drill.",
         "weight": 1.0,
         "is_critical": False,
     },
@@ -202,7 +213,10 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "cross_border",
         "section": "section_16",
         "question": "Do you transfer personal data outside India?",
-        "guidance": "Section 16: Only to government-notified countries. Maintain transfer records.",
+        "guidance": (
+            "Section 16 permits Government restrictions on transfers to notified countries or territories; "
+            "Rule 15 may add requirements concerning foreign-government access. Check current notifications."
+        ),
         "weight": 1.5,
         "is_critical": True,
     },
@@ -211,7 +225,7 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "cross_border",
         "section": "section_16",
         "question": "Do you maintain records of all cross-border data transfers (destination, purpose, safeguards)?",
-        "guidance": "Must track destination country, data categories, legal basis, and safeguards.",
+        "guidance": "A transfer inventory is a recommended evidence and control mechanism for checking Section 16 notifications, Rule 15 requirements, contracts, and stricter sectoral law.",
         "weight": 1.0,
         "is_critical": False,
     },
@@ -220,8 +234,8 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "id": "vm_01",
         "category": "vendor_management",
         "section": "section_8",
-        "question": "Do you audit your data processors/vendors for DPDP compliance?",
-        "guidance": "Data Fiduciary is responsible even when processing is outsourced.",
+        "question": "Do you conduct risk-based oversight of processors and verify material safeguards?",
+        "guidance": "The Data Fiduciary remains responsible for processing on its behalf. Audit rights and cadence are contractual/risk controls, not a universal statutory annual-audit requirement.",
         "weight": 1.5,
         "is_critical": True,
     },
@@ -229,8 +243,8 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "id": "vm_02",
         "category": "vendor_management",
         "section": "section_8",
-        "question": "Do your vendor contracts include DPDP-compliant data processing clauses?",
-        "guidance": "DPA must restrict processor to act only per fiduciary instructions.",
+        "question": "Do vendor contracts document processing scope and safeguards supporting your DPDP obligations?",
+        "guidance": "Use fact-specific contractual instructions, safeguards, incident support, rights assistance, retention/deletion, and subprocessor controls. The exact allocation is negotiated and must not be presented as verbatim statutory language.",
         "weight": 1.5,
         "is_critical": True,
     },
@@ -240,7 +254,7 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "children_data",
         "section": "section_9",
         "question": "Do you process personal data of children (under 18)?",
-        "guidance": "If yes, verifiable parental consent required; no behavioral monitoring.",
+        "guidance": "Check verifiable parental consent, detrimental processing, tracking/behavioural monitoring, and targeted advertising, together with any applicable notified class- or purpose-specific exemption.",
         "weight": 1.5,
         "is_critical": True,
     },
@@ -249,7 +263,7 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "children_data",
         "section": "section_9",
         "question": "Do you have age verification mechanisms in place?",
-        "guidance": "Must verify age before processing; different rules for different age groups.",
+        "guidance": "Rules 10-12 address verifiable parental consent and specified exemptions. Use proportionate age/parent verification based on reliable identity and age details or permitted tokens.",
         "weight": 1.0,
         "is_critical": False,
     },
@@ -277,7 +291,7 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "significant_fiduciary",
         "section": "section_10",
         "question": "Do you conduct periodic Data Protection Impact Assessments (DPIAs)?",
-        "guidance": "Section 10: DPIAs required for new processing activities with high risk.",
+        "guidance": "Section 10 and Rule 13 apply periodic DPIA and audit duties to entities notified as Significant Data Fiduciaries; they are not universal duties for every new processing activity.",
         "weight": 1.0,
         "is_critical": False,
     },
@@ -287,7 +301,7 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "data_retention",
         "section": "section_8",
         "question": "Do you have defined retention periods for each category of personal data?",
-        "guidance": "Must not retain data beyond what's necessary for the stated purpose.",
+        "guidance": "Section 8(7) requires erasure on consent withdrawal or when the specified purpose is no longer served, unless retention is necessary for compliance with law. Rule-specific retention may also apply.",
         "weight": 1.5,
         "is_critical": True,
     },
@@ -296,7 +310,7 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "data_retention",
         "section": "section_8",
         "question": "Do you have automated data purging/deletion processes?",
-        "guidance": "Manual deletion is error-prone; automation ensures compliance at scale.",
+        "guidance": "Automation is a recommended control, not a universal statutory requirement. Whatever process is used must implement applicable erasure, warning, legal-hold, and processor-cascade rules.",
         "weight": 1.0,
         "is_critical": False,
     },
@@ -306,7 +320,7 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "category": "purpose_limitation",
         "section": "section_6",
         "question": "Is each data processing activity tied to a specific, documented purpose?",
-        "guidance": "Processing without a defined purpose violates Section 6(1).",
+        "guidance": "Consent under Section 6 must relate to a specified purpose. Processing under a Section 7 legitimate use or another applicable basis must be documented against that basis rather than mislabeled as consent.",
         "weight": 1.5,
         "is_critical": True,
     },
@@ -314,8 +328,8 @@ ASSESSMENT_QUESTIONS: list[dict] = [
         "id": "pl_02",
         "category": "purpose_limitation",
         "section": "section_6",
-        "question": "Do you obtain fresh consent before using data for secondary/new purposes?",
-        "guidance": "Repurposing data without fresh consent is a Section 6 violation.",
+        "question": "Before a new or incompatible purpose, do you reassess the processing basis and obtain fresh notice/consent where consent is required?",
+        "guidance": "A new consent-based purpose requires compliant notice and fresh affirmative consent. Do not assume consent is required—or sufficient—where a legitimate use, statutory restriction, or other Indian law governs.",
         "weight": 1.0,
         "is_critical": False,
     },
@@ -456,7 +470,7 @@ class GapAssessorAgent:
             recommendations = []
             if data["critical_gaps"]:
                 recommendations.append(
-                    f"URGENT: Address {len(data['critical_gaps'])} critical gap(s) before May 2027 enforcement."
+                    f"URGENT: Address {len(data['critical_gaps'])} critical gap(s) before the May 2027 substantive commencement."
                 )
             if data["findings"]:
                 recommendations.append(
@@ -488,15 +502,29 @@ class GapAssessorAgent:
         )
 
         # Deadline risk
-        days_to_enforcement = (DPDP_ENFORCEMENT_DATE - date.today()).days
-        if days_to_enforcement <= 0:
-            deadline_risk = "ENFORCEMENT ACTIVE — immediate compliance required"
-        elif days_to_enforcement <= 180:
-            deadline_risk = f"HIGH RISK — only {days_to_enforcement} days until enforcement (May 13, 2027)"
-        elif days_to_enforcement <= 365:
-            deadline_risk = f"MODERATE — {days_to_enforcement} days until enforcement"
+        days_to_commencement = (
+            DPDP_SUBSTANTIVE_COMMENCEMENT_DATE - date.today()
+        ).days
+        if days_to_commencement <= 0:
+            deadline_risk = (
+                "SUBSTANTIVE PHASE ACTIVE — verify each provision's commencement "
+                "and complete applicable compliance actions"
+            )
+        elif days_to_commencement <= 180:
+            deadline_risk = (
+                f"HIGH RISK — only {days_to_commencement} days until the main "
+                "substantive commencement (May 13, 2027)"
+            )
+        elif days_to_commencement <= 365:
+            deadline_risk = (
+                f"MODERATE — {days_to_commencement} days until the main "
+                "substantive commencement"
+            )
         else:
-            deadline_risk = f"MANAGEABLE — {days_to_enforcement} days until enforcement"
+            deadline_risk = (
+                f"MANAGEABLE — {days_to_commencement} days until the main "
+                "substantive commencement"
+            )
 
         effort = "High" if overall_score < 40 else "Medium" if overall_score < 70 else "Low"
 
@@ -555,7 +583,7 @@ class GapAssessorAgent:
         )
         if has_breach_gap:
             actions.append(
-                "[HIGH] Establish incident response plan with 72-hour notification workflow."
+                "[HIGH] Establish a without-delay initial-notice workflow and a 72-hour detailed Board-report workflow."
             )
 
         has_vendor_gap = any(
@@ -565,7 +593,7 @@ class GapAssessorAgent:
         )
         if has_vendor_gap:
             actions.append(
-                "[HIGH] Review and update all vendor contracts with DPDP-compliant DPA clauses."
+                "[HIGH] Review vendor contracts and add fact-specific processing, security, rights-support, breach, and deletion terms."
             )
 
         # Try AI enhancement

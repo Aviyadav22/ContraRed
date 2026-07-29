@@ -66,8 +66,8 @@ class ComplianceAgent:
                 Annotation(
                     section_number="ALL",
                     agent="compliance",
-                    severity="info",
-                    issue=f"Mixed efforts standards found. (Note: Style enforcer will normalize these automatically.)",
+                    severity=severity,
+                    issue="Mixed efforts standards found. (Note: Style enforcer will normalize these automatically.)",
                     reasoning=finding,
                 )
             )

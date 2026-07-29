@@ -1,8 +1,8 @@
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock
 from app.services.drafting.models import (
     DraftRequest, PartyInfo, NDADetails, RawDraft, DraftSection,
-    DraftMetadata, FinalDraft, QualityReport, Annotation,
+    DraftMetadata, FinalDraft, QualityReport,
 )
 
 def _make_nda_request():
@@ -62,12 +62,24 @@ async def test_orchestrator_parallel_review():
     orch.assembler.assemble = AsyncMock(return_value=_make_final_draft())
 
     call_order = []
+
     async def mock_risk(*a, **kw):
-        call_order.append("risk_start"); await asyncio.sleep(0.01); call_order.append("risk_end"); return []
+        call_order.append("risk_start")
+        await asyncio.sleep(0.01)
+        call_order.append("risk_end")
+        return []
+
     async def mock_compliance(*a, **kw):
-        call_order.append("compliance_start"); await asyncio.sleep(0.01); call_order.append("compliance_end"); return []
+        call_order.append("compliance_start")
+        await asyncio.sleep(0.01)
+        call_order.append("compliance_end")
+        return []
+
     async def mock_qa(*a, **kw):
-        call_order.append("qa_start"); await asyncio.sleep(0.01); call_order.append("qa_end"); return []
+        call_order.append("qa_start")
+        await asyncio.sleep(0.01)
+        call_order.append("qa_end")
+        return []
 
     orch.risk_agent.review = mock_risk
     orch.compliance_agent.review = mock_compliance

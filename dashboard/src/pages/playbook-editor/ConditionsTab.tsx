@@ -94,7 +94,12 @@ export function ConditionsTab({
                             <label className={labelClass}>Condition Type</label>
                             <select
                                 value={newCondition.condition_type}
-                                onChange={(e) => setNewCondition(prev => ({ ...prev, condition_type: e.target.value }))}
+                                onChange={(e) => setNewCondition(prev => ({
+                                    ...prev,
+                                    condition_type: e.target.value,
+                                    operator: e.target.value === 'deal_size' ? 'between' : 'equals',
+                                    condition_value: '{}',
+                                }))}
                                 className={inputClass}
                             >
                                 {CONDITION_TYPES.map(ct => (
@@ -106,7 +111,11 @@ export function ConditionsTab({
                             <label className={labelClass}>Operator</label>
                             <select
                                 value={newCondition.operator}
-                                onChange={(e) => setNewCondition(prev => ({ ...prev, operator: e.target.value }))}
+                                onChange={(e) => setNewCondition(prev => ({
+                                    ...prev,
+                                    operator: e.target.value,
+                                    condition_value: '{}',
+                                }))}
                                 className={inputClass}
                             >
                                 {newCondition.condition_type === 'deal_size' ? (
@@ -139,6 +148,7 @@ export function ConditionsTab({
                         <div className="md:col-span-2">
                             <ConditionValueEditor
                                 conditionType={newCondition.condition_type}
+                                operator={newCondition.operator}
                                 value={newCondition.condition_value}
                                 onChange={(val) => setNewCondition(prev => ({ ...prev, condition_value: val }))}
                             />

@@ -79,9 +79,6 @@ def normalize_number_words(text: str) -> str:
             return m.group(0)  # unknown number, leave as-is
         return f"{word} ({num}) {unit}"
 
-    # Match a bare number followed by a time unit, but NOT preceded by
-    # a word-and-parenthesis pattern (already formatted).
-    pattern = rf"(?<!\w\s)\b(\d+)\s+({_TIME_UNITS})\b"
     # Negative lookbehind is tricky with variable width; instead we skip
     # matches that are already formatted by checking for "(N)" after word.
     already_formatted = rf"\b[a-z][\w-]*\s+\(\d+\)\s+{_TIME_UNITS}"

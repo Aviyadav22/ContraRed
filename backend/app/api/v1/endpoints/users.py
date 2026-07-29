@@ -3,21 +3,21 @@ User management endpoints.
 """
 
 import logging
-from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
-
-logger = logging.getLogger(__name__)
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
 from datetime import datetime, timezone
 
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.db.session import get_db
-from app.models.user import User, UserRole
+from app.models.user import User
 from app.models.document import Document, DocumentStatus, UsageLog, UsageAction
 from app.api.v1.endpoints.auth import get_current_user, UserResponse
 from app.api.dependencies import require_permission
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter()

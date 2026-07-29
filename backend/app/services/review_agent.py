@@ -32,7 +32,12 @@ class ReviewFinding:
     clause_type: str
     rule_name: str
     explanation: str
+    rule_id: Optional[str] = None
+    clause_text: str = ""
     fix: Optional[str] = None
+    is_deal_breaker: bool = False
+    confidence: Optional[float] = None
+    verification_status: Optional[str] = None
     priority: int = 0  # 1=highest
 
 
@@ -41,6 +46,7 @@ class ReviewResult:
     """Structured result from a full contract review."""
     jurisdiction: Optional[str] = None
     contract_type: Optional[str] = None
+    review_perspective: Optional[str] = None
     total_findings: int = 0
     deal_breakers: List[ReviewFinding] = field(default_factory=list)
     high_risk: List[ReviewFinding] = field(default_factory=list)
@@ -49,11 +55,14 @@ class ReviewResult:
     compliance_scores: Dict[str, Any] = field(default_factory=dict)
     summary: str = ""
     partial: bool = False
+    ai_used: bool = True
+    playbook_coverage: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
             "jurisdiction": self.jurisdiction,
             "contract_type": self.contract_type,
+            "review_perspective": self.review_perspective,
             "total_findings": self.total_findings,
             "deal_breakers": [_finding_dict(f) for f in self.deal_breakers],
             "high_risk": [_finding_dict(f) for f in self.high_risk],
@@ -62,17 +71,24 @@ class ReviewResult:
             "compliance_scores": self.compliance_scores,
             "summary": self.summary,
             "partial": self.partial,
+            "ai_used": self.ai_used,
+            "playbook_coverage": self.playbook_coverage,
         }
 
 
 def _finding_dict(f: ReviewFinding) -> Dict[str, Any]:
     return {
         "id": f.id,
+        "rule_id": f.rule_id,
         "risk_level": f.risk_level,
         "clause_type": f.clause_type,
         "rule_name": f.rule_name,
+        "clause_text": f.clause_text,
         "explanation": f.explanation,
         "fix": f.fix,
+        "is_deal_breaker": f.is_deal_breaker,
+        "confidence": f.confidence,
+        "verification_status": f.verification_status,
         "priority": f.priority,
     }
 
@@ -83,9 +99,18 @@ class ReviewAgent:
     Orchestrates the full review workflow using ContraRedToolkit.
     """
 
-    def __init__(self, db: AsyncSession):
+    def __init__(
+        self,
+        db: AsyncSession,
+        current_user_id=None,
+        current_user_org_id=None,
+    ):
         self.db = db
-        self.toolkit = ContraRedToolkit(db)
+        self.toolkit = ContraRedToolkit(
+            db,
+            current_user_id=current_user_id,
+            current_user_org_id=current_user_org_id,
+        )
 
     async def review(
         self,
@@ -94,6 +119,7 @@ class ReviewAgent:
         playbook_id: Optional[str] = None,
         compliance_layers: Optional[List[str]] = None,
         jurisdiction: Optional[str] = None,
+        party_side: Optional[str] = None,
     ) -> ReviewResult:
         """Run a full contract review.
 
@@ -122,52 +148,71 @@ class ReviewAgent:
             playbook_id=playbook_id,
             compliance_layers=compliance_layers,
             jurisdiction=jurisdiction,
+            party_side=party_side,
         )
 
-        # Step 4: Prioritize findings
+        # Step 4: Prioritize findings. Natural-language focus instructions may
+        # reorder the review, but never hide unrelated deal-breakers or risks.
         findings = analysis.get("findings", [])
         deal_breakers = []
         high_risk = []
         medium_risk = []
         low_risk = []
 
+        focus_types = (
+            set(self._parse_focus_from_instructions(instructions))
+            if instructions else set()
+        )
+        risk_rank = {"RED": 0, "YELLOW": 1, "GREEN": 2}
+        ordered_findings = sorted(
+            findings,
+            key=lambda finding: (
+                0 if finding.get("is_deal_breaker") else 1,
+                0 if finding.get("clause_type") in focus_types else 1,
+                risk_rank.get(finding.get("risk_level"), 3),
+                -(finding.get("confidence") or 0),
+            ),
+        )
+
         priority = 1
-        for f in findings:
+        for f in ordered_findings:
             rf = ReviewFinding(
                 id=f["id"],
+                rule_id=f.get("rule_id"),
                 risk_level=f["risk_level"],
                 clause_type=f.get("clause_type", ""),
                 rule_name=f.get("rule_name", ""),
+                clause_text=f.get("clause_text", ""),
                 explanation=f.get("explanation", ""),
                 fix=f.get("fix"),
+                is_deal_breaker=bool(f.get("is_deal_breaker")),
+                confidence=f.get("confidence"),
+                verification_status=f.get("verification_status"),
                 priority=priority,
             )
-            if f["risk_level"] == "RED":
+            if f["risk_level"] == "RED" and rf.is_deal_breaker:
                 deal_breakers.append(rf)
-            elif f["risk_level"] == "YELLOW":
+            elif f["risk_level"] == "RED":
                 high_risk.append(rf)
+            elif f["risk_level"] == "YELLOW":
+                medium_risk.append(rf)
             else:
                 low_risk.append(rf)
             priority += 1
 
-        # Step 5: Apply instruction filtering
-        if instructions:
-            focus_types = self._parse_focus_from_instructions(instructions)
-            if focus_types:
-                deal_breakers = [f for f in deal_breakers if f.clause_type in focus_types or not focus_types]
-                high_risk = [f for f in high_risk if f.clause_type in focus_types or not focus_types]
-
-        # Step 6: Build summary
+        # Step 5: Build summary
         summary = self._build_summary(
             jurisdiction=jurisdiction,
             contract_type=analysis.get("contract_type"),
             risk_summary=analysis.get("risk_summary", {}),
             compliance_scores=analysis.get("compliance_scores", {}),
+            deal_breaker_count=len(deal_breakers),
         )
 
         return ReviewResult(
             jurisdiction=jurisdiction,
             contract_type=analysis.get("contract_type"),
+            review_perspective=analysis.get("review_perspective"),
             total_findings=len(findings),
             deal_breakers=deal_breakers,
             high_risk=high_risk,
@@ -176,6 +221,8 @@ class ReviewAgent:
             compliance_scores=analysis.get("compliance_scores", {}),
             summary=summary,
             partial=analysis.get("partial", False),
+            ai_used=analysis.get("ai_used", True),
+            playbook_coverage=analysis.get("playbook_coverage"),
         )
 
     def _suggest_compliance_layers(self, jurisdiction: Optional[str]) -> List[str]:
@@ -211,6 +258,7 @@ class ReviewAgent:
         contract_type: Optional[str],
         risk_summary: Dict,
         compliance_scores: Dict,
+        deal_breaker_count: int = 0,
     ) -> str:
         """Build a human-readable review summary."""
         parts = []
@@ -224,7 +272,11 @@ class ReviewAgent:
         total = risk_summary.get("total", 0)
 
         if red > 0:
-            parts.append(f"{red} deal-breaker(s) found requiring immediate attention.")
+            parts.append(f"{red} high-risk finding(s) require immediate attention.")
+        if deal_breaker_count:
+            parts.append(
+                f"{deal_breaker_count} finding(s) are marked as playbook deal-breakers."
+            )
         if yellow > 0:
             parts.append(f"{yellow} medium-risk finding(s) to review.")
         if total == 0:

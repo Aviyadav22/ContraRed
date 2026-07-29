@@ -1,6 +1,6 @@
 import { useState, type ReactNode, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { logout } from '@/api/client';
+import { getStoredUser, logout } from '@/api/client';
 import { Sidebar } from './Sidebar';
 import { TopBar } from './TopBar';
 
@@ -9,17 +9,11 @@ interface AppLayoutProps {
 }
 
 function getUserProfile(): { name: string; role?: string } {
-  try {
-    const raw = sessionStorage.getItem('user_profile');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return {
-        name: parsed.full_name || parsed.name || parsed.email || 'User',
-        role: parsed.role,
-      };
-    }
-  } catch { /* ignore */ }
-  return { name: 'User' };
+  const user = getStoredUser();
+  return {
+    name: user?.name || user?.email || 'User',
+    role: user?.role,
+  };
 }
 
 export function AppLayout({ children }: AppLayoutProps) {

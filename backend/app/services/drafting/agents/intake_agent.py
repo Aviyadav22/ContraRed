@@ -7,7 +7,7 @@ appropriate drafting playbook for the downstream Draft Agent.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from app.services.drafting.models import (
     DraftRequest,

@@ -5,11 +5,12 @@ Avoids re-querying the DB and re-compiling regex patterns for the same
 playbook on every analysis request.  Works without Redis.
 """
 
+import copy
 import logging
 from typing import Dict, List, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -27,7 +28,7 @@ _MAX_CACHE_SIZE = 64
 _engine_cache: Dict[Tuple[str, str], RuleEngine] = {}
 
 # (playbook_id_str, updated_at_iso) -> list of rule dicts
-_rules_dict_cache: Dict[Tuple[str, str], List[dict]] = {}
+_rules_dict_cache: Dict[Tuple[str, str, bool, bool], List[dict]] = {}
 
 # Singleton default RuleEngine (no playbook)
 _default_engine: Optional[RuleEngine] = None
@@ -67,10 +68,17 @@ def get_cached_rules_dicts(
     include_deal_breaker: bool = True,
 ) -> List[dict]:
     """Get cached list-of-dict representation of playbook rules."""
-    key = _cache_key(playbook)
+    base_key = _cache_key(playbook)
+    # The old cache key ignored the two shape flags.  A request that first
+    # asked for the small shape could therefore poison later legal-analysis
+    # requests by silently removing verification and deal-breaker guidance.
+    key = (base_key[0], base_key[1], include_verification, include_deal_breaker)
     cached = _rules_dict_cache.get(key)
     if cached is not None:
-        return cached
+        # Phase-6 tier and condition handling mutates rule dictionaries.  Never
+        # hand callers the cached objects themselves or one scan can change the
+        # playbook applied to a later scan.
+        return copy.deepcopy(cached)
 
     if len(_rules_dict_cache) >= _MAX_CACHE_SIZE:
         _rules_dict_cache.pop(next(iter(_rules_dict_cache)))
@@ -88,12 +96,28 @@ def get_cached_rules_dicts(
             ),
             "primary_position": rule.primary_position or "",
             "fallback_position": rule.fallback_position or "",
+            # Stage 2 needs the actual user-authored patterns.  They were
+            # previously omitted, leaving the selected playbook disconnected
+            # from deterministic classification and fallback analysis.
+            "detection_patterns": copy.deepcopy(rule.detection_patterns or {}),
+            "suggested_language": copy.deepcopy(rule.suggested_language or {}),
+            "priority": rule.priority,
+            "category": rule.category,
+            "subcategory": rule.subcategory,
+            "tags": copy.deepcopy(rule.tags or []),
         }
         if include_deal_breaker:
             d["is_deal_breaker"] = rule.is_deal_breaker
         if include_verification:
             d["verification_prompt"] = rule.verification_prompt or ""
-        d["detection_mode"] = rule.detection_mode or "keywords_only"
+        detection_mode = rule.detection_mode or "keywords_only"
+        # Older API versions accepted aliases that the rule engine and AI
+        # formatter never interpreted. Normalize them at the execution edge.
+        detection_mode = {
+            "ai_primary": "ai_only",
+            "hybrid": "ai_with_keywords",
+        }.get(detection_mode, detection_mode)
+        d["detection_mode"] = detection_mode
         d["risk_description"] = rule.risk_description or ""
         d["acceptable_position"] = rule.acceptable_position or ""
         d["unacceptable_signals"] = rule.unacceptable_signals or []
@@ -102,7 +126,7 @@ def get_cached_rules_dicts(
         rules.append(d)
 
     _rules_dict_cache[key] = rules
-    return rules
+    return copy.deepcopy(rules)
 
 
 def invalidate_playbook_cache(playbook_id: str) -> None:
@@ -116,12 +140,27 @@ def invalidate_playbook_cache(playbook_id: str) -> None:
 # Map detected contract types to PlaybookCategory values in DB
 _CONTRACT_TYPE_TO_CATEGORY = {
     "nda": "nda",
+    "nda_mutual": "nda",
+    "nda_unilateral": "nda",
     "saas": "saas",
     "employment": "employment",
     "msa": "msa",
     "dpa": "dpa",
     "ma": "msa",       # M&A falls back to MSA-like rules
     "general": None,    # No auto-select for general
+}
+
+_CONTRACT_TYPE_TO_PLAYBOOK_NAME = {
+    "nda_mutual": "NDA — Mutual",
+    "nda_unilateral": "NDA — Unilateral",
+    "dpa": "Data Processing Agreement (DPA)",
+    "consulting": "Consulting / Professional Services Agreement",
+    "vendor": "Vendor / Procurement Agreement",
+    "joint_venture": "Joint Venture / Partnership Agreement",
+    "lease": "Lease / License Agreement (Commercial Property)",
+    "healthcare": "Healthcare Vendor Agreement (India)",
+    "fintech": "Fintech Services Agreement (India)",
+    "it_services": "IT Services Agreement (India)",
 }
 
 
@@ -134,19 +173,23 @@ async def load_default_playbook_for_type(
     Returns None if no matching default playbook exists.
     """
     category = _CONTRACT_TYPE_TO_CATEGORY.get(contract_type)
-    if not category:
+    playbook_name = _CONTRACT_TYPE_TO_PLAYBOOK_NAME.get(contract_type)
+    if not category and not playbook_name:
         return None
 
-    from sqlalchemy import func, cast, String
+    from sqlalchemy import cast, String
     query = (
         select(Playbook)
         .options(selectinload(Playbook.rules_list))
-        .where(
-            Playbook.is_default == True,  # noqa: E712
-            func.lower(cast(Playbook.category, String)) == category.lower(),
-        )
-        .limit(1)
+        .where(Playbook.is_default == True)  # noqa: E712
     )
+    if playbook_name:
+        # Name matching disambiguates mutual vs unilateral NDAs and the
+        # specialist playbooks that share the legacy CUSTOM/MSA category.
+        query = query.where(func.lower(Playbook.name) == playbook_name.lower())
+    elif category:
+        query = query.where(func.lower(cast(Playbook.category, String)) == category.lower())
+    query = query.limit(1)
     result = await db.execute(query)
     return result.scalar_one_or_none()
 
@@ -180,12 +223,18 @@ async def load_playbook(
         .where(Playbook.id == pb_uuid)
     )
 
-    if auth_in_query and current_user_org_id is not None:
-        query = query.where(
-            (Playbook.is_public == True)  # noqa: E712
-            | (Playbook.organization_id == current_user_org_id)
-            | (Playbook.created_by == current_user_id)
-        )
+    if auth_in_query:
+        access_conditions = [
+            Playbook.is_public.is_(True),
+            Playbook.created_by == current_user_id,
+        ]
+        # SQL NULL = NULL is not tenant membership. An org-less caller may
+        # only see public playbooks and playbooks they personally created.
+        if current_user_org_id is not None:
+            access_conditions.append(
+                Playbook.organization_id == current_user_org_id
+            )
+        query = query.where(or_(*access_conditions))
 
     result = await db.execute(query)
     playbook = result.scalar_one_or_none()
@@ -194,10 +243,16 @@ async def load_playbook(
         return None
 
     if check_access and not auth_in_query and not playbook.is_public:
-        if (
-            playbook.created_by != current_user_id
-            and playbook.organization_id != current_user_org_id
-        ):
-            return None  # access denied — caller decides HTTP code
+        is_owner = (
+            current_user_id is not None
+            and playbook.created_by == current_user_id
+        )
+        is_same_org = (
+            current_user_org_id is not None
+            and playbook.organization_id is not None
+            and playbook.organization_id == current_user_org_id
+        )
+        if not is_owner and not is_same_org:
+            return None  # access denied - caller decides HTTP code
 
     return playbook

@@ -1,7 +1,5 @@
 """Tests for Global Jurisdiction Engine."""
-import uuid
 import pytest
-import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.jurisdiction import Jurisdiction, JurisdictionRuleOverride
@@ -9,7 +7,6 @@ from app.services.jurisdiction_detector import (
     JurisdictionDetector,
     JURISDICTION_PROFILES,
     get_rule_overrides,
-    apply_jurisdiction_overrides,
 )
 from scripts.seed_jurisdictions import (
     JURISDICTION_SEED_DATA,
@@ -184,8 +181,6 @@ def test_jurisdiction_api_response_models():
     """Response models should import cleanly."""
     from app.api.v1.endpoints.jurisdictions import (
         JurisdictionSummary,
-        JurisdictionDetail,
-        RuleOverrideResponse,
     )
     summary = JurisdictionSummary(
         code="TEST", name="Test", display_name="Test Jurisdiction",

@@ -20,15 +20,13 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
-from sqlalchemy import select, desc, text, update, and_
+from sqlalchemy import select, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.core.config import settings
 from app.models.consent import (
     ConsentPurpose, ConsentPolicy, ConsentRecord, ConsentPurposeGrant,
     ConsentEvent, ConsentReceipt, ConsentStatus, ConsentEventType,
-    CONSENT_RETENTION_YEARS,
 )
 
 logger = logging.getLogger(__name__)
@@ -71,8 +69,10 @@ class ConsentService:
 
         # Look up purpose definitions
         purposes = await self._get_active_purposes(db, purpose_codes)
-        if not purposes:
-            raise ValueError(f"No active purposes found for codes: {purpose_codes}")
+        found_codes = {purpose.purpose_code for purpose in purposes}
+        missing_codes = sorted(set(purpose_codes) - found_codes)
+        if missing_codes:
+            raise ValueError(f"Unknown or inactive consent purposes: {missing_codes}")
 
         # Find existing active consent record for this user, or create new
         existing = await self._get_active_record(db, subject_id, organization_id)
@@ -193,7 +193,7 @@ class ConsentService:
             select(ConsentPurposeGrant)
             .where(
                 ConsentPurposeGrant.consent_record_id == record.id,
-                ConsentPurposeGrant.granted == True,
+                ConsentPurposeGrant.granted.is_(True),
             )
         )
         if not remaining.scalars().first():
@@ -247,7 +247,7 @@ class ConsentService:
                 ConsentRecord.subject_id == subject_id,
                 ConsentRecord.status == ConsentStatus.ACTIVE.value,
                 ConsentPurposeGrant.purpose_code == purpose_code,
-                ConsentPurposeGrant.granted == True,
+                ConsentPurposeGrant.granted.is_(True),
             )
             .limit(1)
         )
@@ -456,7 +456,7 @@ class ConsentService:
                 select(ConsentPurpose)
                 .where(
                     ConsentPurpose.purpose_code == code,
-                    ConsentPurpose.is_active == True,
+                    ConsentPurpose.is_active.is_(True),
                 )
                 .order_by(desc(ConsentPurpose.version))
                 .limit(1)
@@ -471,7 +471,7 @@ class ConsentService:
         # Get all distinct purpose codes, then latest version of each
         result = await db.execute(
             select(ConsentPurpose)
-            .where(ConsentPurpose.is_active == True)
+            .where(ConsentPurpose.is_active.is_(True))
             .order_by(ConsentPurpose.purpose_code, desc(ConsentPurpose.version))
         )
         all_purposes = result.scalars().all()
@@ -553,6 +553,12 @@ class ConsentService:
         hash_input = f"{seq_number}|{event_type}|{subject_id}|{now.isoformat()}|{previous_hash}"
         entry_hash = hashlib.sha256(hash_input.encode("utf-8")).hexdigest()
 
+        retention_days = settings.CONSENT_EVENT_RETENTION_DAYS
+        if settings.REGISTERED_CONSENT_MANAGER:
+            # Rule 4 / First Schedule Part B applies this minimum only to a
+            # registered Consent Manager's platform records.
+            retention_days = max(retention_days, 365 * 7)
+
         event = ConsentEvent(
             consent_record_id=consent_record_id,
             subject_id=subject_id,
@@ -565,7 +571,11 @@ class ConsentService:
             entry_hash=entry_hash,
             previous_hash=previous_hash,
             sequence_number=seq_number,
-            retention_until=now + timedelta(days=365 * CONSENT_RETENTION_YEARS),
+            retention_until=(
+                now + timedelta(days=retention_days)
+                if retention_days > 0
+                else None
+            ),
             created_at=now,
         )
         db.add(event)
@@ -608,7 +618,7 @@ class ConsentService:
                 for p in purposes
                 if p.purpose_code in purpose_codes
             ],
-            "privacy_notice_reference": f"/api/v1/consent/policy/current",
+            "privacy_notice_reference": "/api/v1/consent/policy/current",
             "jurisdiction": "IN",
             "dpdp_act_section": "Section 6",
         }

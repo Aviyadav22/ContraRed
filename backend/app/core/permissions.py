@@ -218,27 +218,6 @@ def require_role(minimum_role: UserRole):
     return _check
 
 
-def require_any_permission(*permissions: str):
-    """
-    FastAPI dependency factory: require at least ONE of the listed permissions.
-
-    Usage:
-        @router.get("/reports")
-        async def reports(user: User = Depends(require_any_permission("analytics.read", "audit.read"))):
-            ...
-    """
-    async def _check(current_user: User = Depends(_get_current_user_lazy)) -> User:
-        user_perms = get_permissions_for_role(current_user.role)
-        if not user_perms.intersection(permissions):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Permission denied: requires one of {list(permissions)}",
-            )
-        return current_user
-
-    return _check
-
-
 # ---------------------------------------------------------------------------
 # Lazy import to avoid circular dependency with auth.py
 # ---------------------------------------------------------------------------

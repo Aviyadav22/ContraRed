@@ -101,7 +101,11 @@ export function DependenciesTab({
                             <label className={labelClass}>Effect</label>
                             <select
                                 value={newDep.effect}
-                                onChange={(e) => setNewDep(prev => ({ ...prev, effect: e.target.value }))}
+                                onChange={(e) => setNewDep(prev => ({
+                                    ...prev,
+                                    effect: e.target.value,
+                                    effect_params: '{}',
+                                }))}
                                 className={inputClass}
                             >
                                 {EFFECTS.map(ef => (

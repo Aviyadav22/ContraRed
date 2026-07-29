@@ -1,5 +1,4 @@
 """Tests for source trail data exposure — confidence breakdown, cross references, hallucination stats."""
-import pytest
 
 
 # ============================================================

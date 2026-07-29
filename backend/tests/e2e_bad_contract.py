@@ -221,8 +221,8 @@ async def main() -> int:
     print(f"  Rule-engine fallback caught {len(caught)}/{len(EXPECTED_RED_FLAGS)} planted red flags.")
     if missed:
         print(f"  Missed (rule-engine only — AI would catch these): {missed}")
-    print(f"\n  Note: AI Stage 3 was offline (no Vertex creds), so this is the floor.")
-    print(f"  With AI on, the playbook rules + risk_description prompts would lift this to ~95%+.")
+    print("\n  Note: AI Stage 3 was offline (no Vertex creds), so this is the floor.")
+    print("  With AI on, the playbook rules + risk_description prompts would lift this to ~95%+.")
     return 0
 
 

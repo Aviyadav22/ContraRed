@@ -131,13 +131,13 @@ Every new user/org should see ready-to-use playbooks covering the most common In
     - [x] Purpose Limitation (YELLOW — flag if processor can use data for own purposes)
     - [x] Data Subject Rights (YELLOW — flag if missing, must support DPDP Act obligations)
     - [x] Sub-Processor Controls (YELLOW — flag if no notification of sub-processors)
-    - [x] Data Breach Notification (RED — flag if >72 hours, DPDP requires "without undue delay")
+    - [x] Data Breach Notification (RED — processor notice must support the fiduciary's without-delay notices; any 24/48-hour processor clock is a negotiated internal deadline)
     - [x] Data Deletion/Return (RED — flag if no deletion clause post-termination)
-    - [x] Cross-Border Transfer (RED — flag if data going outside India without safeguards)
+    - [x] Cross-Border Transfer (apply the selected authorisation and safeguard position, then verify current section 16 / Rule 15 restrictions and stricter sectoral law)
     - [x] Security Measures (YELLOW — flag if vague, must specify technical + organizational measures)
     - [x] Audit Rights (YELLOW — flag if data fiduciary cannot audit processor)
-    - [x] Liability & Indemnification (RED — processor must indemnify for breaches)
-    - [x] Governing Law (GREEN — must be Indian law for DPDP compliance)
+    - [x] Liability & Indemnification (apply the selected indemnity, causation, cap, and carve-out position; a processor indemnity is not an automatic DPDP statutory requirement)
+    - [x] Governing Law (apply the transaction playbook; DPDP applicability does not itself require Indian governing law)
 
 - [x] **7. Consulting / Professional Services Agreement** (10 rules)
   - Category: `custom`

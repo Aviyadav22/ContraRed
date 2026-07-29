@@ -5,52 +5,63 @@ interface DependencyParamsEditorProps {
 }
 
 export function DependencyParamsEditor({ effect, value, onChange }: DependencyParamsEditorProps) {
-  let parsed: Record<string, any> = {};
+  let parsed: { new_risk?: string; new_position?: string; message?: string } = {};
   try { parsed = JSON.parse(value); } catch { parsed = {}; }
 
-  const updateField = (field: string, val: any) => {
-    const updated = { ...parsed, [field]: val };
-    onChange(JSON.stringify(updated));
+  const updateField = (field: string, val: string) => {
+    onChange(JSON.stringify({ ...parsed, [field]: val }));
   };
 
-  // Suppress unused variable warning — effect reserved for future per-effect layouts
-  void effect;
-
-  return (
-    <div className="space-y-3">
+  if (effect === 'escalate_risk') {
+    return (
       <div>
-        <label className="block text-sm font-medium text-[var(--text-primary)]">Override Risk Level</label>
+        <label className="block text-sm font-medium text-[var(--text-primary)]">New Risk Level</label>
         <select
           className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
-          value={parsed.risk_level || ''}
-          onChange={e => updateField('risk_level', e.target.value)}
+          value={parsed.new_risk || ''}
+          onChange={e => updateField('new_risk', e.target.value)}
         >
-          <option value="">No change</option>
-          <option value="red">Critical (Red)</option>
-          <option value="yellow">Warning (Yellow)</option>
-          <option value="green">Safe (Green)</option>
+          <option value="">Select risk...</option>
+          <option value="RED">Critical (Red)</option>
+          <option value="YELLOW">Warning (Yellow)</option>
+          <option value="GREEN">Safe (Green)</option>
         </select>
       </div>
+    );
+  }
+
+  if (effect === 'add_flag') {
+    return (
       <div>
-        <label className="block text-sm font-medium text-[var(--text-primary)]">Override Position Text</label>
+        <label className="block text-sm font-medium text-[var(--text-primary)]">Flag Message</label>
+        <input
+          className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
+          value={parsed.message || ''}
+          onChange={e => updateField('message', e.target.value)}
+          placeholder="Explain the cross-clause issue to the reviewer."
+        />
+      </div>
+    );
+  }
+
+  if (effect === 'change_position') {
+    return (
+      <div>
+        <label className="block text-sm font-medium text-[var(--text-primary)]">New Position Text</label>
         <textarea
           className="w-full rounded-lg border border-[var(--border)] px-3 py-2 text-sm"
           rows={2}
-          value={parsed.position_text || ''}
-          onChange={e => updateField('position_text', e.target.value)}
+          value={parsed.new_position || ''}
+          onChange={e => updateField('new_position', e.target.value)}
           placeholder="Override negotiation position..."
         />
       </div>
-      <div className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          id="dep-suppress"
-          checked={parsed.suppress || false}
-          onChange={e => updateField('suppress', e.target.checked)}
-          className="rounded border-[var(--border)]"
-        />
-        <label htmlFor="dep-suppress" className="text-sm text-[var(--text-primary)]">Suppress this rule when dependency triggers</label>
-      </div>
-    </div>
+    );
+  }
+
+  return (
+    <p className="text-sm text-[var(--text-muted)]">
+      No parameters are required. The target rule will be suppressed when the trigger matches.
+    </p>
   );
 }

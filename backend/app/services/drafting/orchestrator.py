@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from app.services.drafting.models import FinalDraft, Annotation
+from app.services.drafting.models import FinalDraft
 from app.services.drafting.style_rules import apply_all_style_rules
 from app.services.drafting.consistency_engine import ConsistencyEngine
 from app.services.drafting.jurisdiction_rules import JurisdictionRuleEngine

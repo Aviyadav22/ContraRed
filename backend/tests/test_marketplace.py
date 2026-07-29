@@ -114,13 +114,10 @@ def test_it_services_playbook():
 
 
 def test_total_playbooks_count():
-    """Should have 10 system-default playbooks (the orphan industry seed
-    script was retired in Phase A consolidation; industry playbooks live as
-    standalone modules in scripts/playbooks/ and are seeded on demand via
-    seed_defaults._load_all_playbooks)."""
+    """All 10 core and 3 specialist packs are system defaults."""
     from app.services.seed_defaults import _load_all_playbooks
     playbooks = _load_all_playbooks()
-    assert len(playbooks) == 10
+    assert len(playbooks) == 13
 
 
 def test_industry_playbooks_have_deal_breakers():

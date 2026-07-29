@@ -3,7 +3,12 @@
  * Shares authentication patterns with Word Add-in
  */
 
+import { requestConsent } from './consentPrompt';
+
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
+const API_ORIGIN_URL = API_BASE_URL.replace(/\/api\/v1\/?$/, '');
+let inFlightApiWarmup: Promise<void> | null = null;
+let lastApiWarmupAt = 0;
 
 // Warn if API URL is not configured (app still loads, API calls will fail gracefully)
 if (!API_BASE_URL) {
@@ -40,6 +45,7 @@ export interface Playbook {
     is_public: boolean;
     is_default: boolean;
     version: number;
+    party_side: 'buyer' | 'seller' | 'neutral';
     rules_count: number;
     /** True when the requesting user owns this playbook — drives Edit/Delete UI. */
     is_owner?: boolean;
@@ -62,10 +68,19 @@ export interface PlaybookRule {
     unacceptable_signals?: string[];
     acceptable_signals?: string[];
     clause_context?: string;
+    verification_prompt?: string;
 }
 
 export interface PlaybookDetail extends Playbook {
     rules: PlaybookRule[];
+}
+
+export interface PlaybookQuality {
+    playbook_id: string;
+    publishable: boolean;
+    issues: string[];
+    recommendations: string[];
+    rules_count: number;
 }
 
 export interface CreatePlaybookData {
@@ -73,6 +88,7 @@ export interface CreatePlaybookData {
     description?: string;
     category?: string;
     is_public?: boolean;
+    party_side?: 'buyer' | 'seller' | 'neutral';
 }
 
 export interface CreateRuleData {
@@ -90,6 +106,7 @@ export interface CreateRuleData {
     unacceptable_signals?: string[];
     acceptable_signals?: string[];
     clause_context?: string;
+    verification_prompt?: string;
 }
 
 export interface ClauseLibraryItem {
@@ -118,6 +135,7 @@ export interface RedlineItem {
     id: string;
     risk_level: 'RED' | 'YELLOW' | 'GREEN';
     rule_name: string;
+    rule_id?: string;
     clause_text: string;
     clause_type: string;
     explanation: string;
@@ -152,6 +170,19 @@ export interface AnalysisResult {
     ai_used?: boolean;
     hallucination_stats?: Record<string, unknown>;
     compliance_scores?: Record<string, Record<string, unknown>>;
+    contract_type?: string;
+    playbook_name?: string;
+    review_perspective?: string;
+    playbook_coverage?: {
+        total_rules: number;
+        assessed_rules: number;
+        compliant: number;
+        violation: number;
+        missing: number;
+        not_applicable: number;
+        unassessed_rule_ids: string[];
+        complete: boolean;
+    };
 }
 
 export interface GenerateFixResponse {
@@ -168,6 +199,9 @@ export interface GenerateFixResponse {
 // ============================================================================
 
 const USER_KEY = 'contrared_user';
+const SESSION_VALIDATION_TTL_MS = 5 * 60 * 1000;
+let lastSessionValidationAt = 0;
+let inFlightSessionValidation: Promise<User | null> | null = null;
 
 function getCsrfToken(): string {
     // sessionStorage so the token doesn't outlive the tab (B7).
@@ -191,7 +225,7 @@ function setCsrfToken(token: string): void {
     sessionStorage.setItem('contrared_csrf', token);
 }
 
-export function getStoredTokens(): AuthTokens | null {
+function getStoredTokens(): AuthTokens | null {
     // Tokens are in HttpOnly cookies (not accessible to JS).
     // Return a sentinel so isAuthenticated() checks user profile instead.
     const user = getStoredUser();
@@ -215,10 +249,11 @@ export function getStoredUser(): User | null {
     }
 }
 
-export function saveAuth(_tokens: AuthTokens, user: User): void {
+function saveAuth(_tokens: AuthTokens, user: User): void {
     // Tokens are stored in HttpOnly cookies by the server.
     // Only store non-sensitive user profile in sessionStorage (ephemeral).
     sessionStorage.setItem(USER_KEY, JSON.stringify(user));
+    lastSessionValidationAt = Date.now();
 }
 
 export function clearAuth(): void {
@@ -226,10 +261,53 @@ export function clearAuth(): void {
     localStorage.removeItem(USER_KEY);  // Clean up any legacy data
     sessionStorage.removeItem('contrared_csrf');
     localStorage.removeItem('contrared_csrf');  // Clean up any legacy data
+    lastSessionValidationAt = 0;
+    inFlightSessionValidation = null;
 }
 
 export function isAuthenticated(): boolean {
     return !!getStoredUser();
+}
+
+export function warmupApi(timeoutMs: number = 20000): Promise<void> {
+    const now = Date.now();
+    if (inFlightApiWarmup) return inFlightApiWarmup;
+    if (now - lastApiWarmupAt < 60000) return Promise.resolve();
+    if (!API_ORIGIN_URL) return Promise.resolve();
+
+    inFlightApiWarmup = (async () => {
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+            lastApiWarmupAt = Date.now();
+            const apiUrl = new URL(API_ORIGIN_URL);
+
+            for (const rel of ['preconnect', 'dns-prefetch'] as const) {
+                const existing = document.querySelector(`link[rel="${rel}"][href="${apiUrl.origin}"]`);
+                if (!existing) {
+                    const link = document.createElement('link');
+                    link.rel = rel;
+                    link.href = apiUrl.origin;
+                    if (rel === 'preconnect') link.crossOrigin = 'anonymous';
+                    document.head.appendChild(link);
+                }
+            }
+
+            await fetch(`${API_ORIGIN_URL}/health/db`, {
+                method: 'GET',
+                cache: 'no-store',
+                signal: controller.signal,
+            });
+        } catch {
+            // Best-effort only: login/register should remain the source of truth.
+        } finally {
+            window.clearTimeout(timeoutId);
+            inFlightApiWarmup = null;
+        }
+    })();
+
+    return inFlightApiWarmup;
 }
 
 // AUDIT M4 VERIFIED: This is a UI-only gate for showing/hiding admin controls.
@@ -271,6 +349,15 @@ async function refreshAuth(): Promise<boolean> {
     })();
     return inFlightRefresh;
 }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null;
+}
+
+type ApiRequestError = Error & {
+    detail?: Record<string, unknown>;
+    status?: number;
+};
 
 async function request<T>(endpoint: string, options: RequestInit = {}, retryCount: number = 0, timeoutMs: number = 120000): Promise<T> {
     const headers: Record<string, string> = {
@@ -340,33 +427,45 @@ async function request<T>(endpoint: string, options: RequestInit = {}, retryCoun
             window.location.href = '/login';
             throw new Error('Session expired');
         }
-        const error = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        const error: unknown = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        const errorPayload = isRecord(error) ? error : {};
 
         // Intercept 403 consent_required — prompt user and retry on grant
-        if (response.status === 403 && error?.error === 'consent_required' && Array.isArray(error.required_purposes)) {
-            const { requestConsent } = await import('./consentPrompt');
-            await requestConsent(error.required_purposes);
+        const requiredPurposes = errorPayload.required_purposes;
+        if (
+            response.status === 403 &&
+            errorPayload.error === 'consent_required' &&
+            Array.isArray(requiredPurposes) &&
+            requiredPurposes.every((item): item is string => typeof item === 'string')
+        ) {
+            await requestConsent(requiredPurposes);
             // User granted consent — retry the original request
             return request<T>(endpoint, options, 0, timeoutMs);
         }
 
         // Sanitize error messages to prevent backend detail leakage
-        const MAX_ERROR_LENGTH = 200;
-        const rawDetail = typeof error === 'object' && error !== null ? (error as any).detail : String(error);
+        const MAX_ERROR_LENGTH = 600;
+        const rawDetail = errorPayload.detail ?? String(error);
         let detailStr: string;
         if (typeof rawDetail === 'string') {
             detailStr = rawDetail;
-        } else if (typeof rawDetail === 'object' && rawDetail !== null && typeof (rawDetail as any).message === 'string') {
+        } else if (isRecord(rawDetail) && typeof rawDetail.message === 'string') {
             // Structured error payload (e.g. quota_exceeded) — surface the human-readable message
-            detailStr = (rawDetail as any).message;
+            const message = rawDetail.message;
+            const issues = Array.isArray(rawDetail.issues)
+                ? rawDetail.issues
+                    .filter((item: unknown) => typeof item === 'string')
+                    .slice(0, 5)
+                : [];
+            detailStr = issues.length ? `${message}\n${issues.join('\n')}` : message;
         } else {
             detailStr = 'An unexpected error occurred';
         }
-        const err = new Error(detailStr.substring(0, MAX_ERROR_LENGTH));
+        const err: ApiRequestError = new Error(detailStr.substring(0, MAX_ERROR_LENGTH));
         // Attach structured payload so callers can branch on error_code (quota_exceeded, etc.)
-        if (typeof rawDetail === 'object' && rawDetail !== null) {
-            (err as any).detail = rawDetail;
-            (err as any).status = response.status;
+        if (isRecord(rawDetail)) {
+            err.detail = rawDetail;
+            err.status = response.status;
         }
         throw err;
     }
@@ -448,19 +547,32 @@ export async function forgotPassword(email: string): Promise<void> {
     });
 }
 
-export async function getCurrentUser(): Promise<User> {
-    return request('/auth/me');
-}
+export async function validateSession(options: { force?: boolean } = {}): Promise<User | null> {
+    const storedUser = getStoredUser();
+    const recentlyValidated = Date.now() - lastSessionValidationAt < SESSION_VALIDATION_TTL_MS;
 
-export async function validateSession(): Promise<User | null> {
-    try {
-        const user = await request<User>('/auth/me');
-        const tokens = getStoredTokens();
-        if (tokens && user) saveAuth(tokens, user);
-        return user;
-    } catch {
-        return null;
+    if (!options.force && storedUser && recentlyValidated) {
+        return storedUser;
     }
+
+    if (!options.force && inFlightSessionValidation) {
+        return inFlightSessionValidation;
+    }
+
+    inFlightSessionValidation = (async () => {
+        try {
+            const user = await request<User>('/auth/me');
+            const tokens = getStoredTokens();
+            if (tokens && user) saveAuth(tokens, user);
+            return user;
+        } catch {
+            return null;
+        } finally {
+            inFlightSessionValidation = null;
+        }
+    })();
+
+    return inFlightSessionValidation;
 }
 
 // ============================================================================
@@ -478,10 +590,6 @@ export interface DashboardStats {
 
 export async function getDashboardStats(): Promise<DashboardStats> {
     return request('/users/me/stats');
-}
-
-export async function getOrgStats(): Promise<DashboardStats> {
-    return request('/users/org/stats');
 }
 
 // ============================================================================
@@ -569,16 +677,13 @@ export async function getPlaybook(id: string): Promise<PlaybookDetail> {
     return request(`/playbooks/${id}`);
 }
 
+export async function getPlaybookQuality(id: string): Promise<PlaybookQuality> {
+    return request(`/playbooks/${id}/quality`);
+}
+
 export async function createPlaybook(data: CreatePlaybookData): Promise<Playbook> {
     return request('/playbooks/', {
         method: 'POST',
-        body: JSON.stringify(data),
-    });
-}
-
-export async function updatePlaybook(id: string, data: Partial<CreatePlaybookData>): Promise<Playbook> {
-    return request(`/playbooks/${id}`, {
-        method: 'PUT',
         body: JSON.stringify(data),
     });
 }
@@ -611,13 +716,6 @@ export async function updateRule(playbookId: string, ruleId: string, data: Parti
 
 export async function deleteRule(playbookId: string, ruleId: string): Promise<void> {
     return request(`/playbooks/${playbookId}/rules/${ruleId}`, { method: 'DELETE' });
-}
-
-export async function reorderRules(playbookId: string, ruleIds: string[]): Promise<PlaybookRule[]> {
-    return request(`/playbooks/${playbookId}/rules/reorder`, {
-        method: 'POST',
-        body: JSON.stringify({ rule_ids: ruleIds }),
-    });
 }
 
 // ============================================================================
@@ -693,10 +791,6 @@ export async function addOverride(playbookId: string, conditionId: string, data:
     });
 }
 
-export async function deleteOverride(playbookId: string, conditionId: string, overrideId: string): Promise<void> {
-    return request(`/playbooks/${playbookId}/conditions/${conditionId}/overrides/${overrideId}`, { method: 'DELETE' });
-}
-
 // ============================================================================
 // Phase 6: Cross-Clause Dependencies
 // ============================================================================
@@ -738,34 +832,12 @@ export interface PlaybookVersionSummary {
     created_at: string;
 }
 
-export interface PlaybookVersionDetail extends PlaybookVersionSummary {
-    snapshot: Record<string, unknown>;
-}
-
-export interface PlaybookDiff {
-    rules_added: Record<string, unknown>[];
-    rules_removed: Record<string, unknown>[];
-    rules_modified: Record<string, unknown>[];
-    conditions_added: Record<string, unknown>[];
-    conditions_removed: Record<string, unknown>[];
-    dependencies_added: Record<string, unknown>[];
-    dependencies_removed: Record<string, unknown>[];
-}
-
 export async function listVersions(playbookId: string): Promise<PlaybookVersionSummary[]> {
     return request(`/playbooks/${playbookId}/versions`);
 }
 
 export async function createVersionSnapshot(playbookId: string, changeSummary: string): Promise<PlaybookVersionSummary> {
     return request(`/playbooks/${playbookId}/versions?change_summary=${encodeURIComponent(changeSummary)}`, { method: 'POST' });
-}
-
-export async function getVersionDetail(playbookId: string, versionId: string): Promise<PlaybookVersionDetail> {
-    return request(`/playbooks/${playbookId}/versions/${versionId}`);
-}
-
-export async function diffVersions(playbookId: string, versionAId: string, versionBId: string): Promise<PlaybookDiff> {
-    return request(`/playbooks/${playbookId}/versions/diff/${versionAId}/${versionBId}`);
 }
 
 export async function rollbackToVersion(playbookId: string, versionId: string): Promise<PlaybookVersionSummary> {
@@ -793,13 +865,6 @@ export async function browseMarketplace(category?: string): Promise<MarketplaceI
     const qs = category ? `?category=${encodeURIComponent(category)}` : '';
     const res = await request<{ items: MarketplaceItem[] }>(`/playbooks/marketplace/browse${qs}`);
     return Array.isArray(res) ? res : (res.items ?? []);
-}
-
-export async function publishToMarketplace(playbookId: string, tags: string[]): Promise<MarketplaceItem> {
-    return request(`/playbooks/${playbookId}/marketplace/publish`, {
-        method: 'POST',
-        body: JSON.stringify({ tags }),
-    });
 }
 
 export async function forkPlaybook(marketplaceId: string): Promise<Playbook> {
@@ -839,35 +904,6 @@ export async function deleteClause(id: string): Promise<void> {
 // Templates API
 // ============================================================================
 
-export interface TemplateListItem {
-    id: string;
-    name: string;
-    description: string | null;
-    category: string;
-    is_premium: boolean;
-    download_count: number;
-    paired_playbook_id: string | null;
-    paired_playbook_name: string | null;
-}
-
-export interface TemplateDetail extends TemplateListItem {
-    template_content: string | null;
-    created_at: string;
-}
-
-export async function listTemplates(category?: string): Promise<TemplateListItem[]> {
-    const qs = category ? `?category=${encodeURIComponent(category)}` : '';
-    return request(`/templates/${qs}`);
-}
-
-export async function getTemplate(id: string): Promise<TemplateDetail> {
-    return request(`/templates/${id}`);
-}
-
-export async function downloadTemplate(id: string): Promise<{ id: string; name: string; template_content: string; paired_playbook_id: string | null }> {
-    return request(`/templates/${id}/download`);
-}
-
 // ============================================================================
 // Contract Comparison API
 // ============================================================================
@@ -899,18 +935,6 @@ export async function compareContracts(textA: string, textB: string, playbookId?
 // ============================================================================
 // Clause Generation API
 // ============================================================================
-
-export interface GenerateClauseResponse {
-    clause_text: string;
-    reasoning: string;
-}
-
-export async function generateClause(clauseType: string, playbookId?: string, contractContext?: string): Promise<GenerateClauseResponse> {
-    return request('/documents/generate-clause', {
-        method: 'POST',
-        body: JSON.stringify({ clause_type: clauseType, playbook_id: playbookId, contract_context: contractContext }),
-    });
-}
 
 // ============================================================================
 // Analytics API
@@ -971,7 +995,7 @@ export async function getAnalyticsTrends(period?: string, weeks?: number): Promi
     return request(`/analytics/trends${qs}`);
 }
 
-export function getAnalyticsExportUrl(days?: number): string {
+function getAnalyticsExportUrl(days?: number): string {
     const qs = days ? `?days=${days}` : '';
     return `${API_BASE_URL}/analytics/export${qs}`;
 }
@@ -1084,17 +1108,6 @@ export interface ClauseAnalyticsItem {
     resolution_rate: number;
 }
 
-export interface BenchmarkResult {
-    document_id: string;
-    contract_type: string;
-    risk_score: number;
-    total_risks?: number;
-    percentile: number | null;
-    comparison: string;
-    org_averages?: { avg_risk_score: number; avg_risks_per_doc: number };
-    sample_size: number;
-}
-
 export interface GeneratedReport {
     id: string;
     report_type: string;
@@ -1130,17 +1143,6 @@ export async function getClauseAnalytics(days?: number): Promise<ClauseAnalytics
     return request(`/analytics/clauses${qs}`);
 }
 
-export async function getDocumentBenchmark(documentId: string): Promise<BenchmarkResult> {
-    return request(`/analytics/benchmark/${documentId}`);
-}
-
-export async function getBIExport(dataset: string, days?: number): Promise<Record<string, unknown>> {
-    const params = new URLSearchParams();
-    if (days) params.set('days', String(days));
-    const qs = params.toString() ? `?${params.toString()}` : '';
-    return request(`/analytics/bi-export/${dataset}${qs}`);
-}
-
 export async function generateAnalyticsReport(
     reportType: string, days?: number, title?: string
 ): Promise<GeneratedReport> {
@@ -1165,20 +1167,6 @@ export async function getAnalyticsReport(reportId: string): Promise<GeneratedRep
     return request(`/analytics/reports/${reportId}`);
 }
 
-export async function updateROIBenchmarks(config: {
-    pages_per_hour?: number;
-    minutes_per_risk?: number;
-    hourly_rate?: number;
-    currency?: string;
-}): Promise<Record<string, unknown>> {
-    const params = new URLSearchParams();
-    if (config.pages_per_hour != null) params.set('pages_per_hour', String(config.pages_per_hour));
-    if (config.minutes_per_risk != null) params.set('minutes_per_risk', String(config.minutes_per_risk));
-    if (config.hourly_rate != null) params.set('hourly_rate', String(config.hourly_rate));
-    if (config.currency) params.set('currency', config.currency);
-    return request(`/analytics/roi/benchmarks?${params.toString()}`, { method: 'PUT' });
-}
-
 // ============================================================================
 // Batch Processing (Phase 8)
 // ============================================================================
@@ -1200,10 +1188,15 @@ export interface BatchStatusResponse {
     status: 'processing' | 'completed' | 'partial_failure';
 }
 
-export async function batchAnalyze(files: File[], playbookId?: string): Promise<{ batch_id: string; file_count: number }> {
+export async function batchAnalyze(
+    files: File[],
+    playbookId?: string,
+    partySide?: 'buyer' | 'seller' | 'neutral',
+): Promise<{ batch_id: string; file_count: number }> {
     const formData = new FormData();
     files.forEach(f => formData.append('files', f));
     if (playbookId) formData.append('playbook_id', playbookId);
+    if (partySide) formData.append('party_side', partySide);
 
     const headers: Record<string, string> = {};
     const csrf = getCsrfToken();
@@ -1298,15 +1291,6 @@ export async function getBatchFullReport(batchId: string): Promise<BatchFullRepo
     return request(`/documents/batch/${batchId}/full-report`);
 }
 
-export async function getDocumentRisks(documentId: string): Promise<{
-    document_id: string;
-    filename: string;
-    total_risks: number;
-    findings: BatchFinding[];
-}> {
-    return request(`/documents/${documentId}/risks`);
-}
-
 export async function updateRiskStatus(documentId: string, riskId: string, action: 'accept' | 'dismiss' | 'resolve' | 'unresolve'): Promise<{ id: string; is_resolved: boolean }> {
     return request(`/documents/${documentId}/risks/${riskId}?action=${action}`, { method: 'PATCH' });
 }
@@ -1327,18 +1311,6 @@ export interface SubscriptionInfo {
     stripe_subscription_id: string | null;
     overage_count: number;
     overage_cost: string | null;
-}
-
-export interface PlanInfo {
-    id: string;
-    name: string;
-    price_inr: number;
-    price_usd: number;
-    scans_limit: number;
-    seats_limit: number;
-    features: string[];
-    overage_price_inr: number;
-    overage_price_usd: number;
 }
 
 export interface UsageStats {
@@ -1368,10 +1340,6 @@ export async function getSubscription(): Promise<SubscriptionInfo> {
     return request('/billing/subscription');
 }
 
-export async function listPlans(): Promise<PlanInfo[]> {
-    return request('/billing/plans');
-}
-
 export async function getUsageStats(): Promise<UsageStats> {
     return request('/billing/usage');
 }
@@ -1383,19 +1351,6 @@ export async function createSubscription(plan: string, gateway: 'razorpay' | 'st
     });
 }
 
-export async function verifyPayment(data: {
-    gateway: 'razorpay' | 'stripe';
-    razorpay_subscription_id?: string;
-    razorpay_payment_id?: string;
-    razorpay_signature?: string;
-    stripe_session_id?: string;
-}): Promise<{ status: string; plan: string; gateway: string }> {
-    return request('/billing/verify', {
-        method: 'POST',
-        body: JSON.stringify(data),
-    });
-}
-
 export async function listInvoices(): Promise<InvoiceItem[]> {
     return request('/billing/invoices');
 }
@@ -1404,134 +1359,13 @@ export async function listInvoices(): Promise<InvoiceItem[]> {
 // SSO API
 // ============================================================================
 
-export interface SSOStatus {
-    sso_enabled: boolean;
-    sso_provider: string | null;
-    workos_configured: boolean;
-    sso_available: boolean;
-    entra_tenant_id: string | null;
-}
-
-export async function getSSOStatus(orgId: string): Promise<SSOStatus> {
-    return request(`/sso/status?org_id=${encodeURIComponent(orgId)}`);
-}
-
-export async function ssoAuthorize(orgId: string, redirectUri?: string): Promise<{ authorization_url: string }> {
-    const params = new URLSearchParams({ org_id: orgId });
-    if (redirectUri) params.set('redirect_uri', redirectUri);
-    return request(`/sso/authorize?${params.toString()}`);
-}
-
-export async function ssoCallback(code: string, state?: string): Promise<{
-    access_token: string;
-    refresh_token: string;
-    token_type: string;
-    user: Record<string, unknown>;
-    is_new_user: boolean;
-}> {
-    return request('/sso/callback', {
-        method: 'POST',
-        body: JSON.stringify({ code, state }),
-    });
-}
-
-export async function enableSSO(orgId: string, workosOrgId: string, ssoProvider: string): Promise<{ message: string; provider: string }> {
-    return request('/sso/enable', {
-        method: 'POST',
-        body: JSON.stringify({ org_id: orgId, workos_org_id: workosOrgId, sso_provider: ssoProvider }),
-    });
-}
-
-export async function disableSSO(orgId: string): Promise<{ message: string }> {
-    return request('/sso/disable', {
-        method: 'POST',
-        body: JSON.stringify({ org_id: orgId }),
-    });
-}
-
 // ============================================================================
 // Feedback API
 // ============================================================================
 
-export interface FeedbackItem {
-    id: string;
-    feedback_type: string;
-    clause_text: string | null;
-    user_comment: string | null;
-    suggested_risk_level: string | null;
-    created_at: string;
-}
-
-export interface RuleEffectiveness {
-    rule_id: string;
-    clause_type: string;
-    total_feedback: number;
-    false_positives: number;
-    false_negatives: number;
-    correct_count: number;
-    false_positive_rate: number;
-    needs_review: boolean;
-}
-
-export async function submitFeedback(data: {
-    playbook_rule_id: string;
-    document_id?: string;
-    feedback_type: 'false_positive' | 'false_negative' | 'correct' | 'needs_improvement';
-    clause_text?: string;
-    user_comment?: string;
-    suggested_risk_level?: 'RED' | 'YELLOW' | 'GREEN';
-}): Promise<FeedbackItem> {
-    return request('/feedback/', {
-        method: 'POST',
-        body: JSON.stringify(data),
-    });
-}
-
-export async function listFeedback(params?: {
-    playbook_rule_id?: string;
-    feedback_type?: string;
-    limit?: number;
-    offset?: number;
-}): Promise<FeedbackItem[]> {
-    const searchParams = new URLSearchParams();
-    if (params?.playbook_rule_id) searchParams.set('playbook_rule_id', params.playbook_rule_id);
-    if (params?.feedback_type) searchParams.set('feedback_type', params.feedback_type);
-    if (params?.limit) searchParams.set('limit', String(params.limit));
-    if (params?.offset) searchParams.set('offset', String(params.offset));
-    const qs = searchParams.toString();
-    const res = await request<{ items: FeedbackItem[] }>(`/feedback/${qs ? '?' + qs : ''}`);
-    return Array.isArray(res) ? res : (res.items ?? []);
-}
-
-export async function getRuleEffectiveness(needsReviewOnly?: boolean): Promise<RuleEffectiveness[]> {
-    const qs = needsReviewOnly ? '?needs_review_only=true' : '';
-    return request(`/feedback/stats${qs}`);
-}
-
 // ============================================================================
 // Contract Drafting
 // ============================================================================
-
-export interface IntakeSchemaField {
-    name: string;
-    type: string;
-    required?: boolean;
-    default?: string;
-    options?: string[];
-    show_when?: string;
-    placeholder?: string;
-}
-
-export interface IntakeSchemaStage {
-    id: string;
-    title: string;
-    show_when?: string;
-    fields: IntakeSchemaField[];
-}
-
-export interface IntakeSchema {
-    stages: IntakeSchemaStage[];
-}
 
 export interface GenerateRequest {
     contract_type: string;
@@ -1589,18 +1423,6 @@ export interface GenerateResponse {
     open_items: number;
 }
 
-export interface DraftingPlaybookSummary {
-    id: string;
-    name: string;
-    contract_type: string;
-    jurisdiction: string;
-    clause_count: number;
-}
-
-export async function getDraftingIntakeSchema(contractType: string): Promise<IntakeSchema> {
-    return request(`/drafting/intake-schema?contract_type=${encodeURIComponent(contractType)}`);
-}
-
 export async function generateContract(
     data: GenerateRequest,
     externalSignal?: AbortSignal,
@@ -1643,7 +1465,6 @@ export async function generateContract(
             // Consent intercept — draftContract bypasses request() for the 10-min timeout,
             // so it needs to replicate the 403 consent_required handshake itself.
             if (res.status === 403 && err?.error === 'consent_required' && Array.isArray(err.required_purposes)) {
-                const { requestConsent } = await import('./consentPrompt');
                 await requestConsent(err.required_purposes);
                 return generateContract(data, externalSignal);
             }
@@ -1680,8 +1501,128 @@ export async function getDraftAddinPayload(draftId: string): Promise<Record<stri
     return request(`/drafting/addin-payload/${draftId}`);
 }
 
-export async function listDraftingPlaybooks(): Promise<DraftingPlaybookSummary[]> {
-    return request('/drafting/playbooks');
+// ============================================================================
+// Data Principal Rights API
+// ============================================================================
+
+export interface RightsRequestRecord {
+    id: string;
+    request_type: 'access' | 'correction' | 'erasure' | 'nomination' | 'portability';
+    status: 'submitted' | 'acknowledged' | 'in_progress' | 'completed' | 'rejected' | 'escalated';
+    request_details?: Record<string, unknown>;
+    response_details?: Record<string, unknown>;
+    submitted_at: string;
+    acknowledged_at?: string;
+    resolved_at?: string;
+    resolution_deadline?: string;
+    resolution_notes?: string;
+}
+
+export interface NominationRecord {
+    id: string;
+    nominee_name: string;
+    nominee_email?: string;
+    nominee_phone?: string;
+    relationship?: string;
+    is_active: boolean;
+    created_at: string;
+}
+
+export interface GrievanceRecord {
+    id: string;
+    category: string;
+    description: string;
+    status: string;
+    submitted_at: string;
+    acknowledged_at?: string;
+    resolved_at?: string;
+    resolution_deadline?: string;
+    resolution_notes?: string;
+}
+
+export async function listRightsRequests(): Promise<RightsRequestRecord[]> {
+    return request('/rights/requests');
+}
+
+export async function requestDataAccess(notes?: string): Promise<RightsRequestRecord> {
+    return request('/rights/access', {
+        method: 'POST',
+        body: JSON.stringify({ notes }),
+    });
+}
+
+export async function requestDataCorrection(data: {
+    field_name: string;
+    current_value?: string;
+    corrected_value: string;
+    reason?: string;
+}): Promise<RightsRequestRecord> {
+    return request('/rights/correction', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+}
+
+export async function requestDataErasure(reason?: string): Promise<RightsRequestRecord> {
+    return request('/rights/erasure', {
+        method: 'POST',
+        body: JSON.stringify({ reason, confirm: true }),
+    });
+}
+
+export async function downloadRightsExport(requestId: string): Promise<Blob> {
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    const csrf = getCsrfToken();
+    if (csrf) headers['X-CSRF-Token'] = csrf;
+    const response = await fetch(
+        `${API_BASE_URL}/rights/requests/${encodeURIComponent(requestId)}/download`,
+        { credentials: 'include', headers },
+    );
+    if (!response.ok) {
+        if (response.status === 401) {
+            clearAuth();
+            window.location.href = '/login';
+            throw new Error('Session expired');
+        }
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.detail || `Export failed: ${response.status}`);
+    }
+    return response.blob();
+}
+
+export async function listNominations(): Promise<NominationRecord[]> {
+    return request('/rights/nominations');
+}
+
+export async function createNomination(data: {
+    nominee_name: string;
+    nominee_email?: string;
+    nominee_phone?: string;
+    relationship?: string;
+}): Promise<NominationRecord> {
+    return request('/rights/nomination', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
+}
+
+export async function revokeNomination(id: string): Promise<{ message: string }> {
+    return request(`/rights/nominations/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function listGrievances(): Promise<GrievanceRecord[]> {
+    return request('/grievances/');
+}
+
+export async function submitGrievance(data: {
+    category: string;
+    description: string;
+    evidence?: Record<string, unknown>;
+}): Promise<GrievanceRecord> {
+    return request('/grievances/', {
+        method: 'POST',
+        body: JSON.stringify(data),
+    });
 }
 
 // ============================================================================
@@ -1742,10 +1683,6 @@ export interface PrivacyPolicy {
     effective_from: string;
 }
 
-export async function getConsentPurposes(): Promise<ConsentPurpose[]> {
-    return request('/consent/purposes');
-}
-
 export async function getCurrentPrivacyPolicy(language = 'en'): Promise<PrivacyPolicy> {
     return request(`/consent/policy/current?language=${language}`);
 }
@@ -1782,30 +1719,6 @@ export async function getConsentReceipts(): Promise<ConsentReceipt[]> {
     return request('/consent/receipts');
 }
 
-export async function registerWithConsent(
-    name: string, email: string, password: string,
-    consentPurposes: string[], policyChecksum?: string,
-): Promise<{ user: User }> {
-    const response = await fetch(`${API_BASE_URL}/auth/register`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-            name, email, password,
-            consent_purposes: consentPurposes,
-            privacy_policy_accepted: true,
-            privacy_policy_version: policyChecksum,
-        }),
-    });
-
-    if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: 'Registration failed' }));
-        throw new Error(error.detail || 'Registration failed');
-    }
-
-    return login(email, password);
-}
-
 // ============================================================================
 // DPDP Compliance Command Center API
 // ============================================================================
@@ -1835,17 +1748,6 @@ export interface DPDPScanResult {
     scanned_at: string;
 }
 
-export interface DPDPPortfolioReport {
-    total_contracts: number;
-    average_compliance_score: number;
-    contracts_with_deal_breakers: number;
-    risk_heatmap: Record<string, number>;
-    section_coverage: Record<string, string>;
-    top_risks: string[];
-    contract_results: DPDPScanResult[];
-    generated_at: string;
-}
-
 export interface DPDPAssessmentQuestion {
     id: string;
     category: string;
@@ -1854,28 +1756,6 @@ export interface DPDPAssessmentQuestion {
     guidance: string;
     weight: number;
     is_critical: boolean;
-}
-
-export interface DPDPSectionScore {
-    section: string;
-    section_name: string;
-    status: string;
-    score: number;
-    findings: string[];
-    recommendations: string[];
-    priority: string;
-}
-
-export interface DPDPGapAssessment {
-    organization_name: string;
-    overall_score: number;
-    overall_status: string;
-    section_scores: DPDPSectionScore[];
-    critical_gaps: string[];
-    action_items: string[];
-    estimated_remediation_effort: string;
-    deadline_risk: string;
-    assessed_at: string;
 }
 
 export interface DPDPDeadline {
@@ -1921,12 +1801,35 @@ export interface DPDPRemediationOutput {
     generated_at: string;
 }
 
-export interface DPDPBreachNotification {
-    dpb_notification: string;
-    principal_notification: string;
-    cert_in_notification: string;
-    timeline: Record<string, unknown>;
-    recommended_actions: string[];
+export interface DPDPSectionScore {
+    section: string;
+    section_name: string;
+    status: string;
+    score: number;
+    findings: string[];
+    recommendations: string[];
+    priority: string;
+}
+
+export interface DPDPGapAssessment {
+    organization_name: string;
+    overall_score: number;
+    overall_status: string;
+    section_scores: DPDPSectionScore[];
+    critical_gaps: string[];
+    action_items: string[];
+    estimated_remediation_effort: string;
+    deadline_risk: string;
+    assessed_at: string;
+}
+
+export interface DPDPGeneratedReport {
+    report_id: string;
+    title: string;
+    summary: string;
+    compliance_score: number;
+    content: Record<string, unknown>;
+    generated_at: string;
 }
 
 export async function dpdpScanContract(contractText: string, contractName = '', contractType = 'general'): Promise<DPDPScanResult> {
@@ -1936,21 +1839,10 @@ export async function dpdpScanContract(contractText: string, contractName = '', 
     });
 }
 
-export async function dpdpScanBulk(contracts: { contract_text: string; contract_name: string; contract_type: string }[]): Promise<DPDPPortfolioReport> {
-    return request('/dpdp/scan/bulk', {
-        method: 'POST',
-        body: JSON.stringify({ contracts, generate_portfolio_report: true }),
-    });
-}
-
 // dpdpGetAssessmentQuestions and dpdpRunAssessment are defined below with full type safety
 
 export async function dpdpRemediate(data: Record<string, unknown>): Promise<DPDPRemediationOutput> {
     return request('/dpdp/remediate', { method: 'POST', body: JSON.stringify(data) });
-}
-
-export async function dpdpBreachNotification(data: Record<string, unknown>): Promise<DPDPBreachNotification> {
-    return request('/dpdp/remediate/breach-notification', { method: 'POST', body: JSON.stringify(data) });
 }
 
 export async function dpdpGetTemplates(): Promise<{ templates: { type: string; name: string; description: string }[] }> {
@@ -1961,19 +1853,8 @@ export async function dpdpGetDashboard(): Promise<DPDPDashboard> {
     return request('/dpdp/dashboard');
 }
 
-export async function dpdpGetOverdue(): Promise<{ total_overdue: number; rights_requests: unknown[]; grievances: unknown[] }> {
-    return request('/dpdp/overdue');
-}
-
 // DPDP Compliance Reports
-export async function dpdpGenerateReport(): Promise<{
-    report_id: string;
-    title: string;
-    summary: string;
-    compliance_score: number;
-    content: Record<string, unknown>;
-    generated_at: string;
-}> {
+export async function dpdpGenerateReport(): Promise<DPDPGeneratedReport> {
     return request('/dpdp/report', { method: 'POST' });
 }
 
@@ -2001,29 +1882,7 @@ export async function dpdpSearchRegulation(query: string, maxResults = 5): Promi
     return request(`/dpdp/knowledge/search?q=${encodeURIComponent(query)}&max_results=${maxResults}`);
 }
 
-// DPDP Consent Health
-export async function dpdpGetConsentHealth(): Promise<{
-    health_score: number;
-    active_consents: number;
-    total_records: number;
-    consent_rate: number;
-    purpose_stats: { code: string; name: string; grant_count: number }[];
-    recent_events: Record<string, number>;
-}> {
-    return request('/dpdp/consent-health');
-}
-
 // DPDP Gap Assessment
-export interface DPDPAssessmentQuestion {
-    id: string;
-    category: string;
-    section: string;
-    question: string;
-    guidance: string;
-    weight: number;
-    is_critical: boolean;
-}
-
 export async function dpdpGetAssessmentQuestions(params?: {
     processes_children_data?: boolean;
     is_significant_fiduciary?: boolean;
@@ -2037,20 +1896,13 @@ export async function dpdpGetAssessmentQuestions(params?: {
 }
 
 export async function dpdpRunAssessment(data: {
-    org_name: string;
+    organization_name: string;
     industry?: string;
     answers: { question_id: string; answer: string; evidence?: string; notes?: string }[];
     processes_children_data?: boolean;
     is_significant_fiduciary?: boolean;
-    has_cross_border?: boolean;
-}): Promise<{
-    overall_score: number;
-    overall_status: string;
-    section_scores: unknown[];
-    critical_gaps: unknown[];
-    action_items: unknown[];
-    deadline_risk: number;
-}> {
+    has_cross_border_transfers?: boolean;
+}): Promise<DPDPGapAssessment> {
     return request('/dpdp/assessment', {
         method: 'POST',
         body: JSON.stringify(data),
@@ -2077,7 +1929,7 @@ export async function analyzeContract(text: string, options: {
         body: JSON.stringify({
             text,
             playbook_id: options.playbook_id || undefined,
-            party_side: options.party_side || 'buyer',
+            party_side: options.party_side || undefined,
             jurisdiction: options.jurisdiction || undefined,
             filename: options.filename || 'pasted-contract.txt',
             tier_preference: options.tier_preference || undefined,
@@ -2096,25 +1948,16 @@ export interface ComplianceLayerSummary {
     name: string;
     description?: string;
     jurisdiction?: string;
+    version: number;
+    source_url?: string;
+    gazette_date?: string;
+    effective_date?: string;
+    last_verified_at?: string;
     rule_count: number;
 }
 
 export async function listComplianceLayers(): Promise<ComplianceLayerSummary[]> {
     return request('/documents/compliance-layers');
-}
-
-export async function analyzeClause(clause_text: string, options: {
-    playbook_id?: string;
-    jurisdiction?: string;
-} = {}): Promise<{ risks: RedlineItem[]; tokens_used: number; analysis_time_ms: number }> {
-    return request('/documents/analyze-clause', {
-        method: 'POST',
-        body: JSON.stringify({
-            clause_text,
-            playbook_id: options.playbook_id || undefined,
-            jurisdiction: options.jurisdiction || undefined,
-        }),
-    }, 0, 300000); // 5 min — single clause AI analysis
 }
 
 export async function generateFix(params: {

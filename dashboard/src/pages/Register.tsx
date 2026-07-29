@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { register } from '@/api/client';
+import { register, warmupApi } from '@/api/client';
 import { AuthLayout } from '@/components/AuthLayout';
 import { TextInput } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
@@ -13,6 +13,10 @@ export default function Register() {
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
     const navigate = useNavigate();
+
+    useEffect(() => {
+        void warmupApi();
+    }, []);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();

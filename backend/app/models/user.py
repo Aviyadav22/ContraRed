@@ -4,13 +4,17 @@ User model.
 
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import TYPE_CHECKING, Optional, List
 from sqlalchemy import String, Boolean, DateTime, Integer, Enum as SQLEnum, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
 from app.db.session import Base
+
+if TYPE_CHECKING:
+    from app.models.document import Document, UsageLog
+    from app.models.organization import Organization
 
 
 class UserRole(str, enum.Enum):

@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from uuid import UUID
 
 from sqlalchemy import delete, func, select
@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.playbook import (
     Playbook,
+    PlaybookCategory,
     PlaybookCondition,
     PlaybookRule,
     PlaybookRuleDependency,
@@ -89,6 +90,12 @@ def _serialize_rule(rule: PlaybookRule) -> Dict[str, Any]:
         "category": rule.category,
         "subcategory": rule.subcategory,
         "tags": _ser(rule.tags),
+        "detection_mode": rule.detection_mode,
+        "risk_description": rule.risk_description,
+        "acceptable_position": rule.acceptable_position,
+        "unacceptable_signals": _ser(rule.unacceptable_signals),
+        "acceptable_signals": _ser(rule.acceptable_signals),
+        "clause_context": rule.clause_context,
         "tiers": [_serialize_tier(t) for t in (rule.tiers or [])],
     }
 
@@ -134,6 +141,7 @@ def _build_snapshot(
             "is_public": playbook.is_public,
             "is_default": playbook.is_default,
             "version": playbook.version,
+            "party_side": playbook.party_side or "neutral",
         },
         "rules": [_serialize_rule(r) for r in (playbook.rules_list or [])],
         "conditions": [_serialize_condition(c) for c in conditions],
@@ -539,6 +547,14 @@ class PlaybookVersioningService:
                 category=rule_data.get("category"),
                 subcategory=rule_data.get("subcategory"),
                 tags=rule_data.get("tags"),
+                detection_mode=rule_data.get(
+                    "detection_mode", "keywords_only"
+                ),
+                risk_description=rule_data.get("risk_description"),
+                acceptable_position=rule_data.get("acceptable_position"),
+                unacceptable_signals=rule_data.get("unacceptable_signals"),
+                acceptable_signals=rule_data.get("acceptable_signals"),
+                clause_context=rule_data.get("clause_context"),
             )
             db.add(rule)
 
@@ -608,6 +624,17 @@ class PlaybookVersioningService:
         stmt = select(Playbook).where(Playbook.id == playbook_id)
         res = await db.execute(stmt)
         playbook = res.scalar_one()
+        playbook_data = snap.get("playbook", {})
+        playbook.name = playbook_data.get("name", playbook.name)
+        playbook.description = playbook_data.get(
+            "description", playbook.description
+        )
+        if playbook_data.get("category"):
+            playbook.category = PlaybookCategory(playbook_data["category"])
+        playbook.party_side = playbook_data.get("party_side", "neutral")
+        # A rollback changes the legal standard. Require explicit quality
+        # review and republication even if the old snapshot was public.
+        playbook.is_public = False
         playbook.version = playbook.version + 1
         playbook.updated_at = datetime.now(timezone.utc)
 

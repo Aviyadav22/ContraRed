@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { getDraftAddinPayload, type GenerateResponse } from '@/api/client';
 
 interface StepResultsProps {
@@ -22,38 +22,27 @@ function truncate(text: string, max: number): string {
 }
 
 export default function StepResults({ result, onDownload, onReset }: StepResultsProps) {
-    const [preview, setPreview] = useState<PreviewSection[] | null>(null);
-    const [previewError, setPreviewError] = useState(false);
-    const [previewLoading, setPreviewLoading] = useState(false);
-
-    useEffect(() => {
-        if (!result?.draft_id) return;
-        let cancelled = false;
-        setPreviewLoading(true);
-        setPreviewError(false);
-        getDraftAddinPayload(result.draft_id)
-            .then((payload) => {
-                if (cancelled) return;
-                const sections = (payload?.sections as PreviewSection[] | undefined) ?? [];
-                // Skip very short/empty sections when picking preview candidates.
-                const candidates = sections.filter(s => s?.content && s.content.trim().length > 40);
-                setPreview(
-                    candidates.slice(0, PREVIEW_SECTION_COUNT).map(s => ({
-                        heading: s.heading || '',
-                        content: truncate(s.content, PREVIEW_CHAR_LIMIT),
-                    }))
-                );
-            })
-            .catch(() => {
-                if (!cancelled) setPreviewError(true);
-            })
-            .finally(() => {
-                if (!cancelled) setPreviewLoading(false);
-            });
-        return () => {
-            cancelled = true;
-        };
-    }, [result?.draft_id]);
+    const draftId = result?.draft_id;
+    const {
+        data: preview,
+        isFetching: previewLoading,
+        isError: previewError,
+    } = useQuery({
+        queryKey: ['draft-preview', draftId],
+        queryFn: async () => {
+            const payload = await getDraftAddinPayload(draftId!);
+            const sections = (payload?.sections as PreviewSection[] | undefined) ?? [];
+            return sections
+                .filter(s => s?.content && s.content.trim().length > 40)
+                .slice(0, PREVIEW_SECTION_COUNT)
+                .map(s => ({
+                    heading: s.heading || '',
+                    content: truncate(s.content, PREVIEW_CHAR_LIMIT),
+                }));
+        },
+        enabled: Boolean(draftId),
+        retry: false,
+    });
 
     if (!result) return null;
 

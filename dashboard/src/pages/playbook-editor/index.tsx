@@ -2,9 +2,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { useState } from 'react';
 import {
-    getPlaybook, addRule, updateRule, deleteRule,
+    getPlaybook, getPlaybookQuality, addRule, updateRule, deleteRule,
     listTiers, upsertTiers,
-    listConditions, createCondition, deleteCondition, addOverride, deleteOverride,
+    listConditions, createCondition, deleteCondition, addOverride,
     listDependencies, createDependency, deleteDependency,
     listVersions, createVersionSnapshot, rollbackToVersion,
     type CreateRuleData,
@@ -86,6 +86,12 @@ export default function PlaybookEditor() {
         enabled: !!id,
     });
 
+    const { data: quality } = useQuery({
+        queryKey: ['playbook-quality', id],
+        queryFn: () => getPlaybookQuality(id!),
+        enabled: !!id,
+    });
+
     const { data: tiers, isLoading: tiersLoading } = useQuery({
         queryKey: ['tiers', id, expandedRuleId],
         queryFn: () => listTiers(id!, expandedRuleId!),
@@ -118,6 +124,7 @@ export default function PlaybookEditor() {
         mutationFn: (data: CreateRuleData) => addRule(id!, data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['playbook', id] });
+            queryClient.invalidateQueries({ queryKey: ['playbook-quality', id] });
             setShowAddRule(false);
             setNewRule({ clause_type: '', primary_position: '', risk_level: 'yellow', match_type: 'exact', is_deal_breaker: false, detection_patterns: [], detection_mode: 'keywords_only' });
             setPatternInput('');
@@ -126,7 +133,10 @@ export default function PlaybookEditor() {
 
     const deleteRuleMutation = useMutation({
         mutationFn: (ruleId: string) => deleteRule(id!, ruleId),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['playbook', id] }),
+        onSuccess: () => {
+            queryClient.invalidateQueries({ queryKey: ['playbook', id] });
+            queryClient.invalidateQueries({ queryKey: ['playbook-quality', id] });
+        },
     });
 
     const updateRuleMutation = useMutation({
@@ -134,6 +144,7 @@ export default function PlaybookEditor() {
             updateRule(id!, ruleId, data),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['playbook', id] });
+            queryClient.invalidateQueries({ queryKey: ['playbook-quality', id] });
             setShowAddRule(false);
             setEditingRuleId(null);
             setNewRule({ clause_type: '', primary_position: '', risk_level: 'yellow', match_type: 'exact', is_deal_breaker: false, detection_patterns: [], detection_mode: 'keywords_only' });
@@ -199,14 +210,6 @@ export default function PlaybookEditor() {
             setNewOverride({ rule_id: '', override_risk_level: '', override_position_text: '', suppress_rule: false });
         },
     });
-
-    const _deleteOverrideMutation = useMutation({
-        mutationFn: ({ conditionId, overrideId }: { conditionId: string; overrideId: string }) =>
-            deleteOverride(id!, conditionId, overrideId),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['conditions', id] }),
-    });
-    // Available for future use when override listing is implemented
-    void _deleteOverrideMutation;
 
     const createDepMutation = useMutation({
         mutationFn: () => {
@@ -378,6 +381,52 @@ export default function PlaybookEditor() {
             </div>
 
             <main className="max-w-7xl mx-auto px-8 py-10">
+                {quality && (
+                    <section className={`mb-8 rounded-xl border p-5 ${
+                        quality.publishable
+                            ? 'border-green-200 bg-green-50'
+                            : 'border-amber-200 bg-amber-50'
+                    }`}>
+                        <div className="flex items-start justify-between gap-4">
+                            <div>
+                                <h2 className="m-0 text-sm font-bold text-[var(--text-primary)]">
+                                    {quality.publishable ? 'Ready to publish' : 'Playbook needs legal context'}
+                                </h2>
+                                <p className="mt-1 mb-0 text-sm text-[var(--text-secondary)]">
+                                    {quality.publishable
+                                        ? `${quality.rules_count} rule${quality.rules_count === 1 ? '' : 's'} can be used for review.`
+                                        : 'Resolve the blocking items below before sharing this playbook.'}
+                                </p>
+                            </div>
+                            <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold ${
+                                quality.publishable ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-800'
+                            }`}>
+                                {quality.publishable ? 'Publishable' : `${quality.issues.length} blocking`}
+                            </span>
+                        </div>
+                        {quality.issues.length > 0 && (
+                            <ul className="mt-4 mb-0 space-y-1.5 pl-5 text-sm text-amber-900">
+                                {quality.issues.slice(0, 8).map(issue => <li key={issue}>{issue}</li>)}
+                                {quality.issues.length > 8 && (
+                                    <li>{quality.issues.length - 8} more blocking items</li>
+                                )}
+                            </ul>
+                        )}
+                        {quality.recommendations.length > 0 && (
+                            <details className="mt-4 text-sm text-[var(--text-secondary)]">
+                                <summary className="cursor-pointer font-semibold">
+                                    {quality.recommendations.length} recommended improvement{quality.recommendations.length === 1 ? '' : 's'}
+                                </summary>
+                                <ul className="mt-2 mb-0 space-y-1.5 pl-5">
+                                    {quality.recommendations.slice(0, 8).map(item => <li key={item}>{item}</li>)}
+                                    {quality.recommendations.length > 8 && (
+                                        <li>{quality.recommendations.length - 8} more recommendations</li>
+                                    )}
+                                </ul>
+                            </details>
+                        )}
+                    </section>
+                )}
                 {activeTab === 'rules' && (
                     <RulesTab
                         rules={playbook.rules}

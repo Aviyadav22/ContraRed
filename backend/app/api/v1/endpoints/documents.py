@@ -11,7 +11,7 @@ ZERO DATA RETENTION (ZDR) MODE:
 """
 
 import asyncio
-import base64
+import copy
 import io
 import json
 import logging
@@ -23,9 +23,9 @@ import zipfile
 from typing import List, Optional, Literal, Dict
 from uuid import UUID, uuid4
 from fastapi import APIRouter, Depends, HTTPException, Query, status, Request, UploadFile, File, Form, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.db.session import get_db, AsyncSessionLocal
@@ -33,31 +33,30 @@ from app.models.user import User
 from app.models.document import Document, DocumentRisk, DocumentVersion, DocumentComparison, DocumentStatus
 from app.models.document import RiskLevel as DBRiskLevel
 from app.models.audit_log import log_audit_event
-from app.models.playbook import Playbook
 from app.api.v1.endpoints.auth import get_current_user, limiter
 from app.api.v1.endpoints.billing import check_and_increment_quota
 from app.core.permissions import require_permission
-from app.services.rule_engine import RuleEngine, RuleMatch
 from app.services.ai_service import AIService
-from app.services.cache_service import get_cache
 from app.services.playbook_cache import (
     get_default_rule_engine,
-    get_cached_rule_engine,
     get_cached_rules_dicts,
     load_playbook,
     load_default_playbook_for_type,
 )
 from app.services.analysis_pipeline import (
     analysis_pipeline,
+    AnalysisPipeline,
     PipelineResult,
+    _sanitize_for_prompt,
+)
+from app.services.gemini_analyzer import (
     AIServiceError,
     AIServiceUnavailable,
     AIRateLimited,
     AIServiceTimeout,
-    _sanitize_for_prompt,
 )
 from app.services.prompt_sanitizer import validate_contract_length
-from app.services.structure_extractor import StructureExtractor, ContractMap
+from app.services.structure_extractor import StructureExtractor
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -70,16 +69,19 @@ router = APIRouter()
 ZDR_MODE = getattr(settings, 'ZERO_DATA_RETENTION', True)  # Default: ON for safety
 
 
+def _document_access_filter(current_user: User):
+    """Owner access plus explicit non-null organization membership."""
+    conditions = [Document.user_id == current_user.id]
+    if current_user.organization_id is not None:
+        conditions.append(
+            Document.organization_id == current_user.organization_id
+        )
+    return or_(*conditions)
+
+
 # ============================================================================
 # Schemas - Strict RED/YELLOW/GREEN enum
 # ============================================================================
-
-class ErrorResponse(BaseModel):
-    """Standard error response shape for all non-2xx responses."""
-    error: str
-    message: str
-    detail: Optional[str] = None
-
 
 class ParagraphData(BaseModel):
     """Paragraph extracted by the Word Add-in with index and style."""
@@ -93,7 +95,10 @@ class AnalyzeRequest(BaseModel):
     text: str = Field(..., min_length=1, max_length=500000)
     playbook_id: Optional[str] = None
     filename: Optional[str] = Field(default="untitled.docx", max_length=255)
-    party_side: Optional[str] = Field(default="buyer", pattern=r"^(buyer|seller|neutral)$")
+    # None means use the selected playbook's perspective; if there is no
+    # playbook, the endpoint falls back to a neutral review instead of silently
+    # assuming the user is the buyer.
+    party_side: Optional[str] = Field(default=None, pattern=r"^(buyer|seller|neutral)$")
     compliance_layers: List[str] = Field(default_factory=list, description="Compliance layer codes to activate, e.g. ['dpdp']")
     jurisdiction: Optional[str] = Field(default=None, description="Jurisdiction code override, e.g. 'IN', 'CA-US'. If omitted, auto-detected from contract text.")
     paragraphs: Optional[List[ParagraphData]] = Field(default=None, description="Paragraph-indexed text from Word Add-in for precise targeting. When provided, enables paragraph_index in response.")
@@ -121,6 +126,7 @@ class RedlineItem(BaseModel):
     id: str
     risk_level: Literal["RED", "YELLOW", "GREEN"]
     rule_name: str
+    rule_id: Optional[str] = None
     clause_text: str              # Exact verbatim text from contract (verified)
     clause_type: str = ""
     explanation: str               # Why this is risky
@@ -159,6 +165,10 @@ class AnalysisResult(BaseModel):
     paragraph_hashes: Optional[Dict[str, str]] = None
     hallucination_stats: Optional[dict] = None  # Verification stage stats (source trail)
     compliance_scores: Optional[Dict[str, dict]] = None  # {layer_code: {score, compliant, ...}}
+    contract_type: Optional[str] = None
+    playbook_name: Optional[str] = None
+    review_perspective: Optional[str] = None
+    playbook_coverage: Optional[dict] = None
 
 
 class RedlineRequest(BaseModel):
@@ -204,6 +214,7 @@ class ClauseAnalyzeRequest(BaseModel):
     playbook_id: Optional[str] = None
     jurisdiction: Optional[str] = None
     document_id: Optional[str] = None
+    party_side: Optional[Literal["buyer", "seller", "neutral"]] = None
 
 
 class ClauseAnalyzeResponse(BaseModel):
@@ -235,8 +246,7 @@ class DocumentListItem(BaseModel):
     version_number: int = 1
     content_hash: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DocumentListResponse(BaseModel):
@@ -353,14 +363,27 @@ async def analyze_document(
                 current_user_id=current_user.id,
                 current_user_org_id=current_user.organization_id,
             )
-            if playbook:
-                playbook_name = playbook.name
-                playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
-        except Exception as e:
-            logger.error("Error loading playbook: %s", e)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail="Invalid playbook_id format"
+            ) from exc
+        if playbook is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Selected playbook was not found or is not accessible.",
+            )
+        playbook_name = playbook.name
+        playbook_rules = get_cached_rules_dicts(
+            playbook, include_verification=True
+        )
+        if not playbook_rules:
+            raise HTTPException(
+                status_code=422,
+                detail="Selected playbook has no active rules.",
+            )
 
     # Auto-select a default playbook when user didn't pick one
-    if not playbook_rules:
+    if not body.playbook_id:
         try:
             from app.services.analysis_pipeline import AnalysisPipeline
             detected_type = AnalysisPipeline._detect_contract_type(body.text)
@@ -371,28 +394,43 @@ async def analyze_document(
                     playbook_name = f"{auto_playbook.name} (auto-selected)"
                     playbook_rules = get_cached_rules_dicts(auto_playbook, include_verification=True)
                     logger.info("Auto-selected playbook '%s' for contract type '%s'", auto_playbook.name, detected_type)
-        except Exception as e:
-            logger.warning("Auto-playbook selection failed (non-fatal): %s", e)
+        except Exception as exc:
+            logger.exception("Auto-playbook selection failed")
+            raise HTTPException(
+                status_code=503,
+                detail="Automatic playbook selection failed; analysis was not run.",
+            ) from exc
 
     # Merge compliance layer rules if requested
     compliance_layer_codes = body.compliance_layers or []
-    compliance_layer_rule_names = set()  # Track which rule names came from compliance layers
+    loaded_compliance_layers = set()
     if compliance_layer_codes:
         try:
             from app.services.compliance_layer_service import get_layer_rules_as_dicts, merge_rules
             for layer_code in compliance_layer_codes:
                 layer_rules = await get_layer_rules_as_dicts(db, layer_code)
                 if not layer_rules:
-                    logger.warning("Compliance layer '%s' not found or has no rules", layer_code)
-                    continue
-                compliance_layer_rule_names.update(r["name"] for r in layer_rules)
+                    raise HTTPException(
+                        status_code=404,
+                        detail=(
+                            f"Compliance layer '{layer_code}' was not found "
+                            "or has no active rules."
+                        ),
+                    )
+                loaded_compliance_layers.add(layer_code)
                 playbook_rules = merge_rules(playbook_rules if playbook_rules else None, layer_rules)
                 logger.info("Merged compliance layer '%s' (%d rules) into playbook", layer_code, len(layer_rules))
-        except Exception as e:
-            logger.warning("Compliance layer loading failed (non-fatal): %s", e)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.exception("Compliance layer loading failed")
+            raise HTTPException(
+                status_code=503,
+                detail="Compliance layer loading failed; analysis was not run.",
+            ) from exc
 
     # Use playbook's party_side if set and user didn't explicitly choose
-    effective_party_side = body.party_side or "buyer"
+    effective_party_side = body.party_side or "neutral"
     if not body.party_side and playbook and hasattr(playbook, 'party_side') and playbook.party_side:
         effective_party_side = playbook.party_side
 
@@ -453,8 +491,15 @@ async def analyze_document(
                 )
                 tiers = list((await db.execute(tier_q)).scalars().all())
                 rule_tiers_by_rule = {str(t.rule_id): t for t in tiers}
-        except Exception as e:
-            logger.warning("Phase 6 data loading failed (non-fatal): %s", e)
+        except Exception as exc:
+            logger.exception("Playbook conditions/dependencies failed to load")
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "The selected playbook's conditions, tiers, or "
+                    "dependencies could not be loaded; analysis was not run."
+                ),
+            ) from exc
 
     try:
         # Sanitize playbook name before passing to AI
@@ -500,14 +545,8 @@ async def analyze_document(
             "yellow": sum(1 for r in pipeline_result.redlines if r.risk_level == "YELLOW"),
             "green": sum(1 for r in pipeline_result.redlines if r.risk_level == "GREEN"),
         }
-
         # Persist document metadata (ZDR-safe: no contract text stored)
-        playbook_uuid = None
-        if body.playbook_id:
-            try:
-                playbook_uuid = UUID(body.playbook_id)
-            except ValueError:
-                pass
+        playbook_uuid = playbook.id if playbook is not None else None
 
         content_hash = Document.compute_content_hash(body.text)
         doc = Document(
@@ -601,6 +640,7 @@ async def analyze_document(
                 id=str(uuid4()),
                 risk_level=r.risk_level,
                 rule_name=r.rule_name,
+                rule_id=getattr(r, 'rule_id', None) or None,
                 clause_text=r.verified_text or r.original_text,
                 clause_type=getattr(r, 'clause_type', ''),
                 explanation=r.explanation,
@@ -615,6 +655,7 @@ async def analyze_document(
                 verification_status=r.verification_status,
                 is_deal_breaker=r.is_deal_breaker,
                 cross_references=r.cross_references or None,
+                statutory_references=getattr(r, 'statutory_references', None) or None,
                 paragraph_index=_resolve_paragraph_index(r.verified_text or r.original_text),
             )
             for r in pipeline_result.redlines
@@ -625,22 +666,28 @@ async def analyze_document(
 
         # Calculate compliance scores for each active layer
         compliance_scores = None
-        if compliance_layer_codes and compliance_layer_rule_names:
+        if loaded_compliance_layers:
             try:
-                from app.services.compliance_layer_service import calculate_compliance_score
+                from app.services.compliance_layer_service import (
+                    build_compliance_layer_score,
+                )
                 compliance_scores = {}
-                for layer_code in compliance_layer_codes:
-                    # Find results that came from this layer's rules
-                    layer_results = [
-                        {"risk_level": r.risk_level, "is_deal_breaker": r.is_deal_breaker}
-                        for r in pipeline_result.redlines
-                        if getattr(r, 'rule_name', '') in compliance_layer_rule_names
-                        or getattr(r, 'clause_type', '').startswith(f"{layer_code}_")
-                    ]
-                    if layer_results:
-                        compliance_scores[layer_code] = calculate_compliance_score(layer_results)
+                for layer_code in loaded_compliance_layers:
+                    compliance_scores[layer_code] = (
+                        build_compliance_layer_score(
+                            layer_code,
+                            playbook_rules,
+                            pipeline_result,
+                        )
+                    )
             except Exception as e:
-                logger.warning("Compliance score calculation failed (non-fatal): %s", e)
+                logger.exception("Compliance score calculation failed: %s", e)
+                pipeline_result.partial = True
+                pipeline_result.executive_summary.insert(
+                    0,
+                    "Requested compliance scoring could not be completed; "
+                    "the contract analysis is partial.",
+                )
 
         return AnalysisResult(
             document_id=doc_id,
@@ -656,6 +703,10 @@ async def analyze_document(
             jurisdiction_name=getattr(pipeline_result, 'jurisdiction_name', None),
             hallucination_stats=pipeline_result.hallucination_stats or None,
             compliance_scores=compliance_scores,
+            contract_type=pipeline_result.contract_type,
+            playbook_name=playbook_name,
+            review_perspective=pipeline_result.review_perspective,
+            playbook_coverage=pipeline_result.playbook_coverage,
         )
 
     except HTTPException:
@@ -681,7 +732,7 @@ async def analyze_document(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail={"message": e.message, "error_code": e.error_code}
         )
-    except Exception as e:
+    except Exception:
         logger.error("Analysis failed", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -709,6 +760,7 @@ class JobStatusResponse(BaseModel):
     created_at: Optional[str] = None
     completed_at: Optional[str] = None
     error: Optional[str] = None
+    result: Optional[dict] = None
 
 
 @router.post("/analyze-async", response_model=AsyncAnalyzeResponse, status_code=202)
@@ -724,18 +776,109 @@ async def analyze_async(
     Submit contract for async analysis. Returns 202 + job_id immediately.
     Poll GET /documents/jobs/{job_id} for results.
     """
-    from app.workers.tasks import task_queue, AnalysisJob, JobStatus
+    from app.workers.tasks import task_queue, AnalysisJob
+
+    if ZDR_MODE:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    "Async analysis requires temporary external payload "
+                    "storage. Use /documents/analyze while zero-data-retention "
+                    "mode is enabled."
+                ),
+                "error_code": "async_unavailable_in_zdr",
+            },
+        )
+
+    is_valid, msg = validate_contract_length(
+        body.text, max_chars=500_000, min_chars=50
+    )
+    if not is_valid:
+        raise HTTPException(
+            status_code=413 if len(body.text or "") > 500_000 else 422,
+            detail=msg,
+        )
 
     content_hash = Document.compute_content_hash(body.text)
 
-    # Create document record
     playbook_uuid = None
     if body.playbook_id:
         try:
             playbook_uuid = UUID(body.playbook_id)
-        except ValueError:
-            pass
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail="Invalid playbook_id format"
+            ) from exc
 
+    # Resolve the legal standard before persisting a queued document. An
+    # explicit, inaccessible or empty playbook must never become "Default".
+    playbook_rules = []
+    playbook_name = "Default"
+    playbook = None
+    if playbook_uuid:
+        playbook = await load_playbook(
+            db,
+            playbook_uuid,
+            current_user_id=current_user.id,
+            current_user_org_id=current_user.organization_id,
+        )
+        if playbook is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Selected playbook was not found or is not accessible.",
+            )
+        playbook_name = playbook.name
+        playbook_rules = get_cached_rules_dicts(
+            playbook, include_verification=True
+        )
+        if not playbook_rules:
+            raise HTTPException(
+                status_code=422,
+                detail="Selected playbook has no active rules.",
+            )
+    else:
+        try:
+            detected_type = AnalysisPipeline._detect_contract_type(body.text)
+            if detected_type != "general":
+                playbook = await load_default_playbook_for_type(
+                    db, detected_type
+                )
+                if playbook:
+                    playbook_name = f"{playbook.name} (auto-selected)"
+                    playbook_rules = get_cached_rules_dicts(
+                        playbook, include_verification=True
+                    )
+                    playbook_uuid = playbook.id
+        except Exception as exc:
+            logger.exception("Auto-playbook selection for async analysis failed")
+            raise HTTPException(
+                status_code=503,
+                detail="Automatic playbook selection failed; job was not queued.",
+            ) from exc
+
+    effective_party_side = (
+        body.party_side
+        or (playbook.party_side if playbook is not None else None)
+        or "neutral"
+    )
+
+    if body.compliance_layers:
+        from app.services.compliance_layer_service import (
+            get_layer_rules_as_dicts,
+            merge_rules,
+        )
+
+        for layer_code in body.compliance_layers:
+            layer_rules = await get_layer_rules_as_dicts(db, layer_code)
+            if not layer_rules:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Compliance layer '{layer_code}' was not found.",
+                )
+            playbook_rules = merge_rules(playbook_rules, layer_rules)
+
+    # Create document record only after request validation has succeeded.
     doc = Document(
         user_id=current_user.id,
         organization_id=current_user.organization_id,
@@ -748,18 +891,6 @@ async def analyze_async(
     await db.flush()
     doc_id = str(doc.id)
 
-    # Load playbook rules
-    playbook_rules = []
-    playbook_name = "Default"
-    if body.playbook_id:
-        try:
-            playbook = await load_playbook(db, playbook_uuid, current_user_id=current_user.id, current_user_org_id=current_user.organization_id)
-            if playbook:
-                playbook_name = playbook.name
-                playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
-        except Exception as e:
-            logger.error("Error loading playbook for async: %s", e)
-
     await db.commit()
 
     # Create job — carry forward the same Phase 6 + scan inputs the sync
@@ -770,10 +901,10 @@ async def analyze_async(
         user_id=str(current_user.id),
         organization_id=str(current_user.organization_id) if current_user.organization_id else None,
         contract_text=body.text,
-        playbook_id=body.playbook_id,
+        playbook_id=str(playbook_uuid) if playbook_uuid else None,
         playbook_name=playbook_name,
         playbook_rules=playbook_rules,
-        party_side=body.party_side or "buyer",
+        party_side=effective_party_side,
         jurisdiction=body.jurisdiction,
         compliance_layers=body.compliance_layers or [],
         tier_preference=body.tier_preference or "ideal",
@@ -819,6 +950,7 @@ async def get_job_status(
         created_at=status_data.get("created_at"),
         completed_at=status_data.get("completed_at"),
         error=status_data.get("error"),
+        result=status_data.get("result"),
     )
 
 
@@ -847,6 +979,7 @@ async def analyze_clause(
     # Load playbook rules if specified
     playbook_rules = []
     playbook_name = "Default"
+    playbook = None
 
     if body.playbook_id:
         try:
@@ -855,13 +988,32 @@ async def analyze_clause(
                 current_user_id=current_user.id,
                 current_user_org_id=current_user.organization_id,
             )
-            if playbook:
-                playbook_name = playbook.name
-                playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
+            if playbook is None:
+                raise HTTPException(status_code=404, detail="Playbook not found")
+            playbook_name = playbook.name
+            playbook_rules = get_cached_rules_dicts(
+                playbook,
+                include_verification=True,
+            )
+            if not playbook_rules:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="The selected playbook has no active rules.",
+                )
         except (ValueError, HTTPException):
             raise
         except Exception as e:
             logger.error("Error loading playbook for clause analysis: %s", e)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The selected playbook could not be loaded.",
+            ) from e
+
+    effective_party_side = (
+        body.party_side
+        or (playbook.party_side if playbook is not None else None)
+        or "neutral"
+    )
 
     try:
         ai_result = await asyncio.wait_for(
@@ -870,6 +1022,7 @@ async def analyze_clause(
                 playbook_rules=playbook_rules,
                 playbook_name=playbook_name,
                 jurisdiction=body.jurisdiction,
+                party_side=effective_party_side,
             ),
             timeout=30.0,
         )
@@ -938,7 +1091,7 @@ async def analyze_clause(
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.error("Clause analysis failed", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -966,6 +1119,7 @@ class BatchFileStatus(BaseModel):
     error: Optional[str] = None
     ai_fallback: Optional[bool] = None  # True if AI failed and fell back to rule-engine
     executive_summary: Optional[List[str]] = None
+    compliance_scores: Optional[dict] = None
 
 
 class BatchStatusResponse(BaseModel):
@@ -983,12 +1137,47 @@ class BatchStatusResponse(BaseModel):
 _batch_store: Dict[str, dict] = {}
 
 
+def _aggregate_compliance_scores(files: List[dict]) -> Optional[dict]:
+    """Aggregate per-file obligation counts without averaging percentages."""
+    aggregate: Dict[str, dict] = {}
+    for file_data in files:
+        for code, score in (file_data.get("compliance_scores") or {}).items():
+            target = aggregate.setdefault(code, {
+                "compliant": 0,
+                "partial": 0,
+                "non_compliant": 0,
+                "not_applicable": 0,
+                "unassessed": 0,
+                "total_rules": 0,
+                "deal_breakers_failing": 0,
+            })
+            for key in target:
+                target[key] += int(score.get(key, 0) or 0)
+
+    for score in aggregate.values():
+        applicable = score["total_rules"] - score["not_applicable"]
+        score["score"] = (
+            round(
+                (
+                    score["compliant"] + score["partial"] * 0.5
+                ) / applicable * 100
+            )
+            if applicable else 0
+        )
+        score["complete"] = score["unassessed"] == 0
+        score["status"] = (
+            "complete" if score["complete"] else "incomplete"
+        )
+    return aggregate or None
+
+
 @router.post("/batch-analyze", response_model=BatchAnalyzeResponse)
 @limiter.limit("5/minute")
 async def batch_analyze(
     request: Request,
     files: List[UploadFile] = File(...),
     playbook_id: Optional[str] = Form(None),
+    party_side: Optional[Literal["buyer", "seller", "neutral"]] = Form(None),
     compliance_layers: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -1042,6 +1231,46 @@ async def batch_analyze(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail={"message": "At least one file is required.", "error_code": "no_files"},
         )
+
+    if playbook_id:
+        try:
+            selected_playbook = await load_playbook(
+                db,
+                playbook_id,
+                current_user_id=current_user.id,
+                current_user_org_id=current_user.organization_id,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail="Invalid playbook_id format"
+            ) from exc
+        if selected_playbook is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Selected playbook was not found or is not accessible.",
+            )
+        if not get_cached_rules_dicts(
+            selected_playbook, include_verification=True
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Selected playbook has no active rules.",
+            )
+
+    if compliance_layer_codes:
+        from app.services.compliance_layer_service import (
+            get_layer_rules_as_dicts,
+        )
+
+        for layer_code in compliance_layer_codes:
+            if not await get_layer_rules_as_dicts(db, layer_code):
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"Compliance layer '{layer_code}' was not found or "
+                        "has no active rules."
+                    ),
+                )
 
     batch_id = str(uuid4())
     file_statuses: List[dict] = []
@@ -1105,6 +1334,16 @@ async def batch_analyze(
                 })
                 file_contents.append({"filename": filename, "text": None})
                 continue
+            if len(text) > 500_000:
+                file_statuses.append({
+                    "filename": filename,
+                    "status": "error",
+                    "document_id": None,
+                    "risk_summary": None,
+                    "error": "Document exceeds the 500,000 character limit.",
+                })
+                file_contents.append({"filename": filename, "text": None})
+                continue
 
             file_statuses.append({
                 "filename": filename,
@@ -1115,7 +1354,7 @@ async def batch_analyze(
             })
             file_contents.append({"filename": filename, "text": text})
 
-        except (zipfile.BadZipFile, ValueError) as e:
+        except (zipfile.BadZipFile, ValueError):
             file_statuses.append({
                 "filename": filename,
                 "status": "error",
@@ -1157,6 +1396,7 @@ async def batch_analyze(
         "user_id": str(current_user.id),
         "files": file_statuses,
         "playbook_id": playbook_id,
+        "party_side": party_side,
         "compliance_layers": compliance_layer_codes,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -1198,7 +1438,15 @@ async def batch_analyze(
 
     # Launch background processing
     asyncio.create_task(
-        _process_batch(batch_id, file_contents, playbook_id, str(current_user.id), organization_id=str(current_user.organization_id) if current_user.organization_id else None, compliance_layer_codes=compliance_layer_codes)
+        _process_batch(
+            batch_id,
+            file_contents,
+            playbook_id,
+            str(current_user.id),
+            organization_id=str(current_user.organization_id) if current_user.organization_id else None,
+            compliance_layer_codes=compliance_layer_codes,
+            party_side=party_side,
+        )
     )
 
     logger.info(f"Batch {batch_id} created with {len(files)} files for user {current_user.id}")
@@ -1217,6 +1465,7 @@ async def _process_batch(
     user_id: str,
     organization_id: Optional[str] = None,
     compliance_layer_codes: Optional[List[str]] = None,
+    party_side: Optional[str] = None,
 ):
     """Background task to process all files in a batch concurrently."""
     semaphore = asyncio.Semaphore(1)  # Sequential to avoid Vertex AI rate limits
@@ -1227,6 +1476,12 @@ async def _process_batch(
     # hand-rolled dict missing detection_mode, suggested_language, etc.).
     playbook_rules = None
     playbook_name = None
+    playbook_party_side: Optional[str] = None
+    selected_playbook_id: Optional[UUID] = None
+    playbook_load_error: Optional[str] = None
+    selected_conditions = None
+    selected_dependencies = None
+    selected_tiers = None
     if playbook_id:
         try:
             async with AsyncSessionLocal() as db:
@@ -1235,24 +1490,48 @@ async def _process_batch(
                 _oid = _UUID(organization_id) if organization_id else None
                 playbook = await load_playbook(db, playbook_id, current_user_id=_uid, current_user_org_id=_oid)
                 if playbook:
+                    from app.workers.tasks import _load_phase6_data
+
+                    selected_playbook_id = playbook.id
                     playbook_name = playbook.name
+                    playbook_party_side = playbook.party_side
                     playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
+                    (
+                        selected_conditions,
+                        selected_dependencies,
+                        selected_tiers,
+                    ) = await _load_phase6_data(
+                        db, str(playbook.id), "ideal"
+                    )
+                else:
+                    playbook_load_error = (
+                        "Selected playbook is no longer available."
+                    )
         except Exception as e:
-            logger.warning("Batch %s: failed to load playbook %s: %s", batch_id, playbook_id, e)
+            playbook_load_error = "Selected playbook could not be loaded."
+            logger.warning(
+                "Batch %s: failed to load playbook %s: %s",
+                batch_id, playbook_id, e,
+            )
 
     # Load and merge compliance layer rules once (same as single-file analyze)
-    compliance_layer_rule_names: set = set()
+    from app.services.compliance_layer_service import get_layer_rules_as_dicts, merge_rules
+
+    compliance_layer_rules: List[dict] = []
+    compliance_load_error: Optional[str] = None
     if compliance_layer_codes:
         try:
             async with AsyncSessionLocal() as db:
-                from app.services.compliance_layer_service import get_layer_rules_as_dicts, merge_rules
                 for layer_code in compliance_layer_codes:
                     layer_rules = await get_layer_rules_as_dicts(db, layer_code)
                     if layer_rules:
-                        compliance_layer_rule_names.update(r["name"] for r in layer_rules)
-                        playbook_rules = merge_rules(playbook_rules, layer_rules)
+                        compliance_layer_rules = merge_rules(compliance_layer_rules, layer_rules)
         except Exception as e:
-            logger.warning("Batch %s: failed to load compliance layers %s: %s", batch_id, compliance_layer_codes, e)
+            compliance_load_error = "Compliance layers could not be loaded."
+            logger.warning(
+                "Batch %s: failed to load compliance layers %s: %s",
+                batch_id, compliance_layer_codes, e,
+            )
 
     async def _analyze_single(idx: int, file_info: dict):
         """Analyze a single file within the batch."""
@@ -1271,12 +1550,77 @@ async def _process_batch(
             batch["files"][idx]["status"] = "processing"
 
             try:
+                if playbook_load_error:
+                    raise ValueError(playbook_load_error)
+                if compliance_load_error:
+                    raise ValueError(compliance_load_error)
+
                 file_start = time.monotonic()
+                local_rules = copy.deepcopy(playbook_rules) if playbook_rules else None
+                local_playbook_name = playbook_name
+                local_playbook_side = playbook_party_side
+                local_playbook_id = selected_playbook_id
+                local_conditions = selected_conditions
+                local_dependencies = selected_dependencies
+                local_tiers = selected_tiers
+
+                # Match the single-document path: when no playbook was chosen,
+                # detect the contract family and load its default playbook for
+                # each file independently.
+                if not playbook_id:
+                    try:
+                        detected_type = AnalysisPipeline._detect_contract_type(file_info["text"])
+                        async with AsyncSessionLocal() as db_session:
+                            default_playbook = await load_default_playbook_for_type(
+                                db_session, detected_type
+                            )
+                            if default_playbook:
+                                from app.workers.tasks import _load_phase6_data
+
+                                local_playbook_id = default_playbook.id
+                                local_playbook_name = f"{default_playbook.name} (auto-selected)"
+                                local_playbook_side = default_playbook.party_side
+                                local_rules = get_cached_rules_dicts(
+                                    default_playbook,
+                                    include_verification=True,
+                                )
+                                (
+                                    local_conditions,
+                                    local_dependencies,
+                                    local_tiers,
+                                ) = await _load_phase6_data(
+                                    db_session,
+                                    str(default_playbook.id),
+                                    "ideal",
+                                )
+                    except Exception as exc:
+                        raise RuntimeError(
+                            "Default playbook conditions, dependencies, or "
+                            "tiers could not be loaded."
+                        ) from exc
+
+                local_rules = merge_rules(
+                    local_rules,
+                    copy.deepcopy(compliance_layer_rules),
+                )
+                effective_party_side = (
+                    party_side
+                    or local_playbook_side
+                    or "neutral"
+                )
+                from app.services.playbook_conditions_engine import DealContext
+
                 pipeline_result: PipelineResult = await asyncio.wait_for(
                     analysis_pipeline.run(
                         contract_text=file_info["text"],
-                        playbook_rules=playbook_rules,
-                        playbook_name=playbook_name or "Default",
+                        playbook_rules=local_rules,
+                        playbook_name=local_playbook_name or "Default",
+                        party_side=effective_party_side,
+                        deal_context=DealContext(),
+                        playbook_conditions=local_conditions,
+                        playbook_dependencies=local_dependencies,
+                        rule_tiers_by_rule=local_tiers,
+                        tier_preference="ideal",
                     ),
                     timeout=600.0,
                 )
@@ -1288,6 +1632,18 @@ async def _process_batch(
                     "green": sum(1 for r in pipeline_result.redlines if r.risk_level == "GREEN"),
                     "total": len(pipeline_result.redlines),
                 }
+                file_compliance_scores = None
+                if compliance_layer_codes:
+                    from app.services.compliance_layer_service import (
+                        build_compliance_layer_score,
+                    )
+
+                    file_compliance_scores = {
+                        layer_code: build_compliance_layer_score(
+                            layer_code, local_rules or [], pipeline_result
+                        )
+                        for layer_code in compliance_layer_codes
+                    }
 
                 # Persist batch file result to database so analytics fields are populated
                 try:
@@ -1295,6 +1651,11 @@ async def _process_batch(
                         content_hash = Document.compute_content_hash(file_info["text"])
                         batch_doc = Document(
                             user_id=UUID(user_id),
+                            organization_id=(
+                                UUID(organization_id)
+                                if organization_id else None
+                            ),
+                            playbook_id=local_playbook_id,
                             filename=file_info["filename"],
                             status=DocumentStatus.COMPLETED,
                             total_risks=len(pipeline_result.redlines),
@@ -1310,28 +1671,34 @@ async def _process_batch(
                             db=db_session, user=None, action="batch_file_analyzed",
                             resource_type="document", resource_name=file_info["filename"],
                             status="success", risk_count=len(pipeline_result.redlines),
-                            user_email="batch", organization_id=None,
+                            user_email="batch",
+                            organization_id=(
+                                UUID(organization_id)
+                                if organization_id else None
+                            ),
                             details=json.dumps({"batch_id": batch_id, "file_index": idx}),
                         )
                         await db_session.flush()
 
-                        # Persist individual findings to DocumentRisk table
-                        for redline in pipeline_result.redlines:
-                            risk = DocumentRisk(
-                                document_id=batch_doc.id,
-                                rule_name=getattr(redline, 'rule_name', None),
-                                clause_text=getattr(redline, 'verified_text', None) or getattr(redline, 'original_text', '') or "",
-                                clause_type=getattr(redline, 'clause_type', None),
-                                redline_type=getattr(redline, 'redline_type', None),
-                                risk_level=DBRiskLevel(redline.risk_level.lower()) if redline.risk_level else DBRiskLevel.YELLOW,
-                                ai_explanation=getattr(redline, 'explanation', None),
-                                suggested_fix=getattr(redline, 'suggested_fix', None),
-                                fix_reasoning=getattr(redline, 'fix_reasoning', None),
-                                is_deal_breaker=getattr(redline, 'is_deal_breaker', False),
-                                confidence=getattr(redline.confidence, 'score', None) if hasattr(redline, 'confidence') and redline.confidence else None,
-                                is_resolved=False,
-                            )
-                            db_session.add(risk)
+                        # ZDR applies to batch analysis too. Persist finding text
+                        # only when the deployment explicitly disables ZDR.
+                        if not ZDR_MODE:
+                            for redline in pipeline_result.redlines:
+                                risk = DocumentRisk(
+                                    document_id=batch_doc.id,
+                                    rule_name=getattr(redline, 'rule_name', None),
+                                    clause_text=getattr(redline, 'verified_text', None) or getattr(redline, 'original_text', '') or "",
+                                    clause_type=getattr(redline, 'clause_type', None),
+                                    redline_type=getattr(redline, 'redline_type', None),
+                                    risk_level=DBRiskLevel(redline.risk_level.lower()) if redline.risk_level else DBRiskLevel.YELLOW,
+                                    ai_explanation=getattr(redline, 'explanation', None),
+                                    suggested_fix=getattr(redline, 'suggested_fix', None),
+                                    fix_reasoning=getattr(redline, 'fix_reasoning', None),
+                                    is_deal_breaker=getattr(redline, 'is_deal_breaker', False),
+                                    confidence=getattr(redline.confidence, 'score', None) if hasattr(redline, 'confidence') and redline.confidence else None,
+                                    is_resolved=False,
+                                )
+                                db_session.add(risk)
 
                         await db_session.commit()
                         await db_session.refresh(batch_doc)
@@ -1345,6 +1712,10 @@ async def _process_batch(
                 batch["files"][idx]["risk_summary"] = risk_summary
                 batch["files"][idx]["ai_fallback"] = pipeline_result.partial
                 batch["files"][idx]["executive_summary"] = pipeline_result.executive_summary
+                batch["files"][idx]["processing_ms"] = file_duration_ms
+                batch["files"][idx]["compliance_scores"] = (
+                    file_compliance_scores
+                )
 
                 logger.info(
                     f"Batch {batch_id} file '{file_info['filename']}': "
@@ -1353,7 +1724,7 @@ async def _process_batch(
 
             except asyncio.TimeoutError:
                 batch["files"][idx]["status"] = "error"
-                batch["files"][idx]["error"] = "Analysis timed out after 120 seconds."
+                batch["files"][idx]["error"] = "Analysis timed out after 600 seconds."
                 logger.warning(f"Batch {batch_id} file '{file_info['filename']}': timed out")
 
             except Exception as e:
@@ -1386,7 +1757,7 @@ async def _process_batch(
     # Update DB records
     try:
         async with AsyncSessionLocal() as db_session:
-            from app.models.batch_job import BatchJob, BatchJobFile
+            from app.models.batch_job import BatchJob
             result = await db_session.execute(
                 select(BatchJob).options(selectinload(BatchJob.files)).where(BatchJob.id == UUID(batch_id))
             )
@@ -1406,6 +1777,9 @@ async def _process_batch(
                         for k in agg:
                             agg[k] += rs.get(k, 0)
                 batch_job.risk_summary = agg
+                batch_job.compliance_scores = _aggregate_compliance_scores(
+                    batch["files"]
+                )
                 # Update per-file records
                 for bjf in batch_job.files:
                     for f in batch["files"]:
@@ -1413,6 +1787,10 @@ async def _process_batch(
                             bjf.status = f["status"]
                             bjf.error_message = f.get("error")
                             bjf.risk_summary = f.get("risk_summary")
+                            bjf.processing_ms = f.get("processing_ms")
+                            bjf.compliance_scores = f.get(
+                                "compliance_scores"
+                            )
                             bjf.document_id = UUID(f["document_id"]) if f.get("document_id") else None
                             break
                 await db_session.commit()
@@ -1445,7 +1823,7 @@ async def batch_status(
     else:
         # DB fallback (for batches after server restart)
         try:
-            from app.models.batch_job import BatchJob, BatchJobFile
+            from app.models.batch_job import BatchJob
             result = await db.execute(
                 select(BatchJob)
                 .options(selectinload(BatchJob.files))
@@ -1464,6 +1842,7 @@ async def batch_status(
                     document_id=str(f.document_id) if f.document_id else None,
                     risk_summary=f.risk_summary,
                     error=f.error_message,
+                    compliance_scores=f.compliance_scores,
                 )
                 for f in sorted(batch_job.files, key=lambda x: x.created_at)
             ]
@@ -1515,6 +1894,7 @@ class BatchHistoryItem(BaseModel):
     failed_files: int = 0
     risk_summary: Optional[dict] = None
     compliance_layers: Optional[list] = None
+    compliance_scores: Optional[dict] = None
 
 
 class BatchHistoryResponse(BaseModel):
@@ -1562,6 +1942,7 @@ async def list_batches(
                 failed_files=b.failed_files or 0,
                 risk_summary=b.risk_summary,
                 compliance_layers=b.compliance_layers if isinstance(b.compliance_layers, list) else [],
+                compliance_scores=b.compliance_scores,
             )
             for b in batches
         ],
@@ -1595,7 +1976,7 @@ async def batch_report(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a consolidated report for a completed batch analysis."""
-    from app.models.batch_job import BatchJob, BatchJobFile
+    from app.models.batch_job import BatchJob
 
     result = await db.execute(
         select(BatchJob)
@@ -1612,7 +1993,6 @@ async def batch_report(
     # Aggregate risk summary
     agg = {"red": 0, "yellow": 0, "green": 0, "total": 0}
     per_file = []
-    risk_rule_counts: Dict[str, int] = {}
 
     for f in sorted(batch_job.files, key=lambda x: x.created_at):
         rs = f.risk_summary or {}
@@ -1625,6 +2005,7 @@ async def batch_report(
             "risk_summary": rs,
             "processing_ms": f.processing_ms,
             "error": f.error_message,
+            "compliance_scores": f.compliance_scores,
         })
 
     # Find common risks from document risks in DB
@@ -1651,7 +2032,7 @@ async def batch_report(
         aggregate_risk_summary=agg,
         common_risks=common_risks,
         per_file_summary=per_file,
-        compliance_scores=None,  # TODO: aggregate from individual analyses
+        compliance_scores=batch_job.compliance_scores,
     )
 
 
@@ -1667,6 +2048,10 @@ class ComplianceLayerSummary(BaseModel):
     description: Optional[str] = None
     jurisdiction: Optional[str] = None
     version: int = 1
+    source_url: Optional[str] = None
+    gazette_date: Optional[str] = None
+    effective_date: Optional[str] = None
+    last_verified_at: Optional[str] = None
     rule_count: int = 0
 
 
@@ -1688,6 +2073,10 @@ class ComplianceLayerDetail(BaseModel):
     description: Optional[str] = None
     jurisdiction: Optional[str] = None
     version: int = 1
+    source_url: Optional[str] = None
+    gazette_date: Optional[str] = None
+    effective_date: Optional[str] = None
+    last_verified_at: Optional[str] = None
     rules: List[ComplianceLayerRuleResponse] = []
 
 
@@ -1722,6 +2111,19 @@ async def get_compliance_layer(
         description=layer.description,
         jurisdiction=layer.jurisdiction,
         version=layer.version,
+        source_url=layer.source_url,
+        gazette_date=(
+            layer.gazette_date.isoformat()
+            if layer.gazette_date else None
+        ),
+        effective_date=(
+            layer.effective_date.isoformat()
+            if layer.effective_date else None
+        ),
+        last_verified_at=(
+            layer.last_verified_at.isoformat()
+            if layer.last_verified_at else None
+        ),
         rules=[
             ComplianceLayerRuleResponse(
                 clause_type=rule.clause_type,
@@ -1790,7 +2192,10 @@ async def get_verification_summary(
     if total == 0:
         return VerificationSummaryResponse(
             total_findings=0,
-            industry_benchmark="No findings to verify.",
+            industry_benchmark=(
+                "No persisted findings are available to verify. This does not "
+                "establish that the contract is risk-free."
+            ),
         )
 
     # Count verification statuses
@@ -1812,16 +2217,10 @@ async def get_verification_summary(
     hallucination_rate = round(not_found / total * 100, 1) if total > 0 else 0.0
     avg_confidence = round(conf_sum / total, 3) if total > 0 else 0.0
 
-    # Industry benchmark comparison
-    benchmark = "Industry average hallucination rate for AI contract review is 8-15%."
-    if hallucination_rate <= 5:
-        benchmark += " Your analysis is EXCELLENT — well below industry average."
-    elif hallucination_rate <= 10:
-        benchmark += " Your analysis is GOOD — at or below industry average."
-    elif hallucination_rate <= 15:
-        benchmark += " Your analysis is FAIR — within industry average range."
-    else:
-        benchmark += " Your analysis has elevated hallucination rate — consider re-running with stricter playbook."
+    benchmark = (
+        "Verification metrics reflect persisted findings in this analysis only; "
+        "no external industry benchmark has been applied."
+    )
 
     return VerificationSummaryResponse(
         total_findings=total,
@@ -1846,6 +2245,7 @@ class GenerateClauseRequest(BaseModel):
     clause_type: str = Field(..., min_length=1, max_length=200)
     playbook_id: Optional[UUID] = None
     contract_context: Optional[str] = Field(default=None, max_length=50000)
+    jurisdiction: Optional[str] = Field(default=None, max_length=100)
 
 
 class GenerateClauseResponse(BaseModel):
@@ -1880,8 +2280,19 @@ async def generate_clause(
                 current_user_id=current_user.id,
                 current_user_org_id=current_user.organization_id,
             )
-            if playbook:
-                playbook_rules = get_cached_rules_dicts(playbook)
+            if playbook is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        "Selected playbook was not found or is not accessible."
+                    ),
+                )
+            playbook_rules = get_cached_rules_dicts(playbook)
+            if not playbook_rules:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Selected playbook has no active rules.",
+                )
 
         try:
             generated = await asyncio.wait_for(
@@ -1889,6 +2300,7 @@ async def generate_clause(
                     clause_type=body.clause_type,
                     contract_context=body.contract_context or "",
                     playbook_rules=playbook_rules,
+                    jurisdiction_override=body.jurisdiction,
                 ),
                 timeout=600.0,
             )
@@ -1913,6 +2325,8 @@ async def generate_clause(
             reasoning=generated["reasoning"],
         )
 
+    except HTTPException:
+        raise
     except AIServiceUnavailable as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"message": e.message, "error_code": e.error_code})
     except AIRateLimited as e:
@@ -1922,7 +2336,7 @@ async def generate_clause(
     except AIServiceError as e:
         logger.error("Clause generation failed: %s", e.message)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail={"message": e.message, "error_code": e.error_code})
-    except Exception as e:
+    except Exception:
         logger.error("Clause generation failed", exc_info=True)
         raise HTTPException(status_code=500, detail={"message": "Clause generation failed. Please try again.", "error_code": "unknown_error"})
 
@@ -1941,6 +2355,7 @@ class GenerateFixRequest(BaseModel):
     surrounding_context: Optional[str] = Field(default=None, max_length=10000)
     playbook_id: Optional[UUID] = None
     contract_text: Optional[str] = Field(default=None, max_length=500000)
+    jurisdiction: Optional[str] = Field(default=None, max_length=100)
 
 
 class GenerateFixResponse(BaseModel):
@@ -1948,10 +2363,46 @@ class GenerateFixResponse(BaseModel):
     fix_text: str
     fix_edits: Optional[List[dict]] = None  # [{find, replace}] — the actual edits
     reasoning: str
-    fix_verified: bool = True
+    fix_verified: bool = False
     fix_warnings: Optional[List[str]] = None
     # C2 — provenance: "clause_library" | "clause_library_adapted" | "ai_generated"
     fix_source: str = "ai_generated"
+
+
+def _verify_fix_for_response(
+    *,
+    fix_text: str,
+    original_text: str,
+    contract_text: Optional[str],
+    rule_name: str,
+    playbook_rule: Optional[dict] = None,
+) -> tuple[bool, List[str]]:
+    """Verify source anchoring, references, and playbook alignment."""
+    if not contract_text:
+        return False, [
+            "Full contract context was not supplied; review before applying."
+        ]
+
+    warnings: List[str] = []
+    source_anchored = original_text in contract_text
+    if not source_anchored:
+        warnings.append(
+            "The source clause or insertion anchor was not found verbatim in "
+            "the supplied contract."
+        )
+
+    from app.services.fix_verifier import FixVerifier
+
+    verification = FixVerifier().verify_fix(
+        fix_text=fix_text,
+        original_text=original_text,
+        contract_text=contract_text,
+        rule_name=rule_name,
+        playbook_rule=playbook_rule,
+    )
+    warnings.extend(verification.warnings)
+    warnings.extend(verification.errors)
+    return source_anchored and verification.passed, warnings
 
 
 @router.post("/generate-fix", response_model=GenerateFixResponse)
@@ -2000,6 +2451,12 @@ async def generate_fix(
 
     # Mandatory match — short-circuit, return verbatim approved language
     if library_match and library_match.is_mandatory:
+        fix_verified, fix_warnings = _verify_fix_for_response(
+            fix_text=library_match.approved_text,
+            original_text=body.original_text,
+            contract_text=body.contract_text,
+            rule_name=body.rule_name,
+        )
         await log_audit_event(
             db=db,
             user=current_user,
@@ -2019,8 +2476,8 @@ async def generate_fix(
             fix_edits=[{"find": body.original_text, "replace": library_match.approved_text}]
             if body.redline_type == "violation" else None,
             reasoning=f"Used mandatory approved language from your clause library: {library_match.name}.",
-            fix_verified=True,
-            fix_warnings=None,
+            fix_verified=fix_verified,
+            fix_warnings=fix_warnings or None,
             fix_source="clause_library",
         )
 
@@ -2034,8 +2491,19 @@ async def generate_fix(
                 current_user_id=current_user.id,
                 current_user_org_id=current_user.organization_id,
             )
-            if playbook:
-                playbook_rules = get_cached_rules_dicts(playbook)
+            if playbook is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        "Selected playbook was not found or is not accessible."
+                    ),
+                )
+            playbook_rules = get_cached_rules_dicts(playbook)
+            if not playbook_rules:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Selected playbook has no active rules.",
+                )
 
         # Non-mandatory library match — append to recommendation as preferred
         # reference language so the AI adapts it to the contract context.
@@ -2058,6 +2526,7 @@ async def generate_fix(
                     redline_type=body.redline_type,
                     surrounding_context=body.surrounding_context or "",
                     playbook_rules=playbook_rules,
+                    jurisdiction_override=body.jurisdiction,
                 ),
                 timeout=600.0,
             )
@@ -2068,19 +2537,50 @@ async def generate_fix(
             )
 
         # Verify the generated fix before returning
-        fix_verified = True
-        fix_warnings: List[str] = []
-        if body.contract_text:
-            from app.services.fix_verifier import FixVerifier
-            verifier = FixVerifier()
-            verification = verifier.verify_fix(
-                fix_text=generated["fix_text"],
-                original_text=body.original_text,
-                contract_text=body.contract_text,
-                rule_name=body.rule_name,
+        matching_rule = None
+        if playbook_rules:
+            normalized_rule_name = body.rule_name.lower()
+            matching_rule = next(
+                (
+                    rule for rule in playbook_rules
+                    if str(rule.get("name") or "").lower()
+                    in normalized_rule_name
+                    or normalized_rule_name
+                    in str(rule.get("name") or "").lower()
+                ),
+                None,
             )
-            fix_verified = verification.passed
-            fix_warnings = verification.warnings + verification.errors
+        fix_verified, fix_warnings = _verify_fix_for_response(
+            fix_text=generated["fix_text"],
+            original_text=body.original_text,
+            contract_text=body.contract_text,
+            rule_name=body.rule_name,
+            playbook_rule=matching_rule,
+        )
+
+        fix_edits = generated.get("fix_edits") or []
+        if body.redline_type == "violation":
+            if not fix_edits:
+                fix_verified = False
+                fix_warnings.append(
+                    "No source-anchored surgical edits were produced; do not "
+                    "apply this replacement automatically."
+                )
+            else:
+                from app.services.gemini_analyzer import _apply_edits
+
+                rebuilt_text, valid_edits = _apply_edits(
+                    body.original_text, fix_edits
+                )
+                if (
+                    len(valid_edits) != len(fix_edits)
+                    or rebuilt_text != generated["fix_text"]
+                ):
+                    fix_verified = False
+                    fix_warnings.append(
+                        "The edit list does not reproduce the proposed fix "
+                        "from the source clause."
+                    )
 
         # Audit log
         await log_audit_event(
@@ -2100,13 +2600,15 @@ async def generate_fix(
 
         return GenerateFixResponse(
             fix_text=generated["fix_text"],
-            fix_edits=generated.get("fix_edits") or None,
+            fix_edits=fix_edits or None,
             reasoning=generated.get("reasoning", ""),
             fix_verified=fix_verified,
             fix_warnings=fix_warnings if fix_warnings else None,
             fix_source=fix_source,
         )
 
+    except HTTPException:
+        raise
     except AIServiceUnavailable as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"message": e.message, "error_code": e.error_code})
     except AIRateLimited as e:
@@ -2116,7 +2618,7 @@ async def generate_fix(
     except AIServiceError as e:
         logger.error("Fix generation failed: %s", e.message)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail={"message": e.message, "error_code": e.error_code})
-    except Exception as e:
+    except Exception:
         logger.error("Fix generation failed", exc_info=True)
         raise HTTPException(status_code=500, detail={"message": "Fix generation failed. Please try again.", "error_code": "unknown_error"})
 
@@ -2129,6 +2631,7 @@ class ResearchClauseRequest(BaseModel):
     """Request to research case law for a clause."""
     clause_text: str = Field(..., min_length=1, max_length=10000)
     clause_type: Optional[str] = Field(default=None, max_length=200)
+    jurisdiction: Optional[str] = Field(default=None, max_length=100)
 
 
 class CaseLawItem(BaseModel):
@@ -2148,6 +2651,62 @@ class ResearchClauseResponse(BaseModel):
     disclaimer: str
 
 
+async def _research_clause_with_verified_source(
+    body: ResearchClauseRequest,
+) -> dict:
+    """Use a research connector; never manufacture citations from model memory."""
+    from app.services.smriti_mcp_client import smriti_client
+
+    if not smriti_client.is_configured:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "message": (
+                    "Verified legal research is not configured. The system "
+                    "will not invent case citations from model memory."
+                ),
+                "error_code": "legal_research_unavailable",
+            },
+        )
+    raw_cases = await smriti_client.search_case_law(
+        query=body.clause_text[:500],
+        jurisdiction=body.jurisdiction,
+        max_results=5,
+    )
+    interpretations = []
+    if body.clause_type:
+        interpretations = await smriti_client.find_judicial_interpretation(
+            clause_type=body.clause_type,
+            jurisdiction=body.jurisdiction,
+            max_results=3,
+        )
+    return {
+        "cases": [
+            {
+                "case_name": case.get("case_name")
+                or case.get("title")
+                or "",
+                "citation": case.get("citation", ""),
+                "year": int(case.get("year") or 0),
+                "court": case.get("court", ""),
+                "holding": case.get("holding")
+                or case.get("summary")
+                or "",
+                "relevance": case.get("relevance") or "",
+            }
+            for case in raw_cases
+        ],
+        "legal_principle": (
+            json.dumps(interpretations, ensure_ascii=False)
+            if interpretations else ""
+        ),
+        "disclaimer": (
+            "Research connector results are leads, not verified legal advice. "
+            "Confirm every citation and holding in the official report."
+        ),
+    }
+
+
 @router.post("/research-clause", response_model=ResearchClauseResponse)
 @limiter.limit("30/minute")
 async def research_clause(
@@ -2165,10 +2724,7 @@ async def research_clause(
     try:
         try:
             result = await asyncio.wait_for(
-                analysis_pipeline.research_clause(
-                    clause_text=body.clause_text,
-                    clause_type=body.clause_type or "",
-                ),
+                _research_clause_with_verified_source(body),
                 timeout=600.0,
             )
         except asyncio.TimeoutError:
@@ -2204,6 +2760,8 @@ async def research_clause(
             disclaimer=result.get("disclaimer", "AI-suggested references — verify independently."),
         )
 
+    except HTTPException:
+        raise
     except AIServiceUnavailable as e:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"message": e.message, "error_code": e.error_code})
     except AIRateLimited as e:
@@ -2213,7 +2771,7 @@ async def research_clause(
     except AIServiceError as e:
         logger.error("Research clause failed: %s", e.message)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail={"message": e.message, "error_code": e.error_code})
-    except Exception as e:
+    except Exception:
         logger.error("Research clause failed", exc_info=True)
         raise HTTPException(status_code=500, detail={"message": "Research failed. Please try again.", "error_code": "unknown_error"})
 
@@ -2274,8 +2832,21 @@ async def compare_contracts(
                 current_user_id=current_user.id,
                 current_user_org_id=current_user.organization_id,
             )
-            if playbook:
-                playbook_rules = get_cached_rules_dicts(playbook, include_deal_breaker=False)
+            if playbook is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        "Selected playbook was not found or is not accessible."
+                    ),
+                )
+            playbook_rules = get_cached_rules_dicts(
+                playbook, include_deal_breaker=False
+            )
+            if not playbook_rules:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Selected playbook has no active rules.",
+                )
 
         diff = await compute_diff_with_ai(
             text_a=body.text_a,
@@ -2311,7 +2882,9 @@ async def compare_contracts(
             summary=diff.summary,
         )
 
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         logger.error("Contract comparison failed", exc_info=True)
         raise HTTPException(status_code=500, detail={"message": "Comparison failed. Please try again.", "error_code": "comparison_error"})
 
@@ -2327,6 +2900,14 @@ async def analyze_file(
     file: UploadFile = File(...),
     playbook_id: Optional[str] = Form(None),
     party_side: Optional[str] = Form(None),
+    jurisdiction: Optional[str] = Form(None),
+    compliance_layers: Optional[str] = Form(None),
+    tier_preference: Literal[
+        "ideal", "acceptable", "walk_away", "escalate"
+    ] = Form("ideal"),
+    counterparty_type: Optional[str] = Form(None),
+    deal_size: Optional[float] = Form(None),
+    contract_side: Optional[str] = Form(None),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
     _quota=Depends(check_and_increment_quota),
@@ -2342,6 +2923,12 @@ async def analyze_file(
     2. Full text fed into 6-stage AI pipeline (same as /analyze)
     3. Response enriched with paragraph_hashes for frontend drift detection
     """
+    if party_side not in (None, "buyer", "seller", "neutral"):
+        raise HTTPException(
+            status_code=422,
+            detail="party_side must be buyer, seller, or neutral.",
+        )
+
     # Validate file type
     filename = file.filename or "document.docx"
     content_type = file.content_type or ""
@@ -2384,6 +2971,16 @@ async def analyze_file(
             status_code=400,
             detail="Failed to parse DOCX file. Please ensure the file is a valid .docx document."
         )
+
+    full_text = contract_map.get_all_text()
+    is_valid, msg = validate_contract_length(
+        full_text, max_chars=500_000, min_chars=50
+    )
+    if not is_valid:
+        raise HTTPException(
+            status_code=413 if len(full_text) > 500_000 else 422,
+            detail=msg,
+        )
     
     # Load playbook rules if specified
     playbook_rules = []
@@ -2397,16 +2994,27 @@ async def analyze_file(
                 current_user_id=current_user.id,
                 current_user_org_id=current_user.organization_id,
             )
-            if playbook:
-                playbook_name = playbook.name
-                playbook_rules = get_cached_rules_dicts(playbook, include_verification=True)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid playbook_id format")
-        except Exception as e:
-            logger.error("Error loading playbook for file analysis: %s", e)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=400, detail="Invalid playbook_id format"
+            ) from exc
+        if playbook is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Selected playbook was not found or is not accessible.",
+            )
+        playbook_name = playbook.name
+        playbook_rules = get_cached_rules_dicts(
+            playbook, include_verification=True
+        )
+        if not playbook_rules:
+            raise HTTPException(
+                status_code=422,
+                detail="Selected playbook has no active rules.",
+            )
 
     # Auto-select a default playbook when user didn't pick one
-    if not playbook_rules:
+    if not playbook_id:
         try:
             from app.services.analysis_pipeline import AnalysisPipeline
             detected_type = AnalysisPipeline._detect_contract_type(contract_map.full_text)
@@ -2417,37 +3025,111 @@ async def analyze_file(
                     playbook_name = f"{auto_playbook.name} (auto-selected)"
                     playbook_rules = get_cached_rules_dicts(auto_playbook, include_verification=True)
                     logger.info("Auto-selected playbook '%s' for file analysis, type '%s'", auto_playbook.name, detected_type)
-        except Exception as e:
-            logger.warning("Auto-playbook selection for file failed (non-fatal): %s", e)
+        except Exception as exc:
+            logger.exception("Auto-playbook selection for file failed")
+            raise HTTPException(
+                status_code=503,
+                detail="Automatic playbook selection failed; analysis was not run.",
+            ) from exc
+
+    compliance_layer_codes: List[str] = []
+    if compliance_layers:
+        try:
+            parsed_layers = json.loads(compliance_layers)
+            compliance_layer_codes = (
+                [str(code) for code in parsed_layers]
+                if isinstance(parsed_layers, list)
+                else [str(parsed_layers)]
+            )
+        except json.JSONDecodeError:
+            compliance_layer_codes = [
+                code.strip() for code in compliance_layers.split(",")
+                if code.strip()
+            ]
+    if compliance_layer_codes:
+        from app.services.compliance_layer_service import (
+            get_layer_rules_as_dicts,
+            merge_rules,
+        )
+
+        for layer_code in compliance_layer_codes:
+            layer_rules = await get_layer_rules_as_dicts(db, layer_code)
+            if not layer_rules:
+                raise HTTPException(
+                    status_code=404,
+                    detail=(
+                        f"Compliance layer '{layer_code}' was not found or "
+                        "has no active rules."
+                    ),
+                )
+            playbook_rules = merge_rules(playbook_rules, layer_rules)
+
+    playbook_conditions = None
+    playbook_dependencies = None
+    rule_tiers_by_rule = None
+    if playbook is not None:
+        from app.workers.tasks import _load_phase6_data
+
+        try:
+            (
+                playbook_conditions,
+                playbook_dependencies,
+                rule_tiers_by_rule,
+            ) = await _load_phase6_data(
+                db, str(playbook.id), tier_preference
+            )
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "The selected playbook's conditions, tiers, or "
+                    "dependencies could not be loaded; analysis was not run."
+                ),
+            ) from exc
 
     # User's explicit choice wins; playbook default is fallback
-    effective_party_side = party_side or "buyer"
+    effective_party_side = party_side or "neutral"
     if not party_side and playbook and hasattr(playbook, 'party_side') and playbook.party_side:
         effective_party_side = playbook.party_side
 
     # Create document record
     document = Document(
         user_id=current_user.id,
+        organization_id=current_user.organization_id,
+        playbook_id=playbook.id if playbook is not None else None,
         filename=filename,
         status=DocumentStatus.PROCESSING,
+        content_hash=Document.compute_content_hash(full_text),
+        word_count=len(full_text.split()),
     )
     db.add(document)
     await db.flush()
+    analysis_start = time.monotonic()
 
     try:
-        # Get full text from ContractMap for the unified pipeline
-        full_text = contract_map.get_all_text()
-
         # Run the unified 6-stage AI pipeline (same as /analyze)
         playbook_name = _sanitize_for_prompt(playbook_name, max_length=200)
 
         try:
+            from app.services.playbook_conditions_engine import DealContext
+
             pipeline_result: PipelineResult = await asyncio.wait_for(
                 analysis_pipeline.run(
                     contract_text=full_text,
                     playbook_rules=playbook_rules,
                     playbook_name=playbook_name,
                     party_side=effective_party_side,
+                    jurisdiction_override=jurisdiction,
+                    deal_context=DealContext(
+                        counterparty_type=counterparty_type,
+                        deal_size=deal_size,
+                        jurisdiction=jurisdiction,
+                        contract_side=contract_side,
+                    ),
+                    playbook_conditions=playbook_conditions,
+                    playbook_dependencies=playbook_dependencies,
+                    rule_tiers_by_rule=rule_tiers_by_rule,
+                    tier_preference=tier_preference,
                 ),
                 timeout=600.0,
             )
@@ -2465,11 +3147,27 @@ async def analyze_file(
             "yellow": sum(1 for r in pipeline_result.redlines if r.risk_level == "YELLOW"),
             "green": sum(1 for r in pipeline_result.redlines if r.risk_level == "GREEN"),
         }
+        compliance_scores = None
+        if compliance_layer_codes:
+            from app.services.compliance_layer_service import (
+                build_compliance_layer_score,
+            )
+
+            compliance_scores = {
+                layer_code: build_compliance_layer_score(
+                    layer_code, playbook_rules, pipeline_result
+                )
+                for layer_code in compliance_layer_codes
+            }
 
         # Update document
         document.total_risks = len(pipeline_result.redlines)
         document.risk_summary = risk_summary
         document.status = DocumentStatus.COMPLETED
+        document.processed_at = datetime.now(timezone.utc)
+        document.processing_duration_ms = int(
+            (time.monotonic() - analysis_start) * 1000
+        )
 
         # Create audit log (ZDR: no text stored)
         await log_audit_event(
@@ -2501,7 +3199,7 @@ async def analyze_file(
             executive_summary=pipeline_result.executive_summary,
             total_risks=len(pipeline_result.redlines),
             risk_summary=risk_summary,
-            tokens_used=pipeline_result.total_tokens,
+            tokens_used=pipeline_result.total_tokens_used,
             source_type="docx",
             pipeline_partial=pipeline_result.partial,
             ai_used=pipeline_result.ai_used,
@@ -2512,25 +3210,38 @@ async def analyze_file(
                     clause_text=r.verified_text or r.original_text,
                     risk_level=r.risk_level,
                     rule_name=r.rule_name,
+                    rule_id=r.rule_id or None,
                     clause_type=r.clause_type or '',
                     paragraph_hash=_find_paragraph_hash(r.verified_text or r.original_text),
                     explanation=r.explanation,
                     recommendation=r.recommendation,
                     suggested_fix=r.suggested_fix,
                     redline_type=r.redline_type,
-                    confidence=r.confidence.overall if r.confidence else None,
-                    confidence_level=r.confidence.level if r.confidence else None,
+                    confidence=r.confidence.score if r.confidence else None,
+                    confidence_level=r.confidence.level.value if r.confidence else None,
+                    confidence_breakdown=(
+                        r.confidence.breakdown.to_dict() if r.confidence else None
+                    ),
                     verification_status=r.verification_status,
                     is_deal_breaker=r.is_deal_breaker,
                     cross_references=r.cross_references or [],
+                    statutory_references=r.statutory_references or None,
                 )
                 for r in pipeline_result.redlines
-            ]
+            ],
+            jurisdiction=pipeline_result.jurisdiction_code,
+            jurisdiction_name=pipeline_result.jurisdiction_name,
+            hallucination_stats=pipeline_result.hallucination_stats or None,
+            compliance_scores=compliance_scores,
+            contract_type=pipeline_result.contract_type,
+            playbook_name=playbook_name,
+            review_perspective=pipeline_result.review_perspective,
+            playbook_coverage=pipeline_result.playbook_coverage,
         )
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.error("File analysis failed", exc_info=True)
         document.status = DocumentStatus.FAILED
         await db.commit()
@@ -2835,7 +3546,7 @@ async def download_manifest(current_user: User = Depends(get_current_user)):
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.error("Error serving manifest", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -2877,7 +3588,7 @@ async def download_installer(current_user: User = Depends(get_current_user)):
         )
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.error("Error creating installer", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -3077,10 +3788,7 @@ async def create_document_version(
     doc_result = await db.execute(
         select(Document)
         .where(Document.id == document_id)
-        .where(
-            (Document.user_id == current_user.id)
-            | (Document.organization_id == current_user.organization_id)
-        )
+        .where(_document_access_filter(current_user))
     )
     document = doc_result.scalar_one_or_none()
     if not document:
@@ -3151,10 +3859,7 @@ async def list_document_versions(
     doc_result = await db.execute(
         select(Document)
         .where(Document.id == document_id)
-        .where(
-            (Document.user_id == current_user.id)
-            | (Document.organization_id == current_user.organization_id)
-        )
+        .where(_document_access_filter(current_user))
     )
     document = doc_result.scalar_one_or_none()
     if not document:
@@ -3199,16 +3904,13 @@ async def get_version_diff(
     db: AsyncSession = Depends(get_db),
 ):
     """Get diff between two document versions."""
-    from app.models.document import DocumentVersion, DocumentComparison
+    from app.models.document import DocumentVersion
 
     # Verify access
     doc_result = await db.execute(
         select(Document)
         .where(Document.id == document_id)
-        .where(
-            (Document.user_id == current_user.id)
-            | (Document.organization_id == current_user.organization_id)
-        )
+        .where(_document_access_filter(current_user))
     )
     if not doc_result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Document not found")
@@ -3380,7 +4082,7 @@ async def batch_full_report(
     Includes: portfolio summary, per-document findings with clause text,
     risk heatmap by clause type, top risks, and deal-breakers.
     """
-    from app.models.batch_job import BatchJob, BatchJobFile
+    from app.models.batch_job import BatchJob
 
     result = await db.execute(
         select(BatchJob)

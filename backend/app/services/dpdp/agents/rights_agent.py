@@ -3,10 +3,10 @@ DPDP Rights Agent — Data Principal rights automation.
 
 Handles:
   - Rights requests (access, correction, erasure, nomination, portability)
-  - 90-day SLA tracking with auto-escalation
+  - Internal service-target tracking with auto-escalation
   - Grievance management (Section 13)
   - Nomination management (Section 14)
-  - Breach notification workflow (CERT-In 6hr + DPDP 72hr)
+  - Breach notification workflow
 """
 
 import logging
@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
-from sqlalchemy import select, func, and_, or_
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.consent import (
@@ -25,9 +25,11 @@ from app.models.consent import (
     GrievanceStatus,
     GrievanceCategory,
     ConsentNomination,
-    ConsentEvent,
     ConsentEventType,
 )
+from app.services.consent_event_bus import consent_event_bus
+from app.services.consent_service import consent_service
+from app.services.data_erasure_service import erase_user_data
 from app.services.dpdp.models import (
     RightsRequestInput,
     GrievanceInput,
@@ -35,9 +37,11 @@ from app.services.dpdp.models import (
 
 logger = logging.getLogger(__name__)
 
-# SLA: 30 days for grievance response, 90 days total resolution
-GRIEVANCE_RESPONSE_DAYS = 30
-RIGHTS_RESOLUTION_DAYS = 90
+# Operational targets. DPDP Rule 14(3) sets a maximum published period of
+# 90 days for grievance responses; it does not impose a universal 90-day
+# deadline on all other Data Principal rights requests.
+GRIEVANCE_SERVICE_TARGET_DAYS = 30
+RIGHTS_SERVICE_TARGET_DAYS = 90
 
 
 class RightsAgent:
@@ -61,7 +65,7 @@ class RightsAgent:
                 f"Valid types: {valid_types}"
             )
 
-        deadline = datetime.now(timezone.utc) + timedelta(days=RIGHTS_RESOLUTION_DAYS)
+        deadline = datetime.now(timezone.utc) + timedelta(days=RIGHTS_SERVICE_TARGET_DAYS)
 
         request = RightsRequest(
             id=uuid.uuid4(),
@@ -80,28 +84,31 @@ class RightsAgent:
 
         db.add(request)
 
-        # Log consent event
-        event = ConsentEvent(
-            id=uuid.uuid4(),
-            subject_id=uuid.UUID(subject_id),
-            event_type=ConsentEventType.RIGHTS_REQUEST.value,
-            purpose_code=None,
-            actor="data_subject",
+        await consent_service._record_event(
+            db,
+            None,
+            uuid.UUID(subject_id),
+            ConsentEventType.RIGHTS_REQUEST.value,
             details={
                 "request_type": input_data.request_type,
                 "request_id": str(request.id),
             },
         )
-        db.add(event)
 
         await db.commit()
+        await consent_event_bus.publish_rights_request(
+            subject_id, input_data.request_type, str(request.id)
+        )
 
         return {
             "request_id": str(request.id),
             "status": request.status,
             "request_type": input_data.request_type,
             "resolution_deadline": deadline.isoformat(),
-            "message": f"Rights request submitted. Resolution deadline: {deadline.strftime('%Y-%m-%d')} (90 days).",
+            "message": (
+                "Rights request submitted. Internal service target: "
+                f"{deadline.strftime('%Y-%m-%d')}."
+            ),
         }
 
     async def get_rights_requests(
@@ -163,7 +170,35 @@ class RightsAgent:
         if not request:
             raise ValueError(f"Rights request {request_id} not found")
 
+        valid_statuses = {status.value for status in RightsRequestStatus}
+        if new_status not in valid_statuses:
+            raise ValueError(f"Invalid rights-request status: {new_status}")
+
         now = datetime.now(timezone.utc)
+
+        if new_status == RightsRequestStatus.COMPLETED.value:
+            if request.request_type == RightsRequestType.ERASURE.value:
+                erasure = await erase_user_data(db, request.subject_id, commit=False)
+                if "error" in erasure:
+                    raise ValueError(erasure["error"])
+                response_details = {
+                    "fulfilled_at": now.isoformat(),
+                    "method": "anonymisation_and_session_revocation",
+                }
+            elif request.request_type == RightsRequestType.ACCESS.value:
+                response_details = {
+                    **(response_details or {}),
+                    "delivery": "authenticated_download",
+                    "download_url": f"/api/v1/rights/requests/{request.id}/download",
+                }
+            elif (
+                request.request_type == RightsRequestType.CORRECTION.value
+                and not (response_details or {}).get("corrected_fields")
+            ):
+                raise ValueError(
+                    "Correction requests require response_details.corrected_fields "
+                    "before they can be completed"
+                )
 
         request.status = new_status
         if new_status == RightsRequestStatus.ACKNOWLEDGED.value:
@@ -203,7 +238,7 @@ class RightsAgent:
                 f"Valid categories: {valid_categories}"
             )
 
-        deadline = datetime.now(timezone.utc) + timedelta(days=GRIEVANCE_RESPONSE_DAYS)
+        deadline = datetime.now(timezone.utc) + timedelta(days=GRIEVANCE_SERVICE_TARGET_DAYS)
 
         grievance = Grievance(
             id=uuid.uuid4(),
@@ -218,26 +253,31 @@ class RightsAgent:
 
         db.add(grievance)
 
-        # Log event
-        event = ConsentEvent(
-            id=uuid.uuid4(),
-            subject_id=uuid.UUID(subject_id),
-            event_type=ConsentEventType.GRIEVANCE_FILED.value,
+        await consent_service._record_event(
+            db,
+            None,
+            uuid.UUID(subject_id),
+            ConsentEventType.GRIEVANCE_FILED.value,
             details={
                 "grievance_id": str(grievance.id),
                 "category": input_data.category,
             },
         )
-        db.add(event)
 
         await db.commit()
+        await consent_event_bus.publish_grievance(
+            subject_id, input_data.category, str(grievance.id)
+        )
 
         return {
             "grievance_id": str(grievance.id),
             "status": grievance.status,
             "category": input_data.category,
             "resolution_deadline": deadline.isoformat(),
-            "message": f"Grievance filed. We will acknowledge within 48 hours and resolve by {deadline.strftime('%Y-%m-%d')}.",
+            "message": (
+                "Grievance filed. Our published service target is to respond by "
+                f"{deadline.strftime('%Y-%m-%d')}."
+            ),
         }
 
     async def get_grievances(
@@ -297,6 +337,10 @@ class RightsAgent:
         grievance = result.scalar_one_or_none()
         if not grievance:
             raise ValueError(f"Grievance {grievance_id} not found")
+
+        valid_statuses = {status.value for status in GrievanceStatus}
+        if new_status not in valid_statuses:
+            raise ValueError(f"Invalid grievance status: {new_status}")
 
         now = datetime.now(timezone.utc)
         grievance.status = new_status
@@ -366,7 +410,7 @@ class RightsAgent:
             .where(
                 and_(
                     ConsentNomination.subject_id == uuid.UUID(subject_id),
-                    ConsentNomination.is_active == True,
+                    ConsentNomination.is_active.is_(True),
                 )
             )
             .order_by(ConsentNomination.created_at.desc())
@@ -413,7 +457,7 @@ class RightsAgent:
             "status": "revoked",
         }
 
-    # ---- SLA Monitoring ----
+    # ---- Service-target monitoring ----
 
     async def get_overdue_requests(
         self,

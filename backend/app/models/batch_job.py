@@ -26,6 +26,7 @@ class BatchJob(Base):
     failed_files: Mapped[int] = mapped_column(Integer, default=0)
     playbook_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
     compliance_layers: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)  # List of layer codes
+    compliance_scores: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     risk_summary: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)  # Aggregate {red, yellow, green}
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -44,6 +45,7 @@ class BatchJobFile(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")  # queued, processing, completed, error
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     risk_summary: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)  # {red, yellow, green, total}
+    compliance_scores: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     processing_ms: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 

@@ -53,6 +53,7 @@ const fileCardStyle = (status: string): CSSProperties => ({
 export default function BatchUpload() {
     const [files, setFiles] = useState<File[]>([]);
     const [playbookId, setPlaybookId] = useState('');
+    const [partySide, setPartySide] = useState<'' | 'buyer' | 'seller' | 'neutral'>('');
     const [batchId, setBatchId] = useState<string | null>(null);
     const [batchStatus, setBatchStatus] = useState<BatchStatusResponse | null>(null);
     const [uploading, setUploading] = useState(false);
@@ -114,7 +115,11 @@ export default function BatchUpload() {
         if (files.length === 0) return;
         setUploading(true); setError(null);
         try {
-            const result = await batchAnalyze(files, playbookId || undefined);
+            const result = await batchAnalyze(
+                files,
+                playbookId || undefined,
+                partySide || undefined,
+            );
             setBatchId(result.batch_id);
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Upload failed');
@@ -125,7 +130,12 @@ export default function BatchUpload() {
 
     const handleReset = () => {
         if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
-        setFiles([]); setPlaybookId(''); setBatchId(null); setBatchStatus(null); setError(null);
+        setFiles([]);
+        setPlaybookId('');
+        setPartySide('');
+        setBatchId(null);
+        setBatchStatus(null);
+        setError(null);
     };
 
     return (
@@ -204,6 +214,18 @@ export default function BatchUpload() {
                                 {playbooks?.map((p: Playbook) => (
                                     <option key={p.id} value={p.id}>{p.name}</option>
                                 ))}
+                            </SelectInput>
+                        </div>
+                        <div style={{ flex: 1, maxWidth: 300 }}>
+                            <SelectInput
+                                label="Review perspective"
+                                value={partySide}
+                                onChange={(e) => setPartySide(e.target.value as typeof partySide)}
+                            >
+                                <option value="">Use playbook perspective</option>
+                                <option value="neutral">Neutral issue-spotting</option>
+                                <option value="buyer">Representing buyer / customer</option>
+                                <option value="seller">Representing seller / vendor</option>
                             </SelectInput>
                         </div>
                         <Button
@@ -293,7 +315,9 @@ function BatchResultsSection({ batchId, batchStatus, onReset }: {
             // Refresh report
             const updated = await getBatchFullReport(batchId);
             setReport(updated);
-        } catch {}
+        } catch (error) {
+            console.error('Failed to update risk status:', error);
+        }
     };
 
     return (

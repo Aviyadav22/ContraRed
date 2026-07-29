@@ -241,7 +241,7 @@ class ConsistencyEngine:
                         agent="consistency",
                         severity="warning",
                         issue=f"Number-word mismatch: \"{match.group(1)}\" means {expected} but is paired with ({digit})",
-                        suggested_fix=f"Change to match: either the word or the number should be corrected",
+                        suggested_fix="Change to match: either the word or the number should be corrected",
                         reasoning=f"The word \"{match.group(1)}\" conventionally represents {expected}, not {digit}",
                     ))
         return issues

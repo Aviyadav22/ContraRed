@@ -9,8 +9,7 @@ Zero Data Retention: all processing is in RAM only.
 """
 
 import logging
-import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from rapidfuzz import fuzz, process
@@ -123,8 +122,8 @@ class HallucinationGuard:
              >=0.95 deal-breaker) -> corrected quote, reduced confidence
       5. No match -> REJECTED (logged as hallucination)
 
-    For DEAL-BREAKER rules that fail fuzzy match, the caller can request
-    a re-query with explicit "copy verbatim" instruction via `needs_requery`.
+    Rejected quotes are excluded from actionable findings and surfaced through
+    the incomplete coverage ledger for manual review.
     """
 
     # Thresholds
@@ -341,37 +340,6 @@ class HallucinationGuard:
             results.append(self.verify_quote(quote, is_deal_breaker=is_db))
         return results
 
-    def needs_requery(self, result: VerificationResult, is_deal_breaker: bool) -> bool:
-        """
-        Determine if a failed verification should trigger a re-query.
-
-        Only for DEAL-BREAKER rules whose quotes were rejected or had
-        low fuzzy scores (between reject and pass thresholds).
-        """
-        if not is_deal_breaker:
-            return False
-        if result.status == "rejected":
-            return True
-        if result.status == "fuzzy_corrected" and result.similarity_score < 0.85:
-            return True
-        return False
-
-    def get_requery_instruction(self, rule_name: str, original_quote: str) -> str:
-        """
-        Generate an explicit instruction for the AI to re-extract the quote verbatim.
-
-        Used when a DEAL-BREAKER rule fails initial verification.
-        """
-        return (
-            f"CRITICAL RE-EXTRACTION REQUEST for rule '{rule_name}':\n"
-            f"Your previous extraction was: \"{original_quote}\"\n"
-            f"This text was NOT found in the contract. You MUST copy the EXACT text "
-            f"from the contract - character for character, including all punctuation "
-            f"and spacing. Do NOT paraphrase or summarize. Find the specific sentence "
-            f"or phrase in the contract that violates this rule and copy it VERBATIM.\n"
-            f"If no such text exists, respond with 'NO_MATCH'."
-        )
-
     def _fuzzy_search(
         self,
         normalized_quote: str,
@@ -445,7 +413,6 @@ class HallucinationGuard:
         while i < len(orig_chars) and norm_pos <= idx + len(normalized_quote):
             # Simulate normalization for this character
             char = orig_chars[i]
-            char_lower = char.lower()
 
             # Skip characters that normalization removes
             if char in '"\' ' and norm_pos < idx:

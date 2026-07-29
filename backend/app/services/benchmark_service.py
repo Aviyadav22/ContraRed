@@ -8,9 +8,9 @@ Internal benchmarking for contract analysis:
 """
 
 import logging
-from datetime import datetime, timezone, timedelta, date
+from datetime import datetime, timezone, timedelta
 from decimal import Decimal
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 from uuid import UUID
 
 from sqlalchemy import select, func, case, and_
@@ -236,7 +236,7 @@ async def get_clause_analytics(
             func.coalesce(DocumentRisk.category, "uncategorized").label("category"),
             DocumentRisk.risk_level,
             func.count(DocumentRisk.id).label("count"),
-            func.count(case((DocumentRisk.is_resolved == True, 1))).label("resolved_count"),
+            func.count(case((DocumentRisk.is_resolved.is_(True), 1))).label("resolved_count"),
         )
         .where(DocumentRisk.document_id.in_(doc_ids_subq))
         .group_by(func.coalesce(DocumentRisk.category, "uncategorized"), DocumentRisk.risk_level)

@@ -17,14 +17,13 @@ import os
 import sys
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Dict, List, Any
+from dotenv import load_dotenv
 
 # Ensure UTF-8 output
 sys.stdout.reconfigure(encoding="utf-8")
 
 # Load .env before app imports
-from dotenv import load_dotenv
 load_dotenv(override=True)
 
 os.environ.setdefault("DEBUG", "true")
@@ -40,7 +39,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("overnight")
 
-from app.services.analysis_pipeline import analysis_pipeline
+from app.services.analysis_pipeline import analysis_pipeline  # noqa: E402
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1104,7 +1103,7 @@ async def main():
     # Print report
     print_report(analysis)
 
-    logger.info(f"Results saved to overnight_results.json and overnight_analysis.json")
+    logger.info("Results saved to overnight_results.json and overnight_analysis.json")
     logger.info(f"End time: {datetime.now().isoformat()}")
 
 

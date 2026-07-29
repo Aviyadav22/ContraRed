@@ -1,6 +1,5 @@
 """Tests for the drafting API endpoint router."""
 
-import pytest
 
 
 def test_intake_schema_endpoint_exists():

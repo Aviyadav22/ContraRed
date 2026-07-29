@@ -4,34 +4,33 @@ Calls the orchestrator directly (no server needed).
 """
 
 import asyncio
-import json
+import logging
 import sys
 import os
 import time
 import traceback
-from unittest.mock import AsyncMock, patch
+from dotenv import load_dotenv
 
 # Add backend to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 # Load .env
-from dotenv import load_dotenv
 load_dotenv()
 
 # Suppress noisy logs
-import logging
 logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
 logging.getLogger("app.services.drafting").setLevel(logging.INFO)
 
-from app.services.drafting.orchestrator import DraftingOrchestrator
-from app.services.drafting.agents.draft_agent import DraftAgent
+from app.services.drafting.orchestrator import DraftingOrchestrator  # noqa: E402
+from app.services.drafting.agents.draft_agent import DraftAgent  # noqa: E402
 
 # ─── Patch AI adaptation to return template text (test deterministic pipeline) ─
-_original_ai_adapt = DraftAgent._ai_adapt_clause
+_original_ai_generate = DraftAgent._ai_generate_clause
 
-async def _passthrough_adapt(self, text, guidance, jur_variant=None):
-    """Skip Vertex AI refinement — test the deterministic pipeline."""
-    return text
+async def _passthrough_generate(self, clause, tier, context, semaphore):
+    """Skip Vertex AI generation — test the deterministic pipeline."""
+    tier_data = clause.get(tier, clause.get("acceptable", {}))
+    return tier_data.get("template_text", ""), 0, False
 
 # Also patch risk/compliance AI to return empty (test deterministic checks only)
 SKIP_AI_REVIEW = os.environ.get("SKIP_AI_REVIEW", "1") == "1"
@@ -219,7 +218,7 @@ async def run_all():
     all_issues = []
 
     # Patch draft agent to skip per-clause AI (deterministic pipeline test)
-    DraftAgent._ai_adapt_clause = _passthrough_adapt
+    DraftAgent._ai_generate_clause = _passthrough_generate
 
     if SKIP_AI_REVIEW:
         # Also patch risk agent to use empty annotations (skip Vertex AI)
@@ -258,7 +257,7 @@ async def run_all():
         print(f"  Model: {result.draft.metadata.model}")
         print(f"  Tokens: {result.draft.metadata.tokens_used}")
 
-        print(f"\n  QUALITY SCORES:")
+        print("\n  QUALITY SCORES:")
         qr = result.quality_report
         print(f"    Overall:    {qr.overall_score:.1f}/100")
         print(f"    Risk:       {qr.risk_alignment:.1f}/100")
@@ -266,7 +265,7 @@ async def run_all():
         print(f"    QA:         {qr.qa_score:.1f}/100")
         print(f"    Applied:    {qr.annotations_applied} | Conflicts: {qr.conflicts_flagged}")
 
-        print(f"\n  SECTIONS:")
+        print("\n  SECTIONS:")
         print_section_summary(result.draft.sections)
 
         print(f"\n  DEFINED TERMS ({len(result.draft.defined_terms)}):")
@@ -277,18 +276,18 @@ async def run_all():
         print(f"\n  OPEN ANNOTATIONS ({len(qr.open_annotations)}):")
         print_annotations(qr.open_annotations)
 
-        print(f"\n  VALIDATION CHECKS:")
+        print("\n  VALIDATION CHECKS:")
         test_issues = run_checks(result, scenario["checks"])
         if test_issues:
             for issue in test_issues:
                 print(f"  >> {issue}")
             all_issues.extend([f"Test {i}: {iss}" for iss in test_issues])
         else:
-            print(f"  ALL CHECKS PASSED")
+            print("  ALL CHECKS PASSED")
 
     # Final summary
     print(f"\n{'='*80}")
-    print(f" FINAL SUMMARY")
+    print(" FINAL SUMMARY")
     print(f"{'='*80}")
     if all_issues:
         print(f" {len(all_issues)} issues found:")

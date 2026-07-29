@@ -5,7 +5,6 @@ Identifies added, removed, and modified paragraphs using difflib and
 optionally calls Gemini for AI commentary on changes.
 """
 
-import hashlib
 import logging
 import re
 from dataclasses import dataclass
@@ -49,12 +48,6 @@ def _split_paragraphs(text: str) -> List[str]:
     return result
 
 
-def _hash_paragraph(text: str) -> str:
-    """SHA-256 hash of normalized text."""
-    normalized = re.sub(r'\s+', ' ', text.lower().strip())
-    return hashlib.sha256(normalized.encode()).hexdigest()[:16]
-
-
 def _extract_section_number(text: str) -> Optional[str]:
     """Extract leading section/clause number from a paragraph.
 
@@ -85,10 +78,6 @@ def compute_diff(text_a: str, text_b: str) -> DiffResult:
     """
     paras_a = _split_paragraphs(text_a)
     paras_b = _split_paragraphs(text_b)
-
-    # Build hash sets for quick comparison
-    hashes_a = {_hash_paragraph(p): (i, p) for i, p in enumerate(paras_a)}
-    hashes_b = {_hash_paragraph(p): (i, p) for i, p in enumerate(paras_b)}
 
     changes: List[DiffChange] = []
 
@@ -235,11 +224,11 @@ async def compute_diff_with_ai(
             if change.text_a:
                 changes_text += f"  BEFORE: {_sanitize_for_prompt(change.text_a, 500)}\n"
             else:
-                changes_text += f"  BEFORE: (not present in original)\n"
+                changes_text += "  BEFORE: (not present in original)\n"
             if change.text_b:
                 changes_text += f"  AFTER: {_sanitize_for_prompt(change.text_b, 500)}\n"
             else:
-                changes_text += f"  AFTER: (removed in new version)\n"
+                changes_text += "  AFTER: (removed in new version)\n"
 
         rules_context = ""
         if playbook_rules:

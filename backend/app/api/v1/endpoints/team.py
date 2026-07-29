@@ -93,6 +93,11 @@ async def change_role(
     _tier=Depends(require_tier("pro")),
 ):
     """Change a team member's role."""
+    if current_user.organization_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Organization membership is required to manage a team.",
+        )
     # Find target user
     result = await db.execute(select(User).where(User.id == user_id))
     target_user = result.scalar_one_or_none()
@@ -142,6 +147,11 @@ async def remove_member(
     db: AsyncSession = Depends(get_db)
 ):
     """Remove a user from the organization."""
+    if current_user.organization_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Organization membership is required to manage a team.",
+        )
     result = await db.execute(select(User).where(User.id == user_id))
     target_user = result.scalar_one_or_none()
 

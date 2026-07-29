@@ -18,10 +18,8 @@ When Redis IS available:
   - Worker process polls for new jobs
 """
 
-import asyncio
 import json
 import logging
-import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -49,7 +47,7 @@ class AnalysisJob:
     playbook_name: str = "Default"
     playbook_rules: List[Dict] = field(default_factory=list)
     # Scan-time inputs (parity with /analyze sync path)
-    party_side: str = "buyer"
+    party_side: str = "neutral"
     jurisdiction: Optional[str] = None
     compliance_layers: List[str] = field(default_factory=list)
     tier_preference: str = "ideal"
@@ -60,6 +58,7 @@ class AnalysisJob:
     created_at: str = ""
     completed_at: Optional[str] = None
     error: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -81,6 +80,7 @@ class AnalysisJob:
             "created_at": self.created_at,
             "completed_at": self.completed_at,
             "error": self.error,
+            "result": self.result,
         }
 
     @classmethod
@@ -94,7 +94,7 @@ class AnalysisJob:
             playbook_id=data.get("playbook_id"),
             playbook_name=data.get("playbook_name", "Default"),
             playbook_rules=data.get("playbook_rules", []),
-            party_side=data.get("party_side", "buyer"),
+            party_side=data.get("party_side") or "neutral",
             jurisdiction=data.get("jurisdiction"),
             compliance_layers=data.get("compliance_layers", []),
             tier_preference=data.get("tier_preference", "ideal"),
@@ -105,6 +105,7 @@ class AnalysisJob:
             created_at=data.get("created_at", ""),
             completed_at=data.get("completed_at"),
             error=data.get("error"),
+            result=data.get("result"),
         )
 
 
@@ -150,7 +151,10 @@ class TaskQueue:
             # Store job metadata
             await redis.hset(
                 f"{self._jobs_key}:{job.job_id}",
-                mapping={k: json.dumps(v) if isinstance(v, (list, dict)) else str(v) for k, v in job.to_dict().items()},
+                mapping={
+                    key: json.dumps(value)
+                    for key, value in job.to_dict().items()
+                },
             )
             # Store contract text in a separate key with 1-hour TTL
             # (excluded from to_dict() for security, but worker needs it)
@@ -227,6 +231,29 @@ class TaskQueue:
                 if status == JobStatus.COMPLETED:
                     job.completed_at = datetime.now(timezone.utc).isoformat()
 
+    async def store_job_result(
+        self, job_id: str, result: Dict[str, Any]
+    ) -> None:
+        """Store a pollable result for 24 hours without mixing it with input."""
+        redis = await self._get_redis()
+        if redis:
+            key = f"{self._jobs_key}:{job_id}"
+            await redis.hset(key, mapping={"result": json.dumps(result)})
+            await redis.expire(key, 86400)
+        else:
+            job = self._in_memory_jobs.get(job_id)
+            if job:
+                job.result = result
+
+    async def delete_contract_text(self, job_id: str) -> None:
+        """Delete the temporary input payload as soon as processing ends."""
+        redis = await self._get_redis()
+        if redis:
+            await redis.delete(f"{self._text_key}:{job_id}")
+        job = self._in_memory_jobs.get(job_id)
+        if job:
+            job.contract_text = ""
+
     async def run_analysis_inline(self, job: AnalysisJob) -> Dict[str, Any]:
         """
         Run analysis inline (non-queued fallback).
@@ -261,10 +288,10 @@ class TaskQueue:
                             )
                         )
                 except Exception as exc:
-                    logger.warning(
-                        "Failed to load Phase 6 data for async job %s: %s",
-                        job.job_id, exc,
-                    )
+                    raise RuntimeError(
+                        "Playbook conditions, dependencies, or tiers could "
+                        "not be loaded."
+                    ) from exc
 
             result = await analysis_pipeline.run(
                 contract_text=job.contract_text,
@@ -278,12 +305,97 @@ class TaskQueue:
                 rule_tiers_by_rule=rule_tiers_by_rule,
                 tier_preference=job.tier_preference,
             )
+            result_dict = result.to_dict()
+            attach_compliance_scores(job, result, result_dict)
+            await self.store_job_result(job.job_id, result_dict)
+            await _persist_document_job_result(job.document_id, result_dict)
             await self.update_job_status(job.job_id, JobStatus.COMPLETED)
-            return result.to_dict()
+            await self.delete_contract_text(job.job_id)
+            return result_dict
         except Exception as e:
             logger.error("Inline analysis failed for job %s: %s", job.job_id, e)
             await self.update_job_status(job.job_id, JobStatus.FAILED, str(e))
+            await _persist_document_job_result(
+                job.document_id, None, error=str(e)
+            )
+            await self.delete_contract_text(job.job_id)
             return {"error": str(e)}
+
+
+async def _persist_document_job_result(
+    document_id: str,
+    result: Optional[Dict[str, Any]],
+    *,
+    error: Optional[str] = None,
+) -> None:
+    """Keep the document dashboard consistent with the queue status."""
+    from uuid import UUID
+
+    from sqlalchemy import select
+
+    from app.db.session import AsyncSessionLocal
+    from app.models.document import Document, DocumentStatus
+
+    try:
+        async with AsyncSessionLocal() as db:
+            query = select(Document).where(Document.id == UUID(document_id))
+            document = (await db.execute(query)).scalar_one_or_none()
+            if document is None:
+                return
+            if error:
+                document.status = DocumentStatus.FAILED
+            else:
+                redlines = (result or {}).get("redlines", [])
+                document.status = DocumentStatus.COMPLETED
+                document.total_risks = len(redlines)
+                document.risk_summary = {
+                    "red": sum(
+                        1 for item in redlines
+                        if item.get("risk_level") == "RED"
+                    ),
+                    "yellow": sum(
+                        1 for item in redlines
+                        if item.get("risk_level") == "YELLOW"
+                    ),
+                    "green": sum(
+                        1 for item in redlines
+                        if item.get("risk_level") == "GREEN"
+                    ),
+                }
+                document.processed_at = datetime.now(timezone.utc)
+            await db.commit()
+    except Exception:
+        logger.exception(
+            "Failed to persist document status for async job document %s",
+            document_id,
+        )
+
+
+def attach_compliance_scores(
+    job: AnalysisJob,
+    pipeline_result,
+    result_dict: Dict[str, Any],
+) -> None:
+    """Add requested rule-ledger scores to async results.
+
+    The synchronous endpoint already returns these scores. Keeping this logic
+    beside the queue model gives both the in-process fallback and the external
+    worker the same result contract.
+    """
+    if not job.compliance_layers:
+        return
+    from app.services.compliance_layer_service import (
+        build_compliance_layer_score,
+    )
+
+    result_dict["compliance_scores"] = {
+        layer_code: build_compliance_layer_score(
+            layer_code,
+            job.playbook_rules,
+            pipeline_result,
+        )
+        for layer_code in job.compliance_layers
+    }
 
 
 async def _load_phase6_data(db, playbook_id: str, tier_preference: str):

@@ -152,20 +152,52 @@ class TokenBlacklistService:
             return True
         return False
 
-    async def revoke_all_for_user(self, user_id: str, jti_list: list[str]) -> int:
-        """Revoke multiple tokens at once (e.g. on password change).
+    async def revoke_all_for_user(
+        self,
+        user_id: str,
+        jti_list: Optional[list[str]] = None,
+    ) -> int:
+        """Revoke every known session for a user, or a supplied JTI list.
 
         Args:
-            user_id: For logging purposes.
-            jti_list: List of JTI strings to revoke.
+            user_id: User whose sessions should be invalidated.
+            jti_list: Optional explicit list. When omitted, enumerate the
+                Redis-backed active-session sorted set.
 
         Returns:
             Number of tokens successfully revoked.
         """
+        session_key = f"{_SESSION_PREFIX}{user_id}"
+        if jti_list is None:
+            if not self._client:
+                logger.warning(
+                    "Cannot enumerate sessions for user=%s without Redis",
+                    user_id[:8] + "...",
+                )
+                return 0
+            try:
+                raw_jtis = await self._client.zrange(session_key, 0, -1)
+                jti_list = [
+                    value.decode() if isinstance(value, bytes) else str(value)
+                    for value in raw_jtis
+                ]
+            except Exception as e:
+                logger.warning(
+                    "Session enumeration failed for user=%s: %s",
+                    user_id[:8] + "...",
+                    e,
+                )
+                return 0
+
         revoked = 0
         for jti in jti_list:
             if await self.revoke(jti):
                 revoked += 1
+        if self._client:
+            try:
+                await self._client.delete(session_key)
+            except Exception as e:
+                logger.warning("Failed to clear session index for user=%s: %s", user_id[:8] + "...", e)
         if revoked:
             logger.info("Bulk revocation for user=%s: %d/%d tokens revoked", user_id[:8] + "...", revoked, len(jti_list))
         return revoked

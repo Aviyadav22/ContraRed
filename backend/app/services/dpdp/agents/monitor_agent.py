@@ -3,24 +3,23 @@ DPDP Monitor Agent — Continuous compliance tracking and alerting.
 
 Provides:
   - Real-time compliance posture dashboard
-  - Deadline tracking (consent manager Nov 2026, enforcement May 2027)
+  - Deadline tracking for the phased 2025, 2026, and 2027 commencements
   - Regulatory update alerts
   - Contract expiry and renewal compliance checks
   - Compliance drift detection
 """
 
 import logging
-from datetime import date, datetime, timezone, timedelta
+from datetime import date
 from typing import Optional
 
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.dpdp.models import (
     ComplianceDashboard,
     ComplianceDeadline,
     ComplianceAlert,
-    ComplianceStatus,
     DPDPSection,
 )
 
@@ -41,26 +40,26 @@ DPDP_DEADLINES = [
         "section": "section_9",
     },
     {
-        "title": "DPDP Act Full Enforcement",
-        "description": "All substantive provisions effective. Penalties up to Rs 250 crore enforceable. Must have: consent mechanisms, privacy notices, breach plans, DPAs, rights workflows.",
+        "title": "DPDP Substantive Compliance Phase",
+        "description": "Most substantive provisions become effective. Prepare consent, notice, breach, processor-contract, and rights workflows; statutory maxima vary by breach category.",
         "deadline": date(2027, 5, 13),
         "section": None,
     },
     {
         "title": "Significant Data Fiduciary — DPO Appointment",
-        "description": "SDFs must appoint India-resident DPO and commence DPIAs before enforcement.",
+        "description": "Entities notified as Significant Data Fiduciaries must appoint an India-based DPO and meet DPIA and audit duties.",
         "deadline": date(2027, 5, 13),
         "section": "section_10",
     },
     {
-        "title": "Privacy Notice Update Deadline",
-        "description": "All existing privacy policies must be updated to DPDP-compliant format.",
+        "title": "Notice and Consent Provisions Commence",
+        "description": "Section 5 and Rule 3 notice duties commence; legacy consent processing requires the statutory transition notice.",
         "deadline": date(2027, 5, 13),
         "section": "section_5",
     },
     {
-        "title": "Vendor DPA Compliance",
-        "description": "All data processor agreements must include DPDP-mandated clauses.",
+        "title": "Processor-Contract Safeguards Commence",
+        "description": "Processor engagements require a valid contract, including appropriate provisions for Rule 6 security safeguards.",
         "deadline": date(2027, 5, 13),
         "section": "section_8",
     },
@@ -135,17 +134,18 @@ class MonitorAgent:
             alerts.append(ComplianceAlert(
                 alert_type="deadline",
                 severity="critical",
-                title="DPDP Full Enforcement in Less Than 90 Days",
-                description=f"Only {days_to_enforcement} days until full DPDP enforcement on May 13, 2027. "
-                           f"Penalties up to Rs 250 crore per violation.",
+                title="DPDP Substantive Compliance Phase in Less Than 90 Days",
+                description=f"Only {days_to_enforcement} days until most substantive provisions "
+                           "commence on May 13, 2027. The statutory schedule lists maximum "
+                           "penalties up to INR 250 crore for specified breaches.",
                 action_required="Complete all compliance preparations immediately.",
             ))
         elif 0 < days_to_enforcement <= 180:
             alerts.append(ComplianceAlert(
                 alert_type="deadline",
                 severity="warning",
-                title=f"DPDP Enforcement in {days_to_enforcement} Days",
-                description="Full enforcement approaching. Ensure consent mechanisms, "
+                title=f"DPDP Substantive Phase in {days_to_enforcement} Days",
+                description="The main substantive commencement is approaching. Ensure consent mechanisms, "
                            "privacy notices, breach plans, and DPAs are in place.",
                 action_required="Run gap assessment and start remediation.",
             ))
@@ -153,9 +153,9 @@ class MonitorAgent:
             alerts.append(ComplianceAlert(
                 alert_type="deadline",
                 severity="critical",
-                title="DPDP Act Is Now Fully Enforceable",
-                description="All provisions of the DPDP Act 2023 are now in effect. "
-                           "Non-compliance may result in penalties.",
+                title="DPDP Substantive Compliance Phase Is in Effect",
+                description="Most substantive DPDP Act and Rules obligations are now in effect. "
+                           "Check the commencement notifications for any provision-specific timing.",
                 action_required="Ensure full compliance across all sections.",
             ))
 
@@ -177,8 +177,9 @@ class MonitorAgent:
             alert_type="regulatory_update",
             severity="info",
             title="DPDP Rules 2025 — Phased Implementation Active",
-            description="Phase 1 (Board constitution) is effective. Phase 2 (consent managers) "
-                       "takes effect Nov 2026. Phase 3 (full enforcement) takes effect May 2027.",
+            description="Phase 1 (Board constitution and procedural provisions) is effective. "
+                       "Consent Manager provisions take effect Nov 2026. Most substantive "
+                       "obligations take effect May 2027.",
             action_required="Review current compliance status against upcoming phases.",
         ))
 

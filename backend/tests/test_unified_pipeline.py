@@ -1,6 +1,6 @@
 """Integration tests for the unified AI-first analysis pipeline."""
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 from app.services.analysis_pipeline import AnalysisPipeline, PipelineResult, FinalRedline
 
 
@@ -69,8 +69,8 @@ async def test_pipeline_graceful_degradation():
 
 
 @pytest.mark.asyncio
-async def test_dedup_removes_overlapping_findings():
-    """Two findings on the same text region should be deduped."""
+async def test_dedup_preserves_distinct_issues_in_same_clause():
+    """A lawyer can identify multiple independent issues in one clause."""
     pipeline = AnalysisPipeline()
     from app.services.confidence_scorer import ConfidenceScore, ConfidenceLevel, ConfidenceBreakdown
 
@@ -90,16 +90,37 @@ async def test_dedup_removes_overlapping_findings():
     )
 
     result = pipeline._dedupe_by_overlap([r1, r2], "prefix the same clause text here suffix")
+    assert len(result) == 2
+
+
+def test_dedup_removes_duplicate_of_same_rule():
+    pipeline = AnalysisPipeline()
+    from app.services.confidence_scorer import ConfidenceScore, ConfidenceLevel, ConfidenceBreakdown
+
+    confidence = ConfidenceScore(score=0.9, level=ConfidenceLevel.HIGH, breakdown=ConfidenceBreakdown())
+    r1 = FinalRedline(
+        rule_name="Liability Cap", rule_id="rule-liability", risk_level="RED",
+        original_text="the same clause text here", verified_text="the same clause text here",
+        explanation="...", recommendation="...", redline_type="violation",
+        is_deal_breaker=True, confidence=confidence, verification_status="exact",
+    )
+    r2 = FinalRedline(
+        rule_name="Liability Cap", rule_id="rule-liability", risk_level="YELLOW",
+        original_text="the same clause text here", verified_text="the same clause text here",
+        explanation="duplicate", recommendation="...", redline_type="violation",
+        is_deal_breaker=False, confidence=confidence, verification_status="exact",
+    )
+
+    result = pipeline._dedupe_by_overlap([r1, r2], "prefix the same clause text here suffix")
     assert len(result) == 1
     assert result[0].risk_level == "RED"
 
 
 def test_infer_clause_type():
-    """clause_type inference now snaps into the canonical ClauseType taxonomy
-    (Phase C1). Returned values are enum strings, not free-form labels."""
+    """Known concepts snap canonically; custom concepts keep a stable slug."""
     from app.services.analysis_pipeline import _infer_clause_type
     assert _infer_clause_type("Liability Cap") == "liability_cap"
     assert _infer_clause_type("Non-Compete Clause") == "non_compete"
     assert _infer_clause_type("Governing Law") == "governing_law"
     assert _infer_clause_type("Data Protection") == "data_protection"
-    assert _infer_clause_type("Random Unknown") == "unknown"
+    assert _infer_clause_type("Random Unknown") == "random_unknown"

@@ -1597,8 +1597,9 @@ _CLAUSES: List[Dict[str, Any]] = [
                 "under the DPDP Act, and 'Data Principal' for the individual. "
                 "Do NOT reference GDPR, EEA, SCCs, or EU-specific concepts unless "
                 "Customer is specifically identified as operating in the EEA. "
-                "Cross-border transfer obligations should follow DPDP Section 16 "
-                "(notified countries list)."
+                "Cross-border processing must account for current restrictions notified "
+                "under DPDP Section 16, Rule 15 requirements when effective, and any "
+                "stricter applicable Indian sectoral law."
             ),
             "US-CA": (
                 "Reference the California Consumer Privacy Act (CCPA) as amended by "

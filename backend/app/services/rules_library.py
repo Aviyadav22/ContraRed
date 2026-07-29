@@ -848,7 +848,10 @@ CONFIDENTIALITY_RULES: List[RulePattern] = [
             r"\b(data\s+subject)\b",
             r"\b(personally\s+identifiable\s+information|PII)\b",
         ],
-        primary_position="Compliance with applicable data protection laws (GDPR/DPDP); DPA required if personal data is processed",
+        primary_position=(
+            "Compliance with applicable data protection laws; if a processor is engaged, "
+            "use a valid contract that clearly allocates processing and security safeguards"
+        ),
         escalation_conditions=[
             r"\b(no\s+(data\s+processing\s+agreement|DPA))\b",
             r"\b(without\s+a\s+DPA)\b",

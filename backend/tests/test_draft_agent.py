@@ -73,8 +73,12 @@ async def test_generate_draft_structure():
     from app.services.drafting.agents.draft_agent import DraftAgent
     agent = DraftAgent()
     req = _make_nda_request()
-    with patch.object(agent, "_ai_adapt_clause", new_callable=AsyncMock) as mock_ai:
-        mock_ai.side_effect = lambda text, guidance, jurisdiction_variant: text
+    with patch.object(agent, "_ai_generate_clause", new_callable=AsyncMock) as mock_ai:
+        mock_ai.side_effect = lambda clause, tier, context, semaphore: (
+            clause.get(tier, clause.get("acceptable", {})).get("template_text", ""),
+            0,
+            False,
+        )
         from app.services.drafting.playbooks.nda_drafting import NDA_MUTUAL_PLAYBOOK
         result = await agent.generate(req, NDA_MUTUAL_PLAYBOOK)
     assert isinstance(result, RawDraft)

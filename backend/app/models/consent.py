@@ -20,28 +20,21 @@ Tables:
 
 import enum
 import hashlib
-import json
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Optional, List
 
 from sqlalchemy import (
     String, Boolean, DateTime, Integer, BigInteger, Text,
-    Enum as SQLEnum, ForeignKey, ARRAY,
+    ForeignKey, ARRAY,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import select, desc, text
 
 from app.db.session import Base
 
 logger = logging.getLogger(__name__)
-
-# 7-year retention as required by DPDP Act for Consent Managers
-CONSENT_RETENTION_YEARS = 7
-
 
 # ---- Enums ----
 
@@ -218,7 +211,8 @@ class ConsentEvent(Base):
     previous_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     sequence_number: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
 
-    # Retention (7 years per DPDP)
+    # Deployment policy controls retention. Registered Consent Managers have
+    # a separate seven-year minimum under DPDP Rule 4 / First Schedule.
     retention_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
 
@@ -245,7 +239,9 @@ class ConsentReceipt(Base):
 class RightsRequest(Base):
     """Data Principal rights requests (DPDP Sections 11-14).
 
-    90-day SLA auto-calculated via DB trigger.
+    The current database trigger applies a 90-day internal service target.
+    DPDP Rule 14(3)'s 90-day ceiling is for grievance responses, not every
+    access, correction, erasure, or nomination request.
     """
     __tablename__ = "rights_requests"
 
@@ -267,7 +263,8 @@ class RightsRequest(Base):
 class Grievance(Base):
     """DPDP Section 13 grievance redressal.
 
-    90-day SLA auto-calculated via DB trigger.
+    The response period published by the service must not exceed 90 days under
+    DPDP Rule 14(3).
     """
     __tablename__ = "grievances"
 
@@ -303,7 +300,11 @@ class ConsentNomination(Base):
 
 
 class DataTransfer(Base):
-    """Cross-border data transfer tracking (DPDP Rule 14)."""
+    """Cross-border transfer inventory for DPDP Act section 16 / Rule 15 checks.
+
+    This table is currently a dormant inventory model; a recorded transfer is
+    not, by itself, evidence that the destination or legal basis is permitted.
+    """
     __tablename__ = "data_transfers"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

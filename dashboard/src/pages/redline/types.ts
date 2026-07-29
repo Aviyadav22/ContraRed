@@ -31,6 +31,7 @@ export interface TextEdit {
 
 export type TierPreference = 'ideal' | 'acceptable' | 'walk_away' | 'escalate';
 export type ContractSide = '' | 'vendor' | 'customer';
+export type PartySide = '' | 'buyer' | 'seller' | 'neutral';
 
 export interface UseRedlineReturn {
     // Input state
@@ -38,8 +39,8 @@ export interface UseRedlineReturn {
     setContractText: (text: string) => void;
     playbookId: string;
     setPlaybookId: (id: string) => void;
-    partySide: 'buyer' | 'seller' | 'neutral';
-    setPartySide: (side: 'buyer' | 'seller' | 'neutral') => void;
+    partySide: PartySide;
+    setPartySide: (side: PartySide) => void;
     jurisdiction: string;
     setJurisdiction: (j: string) => void;
     // Phase 6 (negotiation tiers + conditional logic)

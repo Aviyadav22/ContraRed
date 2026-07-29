@@ -2,15 +2,17 @@
 Grievance Redressal API Endpoints - DPDP Act Section 13.
 
 Provides endpoints for Data Principals to submit and track grievances.
-90-day SLA is auto-enforced via database trigger.
+The database trigger applies the published 90-day maximum response period.
 """
 
 import logging
+import uuid
+from datetime import datetime, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select, desc, update
+from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
@@ -18,6 +20,7 @@ from app.api.v1.endpoints.auth import get_current_user
 from app.models.user import User, UserRole
 from app.models.consent import Grievance, GrievanceCategory, GrievanceStatus
 from app.services.consent_service import consent_service
+from app.services.consent_event_bus import consent_event_bus
 from app.models.consent import ConsentEventType
 
 logger = logging.getLogger(__name__)
@@ -62,7 +65,7 @@ async def submit_grievance(
     """Submit a grievance (DPDP Section 13).
 
     All Data Principals have the right to grievance redressal.
-    90-day resolution deadline is automatically set.
+    The published response period (not exceeding 90 days) is automatically set.
     """
     # Validate category
     valid_categories = [c.value for c in GrievanceCategory]
@@ -80,6 +83,7 @@ async def submit_grievance(
         evidence=body.evidence or {},
     )
     db.add(grievance)
+    await db.flush()
 
     # Record consent event
     await consent_service._record_event(
@@ -90,6 +94,9 @@ async def submit_grievance(
 
     await db.commit()
     await db.refresh(grievance)
+    await consent_event_bus.publish_grievance(
+        str(current_user.id), grievance.category, str(grievance.id)
+    )
 
     return {
         "id": str(grievance.id),
@@ -97,7 +104,10 @@ async def submit_grievance(
         "status": grievance.status,
         "submitted_at": grievance.submitted_at.isoformat(),
         "resolution_deadline": grievance.resolution_deadline.isoformat() if grievance.resolution_deadline else None,
-        "message": "Your grievance has been submitted. We will acknowledge it within 7 days and resolve within 90 days as per DPDP Act.",
+        "message": (
+            "Your grievance has been submitted. Under our published grievance "
+            "policy, we will respond within 90 days."
+        ),
     }
 
 
@@ -136,7 +146,6 @@ async def get_grievance(
     current_user: User = Depends(get_current_user),
 ):
     """Get details of a specific grievance."""
-    import uuid
     try:
         g_uuid = uuid.UUID(grievance_id)
     except ValueError:
@@ -171,9 +180,6 @@ async def update_grievance(
     current_user: User = Depends(get_current_user),
 ):
     """Update grievance status (admin/DPO only)."""
-    import uuid
-    from datetime import datetime, timezone
-
     # Check admin permissions
     if current_user.role not in (UserRole.ADMIN, UserRole.SUPER_ADMIN, UserRole.MANAGER):
         raise HTTPException(status_code=403, detail="Only admins can update grievance status")
@@ -186,6 +192,15 @@ async def update_grievance(
     result = await db.execute(select(Grievance).where(Grievance.id == g_uuid))
     g = result.scalar()
     if not g:
+        raise HTTPException(status_code=404, detail="Grievance not found")
+    if (
+        current_user.role != UserRole.SUPER_ADMIN
+        and (
+            current_user.organization_id is None
+            or g.organization_id is None
+            or g.organization_id != current_user.organization_id
+        )
+    ):
         raise HTTPException(status_code=404, detail="Grievance not found")
 
     valid_statuses = [s.value for s in GrievanceStatus]

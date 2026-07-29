@@ -20,7 +20,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,11 +61,6 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 # Request / Response schemas
 # ---------------------------------------------------------------------------
-
-class SSOAuthorizeRequest(BaseModel):
-    org_id: str = Field(..., description="Organization UUID")
-    redirect_uri: Optional[str] = Field(None, description="Post-login redirect URI")
-
 
 class SSOCallbackRequest(BaseModel):
     code: str = Field(..., description="Authorization code from WorkOS")

@@ -117,8 +117,8 @@ export const SelectInput = forwardRef<HTMLSelectElement, SelectInputProps>(
           ...errorStyle(error),
           ...style,
         }}
-        onFocus={focusHandler as any}
-        onBlur={(e) => blurHandler(e as any, !!error)}
+        onFocus={focusHandler}
+        onBlur={(e) => blurHandler(e, !!error)}
         {...rest}
       >
         {children}
@@ -152,8 +152,8 @@ export const TextareaInput = forwardRef<HTMLTextAreaElement, TextareaInputProps>
           ...errorStyle(error),
           ...style,
         }}
-        onFocus={focusHandler as any}
-        onBlur={(e) => blurHandler(e as any, !!error)}
+        onFocus={focusHandler}
+        onBlur={(e) => blurHandler(e, !!error)}
         {...rest}
       />
     </InputWrapper>

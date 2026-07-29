@@ -67,12 +67,10 @@ def test_review_result_to_dict():
 def test_agent_suggests_compliance_layers_india():
     """Agent should suggest DPDP compliance layer for India."""
     from app.services.review_agent import ReviewAgent
-    # Can't instantiate without DB, so test the static method logic directly
-    agent_cls = ReviewAgent
-    # Access method via class (it's an instance method but we can test the logic)
-    suggestions = {"IN": ["dpdp"]}
-    assert suggestions.get("IN") == ["dpdp"]
-    assert suggestions.get("US") is None
+
+    agent = ReviewAgent.__new__(ReviewAgent)
+    assert agent._suggest_compliance_layers("IN") == ["dpdp"]
+    assert agent._suggest_compliance_layers("US") == []
 
 
 def test_agent_parses_focus_instructions():
@@ -101,7 +99,8 @@ def test_agent_builds_summary():
     )
     assert "MSA" in summary
     assert "IN" in summary
-    assert "2 deal-breaker" in summary
+    assert "2 high-risk" in summary
+    assert "deal-breaker" not in summary
     assert "DPDP compliance: 75%" in summary
 
 
@@ -112,22 +111,30 @@ def test_agent_builds_summary():
 def test_agent_review_request_schema():
     """AgentReviewRequest should validate correctly."""
     from app.api.v1.endpoints.agent import AgentReviewRequest
+    contract_text = (
+        "This agreement contains sufficient contract text for legal review."
+    )
     req = AgentReviewRequest(
-        text="This is a contract",
+        text=contract_text,
         instructions="Focus on liability",
         jurisdiction="IN",
+        party_side="seller",
     )
     assert req.instructions == "Focus on liability"
     assert req.jurisdiction == "IN"
+    assert req.party_side == "seller"
 
 
 def test_agent_review_request_minimal():
     """AgentReviewRequest should work with just text."""
     from app.api.v1.endpoints.agent import AgentReviewRequest
-    req = AgentReviewRequest(text="This is a contract")
+    req = AgentReviewRequest(
+        text="This agreement contains sufficient contract text for legal review."
+    )
     assert req.instructions is None
     assert req.jurisdiction is None
     assert req.compliance_layers is None
+    assert req.party_side is None
 
 
 def test_agent_review_response_schema():

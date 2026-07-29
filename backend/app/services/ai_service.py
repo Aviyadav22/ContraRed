@@ -1,61 +1,25 @@
 """
-AI Service - Multi-provider AI integration for clause analysis.
+AI Service - Multi-provider integration for contract summaries.
 
 Supports:
 - Google Gemini (primary, recommended)
 - Azure OpenAI (fallback)
 
-Provides AI-powered explanations and suggested fixes for risky clauses.
-Uses strict prompts to limit response length and costs.
+The unified analysis pipeline owns finding explanations and fix generation.
+This service remains the provider-agnostic summary adapter.
 """
 
 import asyncio
 import logging
-from typing import Optional, Tuple
-from dataclasses import dataclass
+from typing import Tuple
 
 from app.core.config import settings
-from app.core.vertex_client import get_generative_model, is_available, get_backend
+from app.core.vertex_client import get_generative_model, get_backend
 from app.services.prompt_sanitizer import sanitize_for_prompt
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class ClauseAnalysis:
-    """AI-generated analysis for a clause."""
-    explanation: str  # Max 20 words
-    suggested_fix: Optional[str]
-    tokens_used: int
-
-
-# System prompts with strict length limits
-EXPLAIN_SYSTEM_PROMPT = """You are a strict legal contract auditor.
-Your job is to explain contract risks in ONE sentence.
-
-Rules:
-- Maximum 20 words
-- Be direct and specific
-- No pleasantries or filler
-- Focus on the business impact
-
-Example good response: "Unlimited liability exposes your company to uncapped financial damages from any contract breach."
-Example bad response: "Well, this clause is concerning because it mentions unlimited liability which could potentially be problematic for your organization in various scenarios."
-"""
-
-SUGGEST_FIX_SYSTEM_PROMPT = """You are a contract negotiation expert.
-Generate replacement clause text that protects the reviewing party.
-
-Rules:
-- Output ONLY the replacement text, no explanation
-- Keep same legal style as original
-- Be specific with numbers (caps, timeframes)
-- Maximum 50 words
-
-The user will provide the original clause and preferred position.
-"""
-
-# NEW: Contract Summary Prompt
 CONTRACT_SUMMARY_PROMPT = """You are a senior contract analyst providing an executive summary.
 Analyze the contract and identified risks to give a concise overall assessment.
 
@@ -77,39 +41,13 @@ RECOMMENDATION: [Your recommendation]
 Keep the entire response under 100 words.
 """
 
-# NEW: Playbook-Aware Analysis Prompt
-PLAYBOOK_AWARE_PROMPT = """You are a contract analyst working for the reviewing party.
-You have a negotiation playbook with specific positions to protect your client.
-
-PLAYBOOK CONTEXT:
-{playbook_context}
-
-Analyze the clause below. Your client's primary position is: {primary_position}
-If that fails, the fallback position is: {fallback_position}
-
-Original Clause:
-"{clause_text}"
-
-Generate a revised clause that:
-1. Aligns with your client's primary position
-2. Maintains legal enforceability
-3. Uses professional contract language
-4. Is no more than 60 words
-
-Output ONLY the replacement clause text:
-"""
-
 
 class AIService:
     """
-    Multi-provider AI integration for contract clause analysis.
-    
-    Supports Google Gemini (primary) and Azure OpenAI (fallback).
-    
-    Usage:
-        ai = AIService()
-        explanation = await ai.explain_risk("unlimited liability clause text", "Unlimited Liability")
-        suggested_fix = await ai.suggest_fix("clause text", "Liability capped at 12 months fees")
+    Multi-provider contract-summary adapter.
+
+    Finding analysis and redline generation are handled by the unified
+    GeminiAnalyzer pipeline, avoiding two divergent prompt stacks.
     """
     
     def __init__(self) -> None:
@@ -161,101 +99,6 @@ class AIService:
         elif self._use_azure:
             return "azure"
         return "none"
-    
-    async def explain_risk(
-        self,
-        clause_text: str,
-        rule_name: str,
-        risk_level: str = "RED"
-    ) -> Tuple[str, int]:
-        """
-        DEPRECATED: Legacy method. The unified analysis pipeline (Stage 3)
-        now handles risk explanation. Retained for /analyze-file endpoint.
-
-        Generate a concise explanation of why a clause is risky.
-        
-        Args:
-            clause_text: The problematic clause text
-            rule_name: Name of the matched rule (e.g., "Unlimited Liability")
-            risk_level: RED, YELLOW, or GREEN
-            
-        Returns:
-            Tuple of (explanation string, tokens used)
-        """
-        if not self._enabled:
-            return self._fallback_explanation(rule_name, risk_level), 0
-        
-        safe_clause = sanitize_for_prompt(clause_text, max_length=10000)
-        safe_rule = sanitize_for_prompt(rule_name, max_length=200)
-        safe_level = sanitize_for_prompt(risk_level, max_length=20)
-        user_prompt = f"Risk type: {safe_rule} ({safe_level})\nClause: \"{safe_clause}\"\n\nExplain the risk in ONE sentence (max 20 words):"
-        
-        if self._use_gemini:
-            # Note: gemini-3.1-pro-preview is a 'thinking' model that uses tokens for reasoning
-            # It needs higher limits to produce actual output
-            return await self._gemini_generate(
-                system=EXPLAIN_SYSTEM_PROMPT,
-                user=user_prompt,
-                max_tokens=2048
-            )
-        else:
-            return await self._azure_generate(
-                system=EXPLAIN_SYSTEM_PROMPT,
-                user=user_prompt,
-                model=settings.AZURE_OPENAI_DEPLOYMENT_MINI,
-                max_tokens=150
-            )
-    
-    async def suggest_fix(
-        self,
-        clause_text: str,
-        primary_position: str,
-        fallback_position: Optional[str] = None
-    ) -> Tuple[str, int]:
-        """
-        DEPRECATED: Legacy method. The unified analysis pipeline (Stage 6)
-        now handles fix generation. Retained for /analyze-file endpoint.
-
-        Generate suggested replacement text for a risky clause.
-        
-        Args:
-            clause_text: Original clause text
-            primary_position: Preferred negotiating position from playbook
-            fallback_position: Alternative position if primary is rejected
-            
-        Returns:
-            Tuple of (suggested fix string, tokens used)
-        """
-        if not self._enabled:
-            return self._fallback_fix(primary_position), 0
-        
-        position_text = primary_position
-        if fallback_position:
-            position_text += f" (Alternative: {fallback_position})"
-        
-        safe_clause = sanitize_for_prompt(clause_text, max_length=10000)
-        safe_position = sanitize_for_prompt(position_text, max_length=2000)
-        user_prompt = f"Original clause:\n\"{safe_clause}\"\n\nPreferred position: {safe_position}\n\nGenerate replacement text:"
-        
-        if self._use_gemini:
-            # Note: gemini-3.1-pro-preview needs ~4000+ tokens for legal clause rewrites
-            # due to internal reasoning before output
-            result, tokens = await self._gemini_generate(
-                system=SUGGEST_FIX_SYSTEM_PROMPT,
-                user=user_prompt,
-                max_tokens=4096
-            )
-        else:
-            result, tokens = await self._azure_generate(
-                system=SUGGEST_FIX_SYSTEM_PROMPT,
-                user=user_prompt,
-                model=settings.AZURE_OPENAI_DEPLOYMENT_GPT4,
-                max_tokens=500
-            )
-        
-        # Clean up any quotes the model might add
-        result = result.strip('"\'')
-        return result, tokens
     
     async def _gemini_generate(
         self,
@@ -371,63 +214,6 @@ class AIService:
             logger.error("Azure OpenAI error: %s", e)
             return "[AI analysis unavailable — review this clause manually]", 0
     
-    async def enrich_match(self, match) -> Tuple[str, str, int]:
-        """
-        DEPRECATED: Legacy method. The unified analysis pipeline (Stages 3+6)
-        now handles enrichment. Retained for /analyze-file endpoint.
-
-        Enrich a RuleMatch with AI explanation and suggested fix.
-
-        This is the method to use with asyncio.gather for parallel processing.
-        
-        Args:
-            match: RuleMatch object from RuleEngine
-            
-        Returns:
-            Tuple of (explanation, suggested_fix, total_tokens)
-        """
-        explain_task = self.explain_risk(
-            match.match_text,
-            match.rule_name,
-            match.risk_level.value
-        )
-        
-        # Only suggest fix for RED and YELLOW risks
-        if match.risk_level.value in ("RED", "YELLOW"):
-            fix_task = self.suggest_fix(
-                match.match_text,
-                match.primary_position,
-                match.fallback_position
-            )
-            (explanation, explain_tokens), (suggested_fix, fix_tokens) = await asyncio.gather(
-                explain_task, fix_task
-            )
-            return explanation, suggested_fix, explain_tokens + fix_tokens
-        else:
-            explanation, explain_tokens = await explain_task
-            return explanation, None, explain_tokens
-    
-    def _fallback_explanation(self, rule_name: str, risk_level: str) -> str:
-        """Generate fallback explanation when AI is unavailable."""
-        fallbacks = {
-            "Unlimited Liability": "This clause exposes you to uncapped financial damages.",
-            "Unilateral Termination": "Other party can terminate without notice or cause.",
-            "Broad Indemnification": "You may be liable for third-party claims beyond your control.",
-            "Broad IP Assignment": "You may lose ownership of your pre-existing intellectual property.",
-            "Auto-Renewal": "Contract renews automatically without explicit consent.",
-            "Assignment Restriction": "You cannot transfer this contract without approval.",
-            "Non-Compete": "Restricts your ability to compete in the market.",
-            "Exclusive Dealing": "Limits your ability to work with other parties.",
-            "Perpetual Confidentiality": "Confidentiality obligations never expire.",
-            "Governing Law": "Standard governing law provision.",
-            "Notice Provision": "Standard notice requirements.",
-        }
-        return fallbacks.get(rule_name, f"{rule_name} detected - review recommended.")
-    
-    def _fallback_fix(self, primary_position: str) -> str:
-        """Generate fallback fix when AI is unavailable."""
-        return primary_position  # Use the playbook position as-is
-    
     async def summarize_contract(
         self,
         contract_text: str,
@@ -490,52 +276,6 @@ Provide an executive summary following the specified format:"""
                 model=settings.AZURE_OPENAI_DEPLOYMENT_GPT4,
                 max_tokens=200
             )
-    
-    async def suggest_fix_with_playbook(
-        self,
-        clause_text: str,
-        primary_position: str,
-        fallback_position: str,
-        playbook_context: str
-    ) -> Tuple[str, int]:
-        """
-        Generate a fix using full playbook context.
-        
-        Args:
-            clause_text: The original problematic clause
-            primary_position: Client's preferred position from playbook
-            fallback_position: Alternative if primary is rejected
-            playbook_context: Full context of relevant playbook rules
-            
-        Returns:
-            Tuple of (suggested fix, tokens used)
-        """
-        if not self._enabled:
-            return self._fallback_fix(primary_position), 0
-        
-        user_prompt = PLAYBOOK_AWARE_PROMPT.format(
-            playbook_context=sanitize_for_prompt(playbook_context, max_length=5000),
-            primary_position=sanitize_for_prompt(primary_position, max_length=1000),
-            fallback_position=sanitize_for_prompt(fallback_position or "None specified", max_length=1000),
-            clause_text=sanitize_for_prompt(clause_text, max_length=10000),
-        )
-        
-        if self._use_gemini:
-            # Gemini 3 Pro needs high token limits for reasoning
-            result, tokens = await self._gemini_generate(
-                system="",  # Context is in user prompt
-                user=user_prompt,
-                max_tokens=4096
-            )
-        else:
-            result, tokens = await self._azure_generate(
-                system="",
-                user=user_prompt,
-                model=settings.AZURE_OPENAI_DEPLOYMENT_GPT4,
-                max_tokens=150
-            )
-        
-        return result.strip('"\''), tokens
     
     def _fallback_summary(self, risks_found: list) -> str:
         """Generate fallback summary when AI is unavailable."""

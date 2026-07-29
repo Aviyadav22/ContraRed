@@ -7,7 +7,7 @@ import logging
 from typing import List, Optional
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select, or_
 
@@ -62,8 +62,7 @@ class ClauseResponse(BaseModel):
     created_at: str
     updated_at: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ClauseListResponse(BaseModel):
@@ -87,7 +86,7 @@ async def list_clauses(
     db: AsyncSession = Depends(get_db)
 ):
     """List active clauses. Filter by exact clause_type or fuzzy search on clause_type + name."""
-    base_filter = [ClauseLibrary.is_active == True]
+    base_filter = [ClauseLibrary.is_active.is_(True)]
 
     # Scope to user's org or clauses they created
     if current_user.organization_id:

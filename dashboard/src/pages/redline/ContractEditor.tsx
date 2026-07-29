@@ -119,7 +119,7 @@ export function ContractEditor({
             if (pos) {
                 highlights.push({
                     riskId: edit.riskId,
-                    riskLevel: 'APPLIED' as any,
+                    riskLevel: 'APPLIED',
                     start: pos.start,
                     end: pos.end,
                 });
@@ -224,7 +224,7 @@ function buildHighlightedHtml(text: string, highlights: RiskHighlight[]): string
         }
 
         const style = HIGHLIGHT_STYLES[h.riskLevel] || HIGHLIGHT_STYLES.YELLOW;
-        const isApplied = h.riskLevel === ('APPLIED' as any);
+        const isApplied = h.riskLevel === 'APPLIED';
 
         html += `<mark data-risk-id="${h.riskId}" style="background:${style.bg};border-bottom:2px solid ${style.border};border-radius:2px;padding:2px 1px;cursor:pointer${isApplied ? ';font-style:italic' : ''}">${escapeHtml(text.slice(h.start, h.end))}</mark>`;
         cursor = h.end;

@@ -147,3 +147,58 @@ async def send_dunning_email(
     except Exception as exc:
         logger.error("Failed to send dunning email: %s", exc)
         return False
+
+
+async def send_breach_notification_email(
+    to_email: str,
+    user_name: str,
+    breach_id: str,
+    breach_type: str,
+    description: str,
+) -> bool:
+    """Notify an affected Data Principal of a personal-data breach."""
+    if not _ensure_configured():
+        return False
+
+    safe_name = html.escape(user_name or "ContraRed user")
+    safe_breach_id = html.escape(breach_id)
+    safe_breach_type = html.escape(breach_type.replace("_", " ").title())
+    safe_description = html.escape(description[:4000])
+
+    html_body = f"""
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 560px; margin: 0 auto; padding: 40px 20px;">
+        <h2 style="color:#b91c1c;margin-bottom:24px;">Important Security Notice</h2>
+        <p style="color:#374151;line-height:1.6;">Hi {safe_name},</p>
+        <p style="color:#374151;line-height:1.6;">
+            We are notifying you of a personal-data incident that may affect your ContraRed account.
+        </p>
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:16px;margin:20px 0;">
+            <p><strong>Incident reference:</strong> {safe_breach_id}</p>
+            <p><strong>Incident type:</strong> {safe_breach_type}</p>
+            <p><strong>What happened:</strong> {safe_description}</p>
+        </div>
+        <p style="color:#374151;line-height:1.6;">
+            We are investigating, containing the incident, and taking measures to reduce possible harm.
+            Please reset your password and review recent account activity if you notice anything unusual.
+        </p>
+        <p style="color:#374151;line-height:1.6;">
+            For help, contact ContraRed support and quote the incident reference above.
+        </p>
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:24px 0;" />
+        <p style="color:#9ca3af;font-size:12px;">ContraRed — AI-Powered Contract Redlining</p>
+    </div>
+    """
+
+    try:
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: resend.Emails.send({
+            "from": settings.EMAIL_FROM,
+            "to": [to_email],
+            "subject": f"Important security notice — incident {safe_breach_id}",
+            "html": html_body,
+        }))
+        logger.info("Breach notification sent for incident %s", breach_id)
+        return True
+    except Exception as exc:
+        logger.error("Failed to send breach notification %s: %s", breach_id, exc)
+        return False

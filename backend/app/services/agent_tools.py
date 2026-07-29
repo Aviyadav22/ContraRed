@@ -7,20 +7,25 @@ in an agent-friendly format.
 """
 
 import logging
+import hashlib
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.document import Document, DocumentRisk
-from app.services.analysis_pipeline import analysis_pipeline, PipelineResult
+from app.models.document import DocumentRisk
+from app.services.analysis_pipeline import AnalysisPipeline, analysis_pipeline, PipelineResult
 from app.services.compliance_layer_service import (
+    build_compliance_layer_score,
     get_layer_rules_as_dicts,
     merge_rules,
-    calculate_compliance_score,
 )
-from app.services.playbook_cache import get_cached_rules_dicts, load_default_playbook_for_type
+from app.services.playbook_cache import (
+    get_cached_rules_dicts,
+    load_default_playbook_for_type,
+    load_playbook,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -28,14 +33,21 @@ logger = logging.getLogger(__name__)
 class ContraRedToolkit:
     """Agent-friendly wrapper around ContraRed analysis services."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(
+        self,
+        db: AsyncSession,
+        current_user_id: Optional[UUID] = None,
+        current_user_org_id: Optional[UUID] = None,
+    ):
         self.db = db
+        self.current_user_id = current_user_id
+        self.current_user_org_id = current_user_org_id
 
     async def analyze_document(
         self,
         text: str,
         playbook_id: Optional[str] = None,
-        party_side: str = "buyer",
+        party_side: Optional[str] = None,
         compliance_layers: Optional[List[str]] = None,
         jurisdiction: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -46,52 +58,98 @@ class ContraRedToolkit:
         # Load playbook rules
         playbook_rules = []
         playbook_name = "Default"
+        selected_playbook = None
         if playbook_id:
-            rules = await get_cached_rules_dicts(self.db, UUID(playbook_id))
-            if rules:
-                playbook_rules = rules
-        if not playbook_rules:
-            default = await load_default_playbook_for_type(self.db, "msa")
-            if default:
-                playbook_rules = default.get("rules", [])
-                playbook_name = default.get("name", "Default")
+            try:
+                playbook_uuid = UUID(playbook_id)
+            except ValueError as exc:
+                raise ValueError("Invalid playbook_id format.") from exc
+            selected_playbook = await load_playbook(
+                self.db,
+                playbook_uuid,
+                current_user_id=self.current_user_id,
+                current_user_org_id=self.current_user_org_id,
+            )
+            if selected_playbook is None:
+                raise PermissionError(
+                    "Selected playbook was not found or is not accessible."
+                )
+            playbook_rules = get_cached_rules_dicts(
+                selected_playbook,
+                include_verification=True,
+            )
+            if not playbook_rules:
+                raise ValueError("Selected playbook has no active rules.")
+            playbook_name = selected_playbook.name
+        else:
+            detected_type = AnalysisPipeline._detect_contract_type(text)
+            selected_playbook = await load_default_playbook_for_type(
+                self.db,
+                detected_type,
+            )
+            if selected_playbook:
+                playbook_rules = get_cached_rules_dicts(
+                    selected_playbook,
+                    include_verification=True,
+                )
+                playbook_name = f"{selected_playbook.name} (auto-selected)"
+
+        effective_party_side = (
+            party_side
+            or (
+                selected_playbook.party_side
+                if selected_playbook is not None
+                else None
+            )
+            or "neutral"
+        )
 
         # Merge compliance layer rules
         compliance_scores = {}
+        loaded_compliance_layers = set()
         if compliance_layers:
             for code in compliance_layers:
                 layer_rules = await get_layer_rules_as_dicts(self.db, code)
                 if layer_rules:
                     playbook_rules = merge_rules(playbook_rules, layer_rules)
+                    loaded_compliance_layers.add(code)
 
         # Run pipeline
         result: PipelineResult = await analysis_pipeline.run(
             contract_text=text,
             playbook_rules=playbook_rules,
             playbook_name=playbook_name,
-            party_side=party_side,
+            party_side=effective_party_side,
             jurisdiction_override=jurisdiction,
         )
 
         # Compute compliance scores
-        if compliance_layers:
-            for code in compliance_layers:
-                layer_results = [
-                    {"risk_level": r.risk_level}
-                    for r in result.redlines
-                ]
-                compliance_scores[code] = calculate_compliance_score(layer_results)
+        for code in loaded_compliance_layers:
+            compliance_scores[code] = build_compliance_layer_score(
+                code,
+                playbook_rules,
+                result,
+            )
 
         return {
             "findings": [
                 {
-                    "id": r.id,
+                    "id": (
+                        r.rule_id
+                        or hashlib.sha256(
+                            f"{r.rule_name}\0{r.verified_text or r.original_text}".encode()
+                        ).hexdigest()[:24]
+                    ),
+                    "rule_id": r.rule_id or None,
                     "risk_level": r.risk_level,
                     "rule_name": r.rule_name,
-                    "clause_text": r.clause_text[:200],
+                    "clause_text": r.verified_text or r.original_text,
                     "explanation": r.explanation,
                     "fix": r.suggested_fix,
                     "clause_type": r.clause_type,
+                    "is_deal_breaker": r.is_deal_breaker,
+                    "confidence": r.confidence.score,
+                    "verification_status": r.verification_status,
                 }
                 for r in result.redlines
             ],
@@ -102,9 +160,12 @@ class ContraRedToolkit:
                 "total": len(result.redlines),
             },
             "compliance_scores": compliance_scores,
-            "jurisdiction": result.jurisdiction_detected,
-            "contract_type": result.contract_type_detected,
+            "jurisdiction": result.jurisdiction_code,
+            "contract_type": result.contract_type,
+            "review_perspective": effective_party_side,
             "partial": result.partial,
+            "ai_used": result.ai_used,
+            "playbook_coverage": result.playbook_coverage,
         }
 
     async def analyze_clause(

@@ -128,6 +128,59 @@ export function RulesTab({
                             </div>
                         )}
                         {newRule.detection_mode && newRule.detection_mode !== 'keywords_only' && (
+                            <>
+                                <div className="md:col-span-2">
+                                    <label className={labelClass}>Unacceptable Signals <span className="text-xs text-[var(--text-muted)] font-normal">(one per line)</span></label>
+                                    <textarea
+                                        value={(newRule.unacceptable_signals || []).join('\n')}
+                                        onChange={(e) => setNewRule(prev => ({
+                                            ...prev,
+                                            unacceptable_signals: e.target.value.split('\n').map(v => v.trim()).filter(Boolean),
+                                        }))}
+                                        placeholder={'uncapped liability\nsole discretion\nno cure period'}
+                                        className={`${inputClass} min-h-[84px]`}
+                                        rows={3}
+                                    />
+                                </div>
+                                <div className="md:col-span-2">
+                                    <label className={labelClass}>Acceptable Signals <span className="text-xs text-[var(--text-muted)] font-normal">(one per line)</span></label>
+                                    <textarea
+                                        value={(newRule.acceptable_signals || []).join('\n')}
+                                        onChange={(e) => setNewRule(prev => ({
+                                            ...prev,
+                                            acceptable_signals: e.target.value.split('\n').map(v => v.trim()).filter(Boolean),
+                                        }))}
+                                        placeholder={'mutual obligation\n12 months of fees\n30-day cure period'}
+                                        className={`${inputClass} min-h-[84px]`}
+                                        rows={3}
+                                    />
+                                </div>
+                                <div className="md:col-span-2">
+                                    <label className={labelClass}>Clause Context <span className="text-xs text-[var(--text-muted)] font-normal">(when and why this rule applies)</span></label>
+                                    <textarea
+                                        value={newRule.clause_context || ''}
+                                        onChange={(e) => setNewRule(prev => ({ ...prev, clause_context: e.target.value }))}
+                                        placeholder="Explain the commercial scenario, dependencies, and exceptions a reviewer should consider."
+                                        className={`${inputClass} min-h-[72px]`}
+                                        rows={3}
+                                    />
+                                </div>
+                                <div className="md:col-span-2">
+                                    <label className={labelClass}>
+                                        Verification Question
+                                        <span className="text-xs text-[var(--text-muted)] ml-1 font-normal">(the exact legal test the AI must answer)</span>
+                                    </label>
+                                    <textarea
+                                        value={newRule.verification_prompt || ''}
+                                        onChange={(e) => setNewRule(prev => ({ ...prev, verification_prompt: e.target.value }))}
+                                        placeholder="Example: Does the limitation apply mutually, state a definite cap, and preserve only the expressly approved carve-outs?"
+                                        className={`${inputClass} min-h-[72px]`}
+                                        rows={3}
+                                    />
+                                </div>
+                            </>
+                        )}
+                        {newRule.detection_mode && newRule.detection_mode !== 'keywords_only' && (
                             <div className="md:col-span-2">
                                 <label className={labelClass}>
                                     Acceptable Position
@@ -155,18 +208,31 @@ export function RulesTab({
                             </label>
                         </div>
                         <div className="md:col-span-2">
-                            <label className={labelClass}>Suggested Fix</label>
-                            <input
-                                type="text"
+                            <label className={labelClass}>Preferred Position</label>
+                            <textarea
                                 value={newRule.primary_position}
                                 onChange={(e) => setNewRule(prev => ({ ...prev, primary_position: e.target.value }))}
-                                className={inputClass}
-                                placeholder="e.g., Liability capped at 12 months of fees paid"
+                                className={`${inputClass} min-h-[72px]`}
+                                placeholder="State the complete business/legal outcome the contract should meet."
+                                rows={3}
+                            />
+                        </div>
+                        <div className="md:col-span-2">
+                            <label className={labelClass}>Fallback Position <span className="text-xs text-[var(--text-muted)] font-normal">(minimum acceptable negotiated outcome)</span></label>
+                            <textarea
+                                value={newRule.fallback_position || ''}
+                                onChange={(e) => setNewRule(prev => ({ ...prev, fallback_position: e.target.value }))}
+                                className={`${inputClass} min-h-[72px]`}
+                                placeholder="State the fallback you can accept if the preferred position is rejected."
+                                rows={3}
                             />
                         </div>
                         {(!newRule.detection_mode || newRule.detection_mode !== 'ai_only') && (
                         <div className="md:col-span-2">
                             <label className={labelClass}>Detection Patterns</label>
+                            <p className="text-xs text-[var(--text-muted)] mb-2">
+                                Patterns locate candidate clauses. For AI + Keywords, a match is not automatically a violation; the AI compares the clause with your acceptable and unacceptable signals.
+                            </p>
                             <div className="flex gap-2 mb-2">
                                 <input
                                     type="text"
@@ -256,6 +322,7 @@ export function RulesTab({
                                             setNewRule({
                                                 clause_type: rule.clause_type,
                                                 primary_position: rule.primary_position,
+                                                fallback_position: rule.fallback_position || '',
                                                 risk_level: rule.risk_level,
                                                 match_type: rule.match_type,
                                                 is_deal_breaker: rule.is_deal_breaker,
@@ -263,6 +330,10 @@ export function RulesTab({
                                                 detection_mode: rule.detection_mode || 'keywords_only',
                                                 risk_description: rule.risk_description || '',
                                                 acceptable_position: rule.acceptable_position || '',
+                                                unacceptable_signals: [...(rule.unacceptable_signals || [])],
+                                                acceptable_signals: [...(rule.acceptable_signals || [])],
+                                                clause_context: rule.clause_context || '',
+                                                verification_prompt: rule.verification_prompt || '',
                                             });
                                             setPatternInput('');
                                             setShowAddRule(true);

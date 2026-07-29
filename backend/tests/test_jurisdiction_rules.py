@@ -1,6 +1,5 @@
 """Tests for the deterministic jurisdiction rule engine."""
 
-import pytest
 from app.services.drafting.models import (
     RawDraft, DraftSection, DraftMetadata, Annotation,
 )

@@ -133,18 +133,15 @@ class Settings(BaseSettings):
     # Enterprise: Zero Data Retention
     # When True: Document text is processed in RAM only, never stored
     ZERO_DATA_RETENTION: bool = True
-    
-    # Analysis Strategy: "demo" (Omni-Context) or "production" (Hybrid Sentinel)
-    ANALYSIS_MODE: str = "production"
+
+    # Consent evidence retention is an operational/legal-policy choice for an
+    # ordinary Data Fiduciary. The seven-year minimum applies only when the
+    # deployment is itself a registered Consent Manager under DPDP Rule 4.
+    CONSENT_EVENT_RETENTION_DAYS: int = 365
+    REGISTERED_CONSENT_MANAGER: bool = False
     
     # Fuzzy matching threshold for redline implementer (0.0-1.0)
     FUZZY_MATCH_THRESHOLD: float = 0.85
-    
-    # Azure OpenAI deployment mapping for Hybrid Sentinel
-    # Scout (Pass 1): Fast, cheap model for flagging risky sections
-    # Surgeon (Pass 2): Powerful model for precise redline generation
-    AZURE_OPENAI_SCOUT_DEPLOYMENT: str = "gpt-4o-mini"
-    AZURE_OPENAI_SURGEON_DEPLOYMENT: str = "gpt-4o"
     
     # Vertex AI (REQUIRED for AI features — consumer Gemini API is PROHIBITED)
     # Contract data must not transit public Google AI endpoints.

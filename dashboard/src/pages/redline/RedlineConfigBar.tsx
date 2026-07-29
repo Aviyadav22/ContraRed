@@ -2,7 +2,7 @@ import { useState, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { listPlaybooks, listComplianceLayers } from '@/api/client';
 import { Button, SelectInput, TextInput } from '@/components/ui';
-import type { TierPreference, ContractSide } from './types';
+import type { TierPreference, ContractSide, PartySide } from './types';
 
 const JURISDICTIONS = [
     { value: '', label: 'Auto-detect' },
@@ -17,6 +17,7 @@ const JURISDICTIONS = [
 ];
 
 const PARTY_SIDES = [
+    { value: '', label: 'Use playbook default' },
     { value: 'buyer', label: 'Buyer / Client' },
     { value: 'seller', label: 'Seller / Vendor' },
     { value: 'neutral', label: 'Neutral' },
@@ -38,8 +39,8 @@ const CONTRACT_SIDES: { value: ContractSide; label: string }[] = [
 interface Props {
     playbookId: string;
     onPlaybookChange: (id: string) => void;
-    partySide: 'buyer' | 'seller' | 'neutral';
-    onPartySideChange: (side: 'buyer' | 'seller' | 'neutral') => void;
+    partySide: PartySide;
+    onPartySideChange: (side: PartySide) => void;
     jurisdiction: string;
     onJurisdictionChange: (j: string) => void;
     tierPreference: TierPreference;
@@ -141,7 +142,7 @@ export function RedlineConfigBar({
                     <span style={labelStyle}>Party Side</span>
                     <SelectInput
                         value={partySide}
-                        onChange={e => onPartySideChange(e.target.value as 'buyer' | 'seller' | 'neutral')}
+                        onChange={e => onPartySideChange(e.target.value as PartySide)}
                     >
                         {PARTY_SIDES.map(ps => (
                             <option key={ps.value} value={ps.value}>{ps.label}</option>

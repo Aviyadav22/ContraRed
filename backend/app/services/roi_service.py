@@ -188,7 +188,6 @@ async def calculate_roi(
         total_roi += total_risk_value
 
     # ROI multiplier (vs actual subscription cost from billing)
-    subscription_cost = None
     try:
         from app.models.organization import Subscription, PlanType
         sub_result = await db.execute(
@@ -201,7 +200,6 @@ async def calculate_roi(
             PlanType.ENTERPRISE: 14999,
         }
         estimated_monthly_cost = float(plan_costs.get(sub.plan, 2999)) if sub else 2999.0
-        subscription_cost = estimated_monthly_cost
     except Exception:
         estimated_monthly_cost = 2999.0
     period_cost = estimated_monthly_cost * (days / 30)

@@ -4,14 +4,13 @@ JWT Authentication utilities.
 Security features:
 - Token type validation (access vs refresh) to prevent token type confusion.
 - JTI (JWT ID) on every token for revocation support.
-- Token rotation helper for sensitive actions (password change, role change).
 - Integration with Redis-backed blacklist via ``token_service``.
 """
 
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple
+from typing import Optional
 import bcrypt
 import jwt
 from pydantic import BaseModel
@@ -23,11 +22,12 @@ logger = logging.getLogger(__name__)
 
 class TokenData(BaseModel):
     """JWT token payload data."""
-    user_id: str
+    user_id: uuid.UUID
     email: str
     role: str
     organization_id: Optional[str] = None
     jti: Optional[str] = None
+    token_type: str = "access"
 
 
 class Token(BaseModel):
@@ -96,38 +96,6 @@ def create_refresh_token(data: dict) -> str:
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def create_token_pair(data: dict, expires_delta: Optional[timedelta] = None) -> Tuple[str, str]:
-    """Create both access and refresh tokens in one call.
-
-    Returns:
-        Tuple of (access_token, refresh_token).
-    """
-    return (
-        create_access_token(data, expires_delta),
-        create_refresh_token(data),
-    )
-
-
-def rotate_tokens(data: dict, old_access_jti: Optional[str] = None, old_refresh_jti: Optional[str] = None) -> Tuple[str, str, Optional[str], Optional[str]]:
-    """Issue new token pair and return old JTIs for blacklisting.
-
-    Use this on sensitive actions (password change, role change, token refresh)
-    to invalidate the old tokens.
-
-    Args:
-        data: Claims dict for the new tokens (sub, email, role, org_id).
-        old_access_jti: JTI of the access token being replaced.
-        old_refresh_jti: JTI of the refresh token being replaced.
-
-    Returns:
-        Tuple of (new_access, new_refresh, old_access_jti, old_refresh_jti).
-        The caller should blacklist the old JTIs via ``token_service``.
-    """
-    new_access = create_access_token(data)
-    new_refresh = create_refresh_token(data)
-    return new_access, new_refresh, old_access_jti, old_refresh_jti
-
-
 def decode_token(token: str, expected_type: str = "access") -> Optional[TokenData]:
     """Decode and validate a JWT token.
 
@@ -165,12 +133,19 @@ def decode_token(token: str, expected_type: str = "access") -> Optional[TokenDat
         email = payload.get("email")
         if not sub or not email:
             return None
+        try:
+            user_id = uuid.UUID(str(sub))
+        except (AttributeError, TypeError, ValueError):
+            logger.warning("Rejected token with non-UUID subject claim")
+            return None
+
         return TokenData(
-            user_id=sub,
+            user_id=user_id,
             email=email,
             role=payload.get("role", ""),
             organization_id=payload.get("org_id"),
             jti=payload.get("jti"),
+            token_type=token_type,
         )
     except jwt.InvalidTokenError:
         return None

@@ -1,10 +1,10 @@
 """
 Tenant Context Middleware — sets PostgreSQL session variables for Row-Level Security.
 
-Three-layer multi-tenancy:
+Two-layer multi-tenancy:
   1. PostgreSQL RLS policies use session variables (app.current_org_id, app.current_user_id)
-  2. This middleware extracts tenant info from JWT and sets PG session vars
-  3. The get_tenant_db dependency also sets these vars for explicit RLS
+  2. This middleware extracts tenant info from JWT; the shared get_db
+     dependency applies it to every request-scoped database session
 
 The middleware runs on every request that has a valid JWT token.
 If no token is present (public endpoints), RLS variables are not set,
@@ -31,8 +31,8 @@ class TenantContextMiddleware(BaseHTTPMiddleware):
 
     Lightweight JWT claim extraction (no DB lookup, no full auth).
     The real auth validation happens in the endpoint dependency —
-    this middleware only sets PG session vars so that RLS policies
-    activate on *every* query, not just those using ``get_tenant_db``.
+    this middleware stores verified claims in request state so the shared
+    ``get_db`` dependency can activate RLS on every request-scoped query.
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:

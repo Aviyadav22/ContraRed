@@ -9,8 +9,6 @@ Architecture: Hard rules (keyword/regex) first, then AI review via Vertex AI.
 
 import json
 import logging
-import re
-from typing import Optional
 
 from app.services.dpdp.models import (
     ContractScanRequest,

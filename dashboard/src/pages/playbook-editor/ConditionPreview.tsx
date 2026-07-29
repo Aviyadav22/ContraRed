@@ -3,7 +3,13 @@ interface ConditionPreviewProps {
 }
 
 export function ConditionPreview({ condition }: ConditionPreviewProps) {
-  let parsed: Record<string, any> = {};
+  let parsed: {
+    value?: string;
+    values?: string[];
+    threshold?: number;
+    min?: number;
+    max?: number;
+  } = {};
   try { parsed = JSON.parse(condition.condition_value); } catch { return null; }
 
   const typeLabel: Record<string, string> = {
@@ -16,7 +22,13 @@ export function ConditionPreview({ condition }: ConditionPreviewProps) {
 
   const type = typeLabel[condition.condition_type] || condition.condition_type;
   const op = condition.operator;
-  const val = parsed.value || (parsed.min && parsed.max ? `$${parsed.min.toLocaleString()} - $${parsed.max.toLocaleString()}` : JSON.stringify(parsed));
+  const val = parsed.value
+    || parsed.values?.join(', ')
+    || (parsed.threshold !== undefined
+      ? `$${parsed.threshold.toLocaleString()}`
+      : parsed.min !== undefined && parsed.max !== undefined
+        ? `$${parsed.min.toLocaleString()} - $${parsed.max.toLocaleString()}`
+        : JSON.stringify(parsed));
 
   return (
     <p className="text-xs text-indigo-600 mt-1 italic">

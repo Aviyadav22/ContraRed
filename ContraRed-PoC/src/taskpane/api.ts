@@ -15,11 +15,6 @@ if (typeof window !== 'undefined' && window.location.protocol === 'https:' && AP
 // Types - Matched to Phase 2 Backend Schema
 // ============================================================================
 
-interface AuthTokens {
-    access_token: string;
-    refresh_token: string;
-}
-
 interface User {
     id: string;
     email: string;
@@ -43,6 +38,7 @@ interface RedlineItem {
     id: string;
     risk_level: 'RED' | 'YELLOW' | 'GREEN';
     rule_name: string;
+    rule_id?: string;
     clause_text: string;            // Exact verbatim text from contract (verified)
     clause_type: string;
     explanation: string;
@@ -78,6 +74,19 @@ interface AnalysisResult {
     ai_used?: boolean;
     hallucination_stats?: Record<string, unknown>;
     compliance_scores?: Record<string, Record<string, unknown>>;
+    contract_type?: string;
+    playbook_name?: string;
+    review_perspective?: string;
+    playbook_coverage?: {
+        total_rules: number;
+        assessed_rules: number;
+        compliant: number;
+        violation: number;
+        missing: number;
+        not_applicable: number;
+        unassessed_rule_ids: string[];
+        complete: boolean;
+    };
     source_type?: string;
 }
 
@@ -112,6 +121,7 @@ interface Playbook {
     is_public: boolean;
     is_default: boolean;
     version: number;
+    party_side: 'buyer' | 'seller' | 'neutral';
     rules_count: number;
 }
 
@@ -502,7 +512,7 @@ class ContraRedAPI {
                     text,
                     filename,
                     playbook_id: playbookId,
-                    party_side: partySide || 'buyer',
+                    party_side: partySide || undefined,
                     jurisdiction: jurisdiction || undefined,
                     paragraphs: paragraphs || undefined,
                     tier_preference: tierPreference || undefined,
@@ -520,7 +530,18 @@ class ContraRedAPI {
     /**
      * List active compliance layers (e.g. DPDP) the org can apply to a scan.
      */
-    async listComplianceLayers(): Promise<Array<{ code: string; name: string; description?: string; jurisdiction?: string; rule_count: number }>> {
+    async listComplianceLayers(): Promise<Array<{
+        code: string;
+        name: string;
+        description?: string;
+        jurisdiction?: string;
+        version: number;
+        source_url?: string;
+        gazette_date?: string;
+        effective_date?: string;
+        last_verified_at?: string;
+        rule_count: number;
+    }>> {
         return this.request('/documents/compliance-layers');
     }
 
@@ -528,13 +549,19 @@ class ContraRedAPI {
      * Analyze a single clause/selection for risks.
      * Lighter-weight than full document scan — used for Scan Selection.
      */
-    async analyzeClause(clauseText: string, playbookId?: string, jurisdiction?: string): Promise<ClauseAnalysisResult> {
+    async analyzeClause(
+        clauseText: string,
+        playbookId?: string,
+        jurisdiction?: string,
+        partySide?: 'buyer' | 'seller' | 'neutral',
+    ): Promise<ClauseAnalysisResult> {
         return this.request('/documents/analyze-clause', {
             method: 'POST',
             body: JSON.stringify({
                 clause_text: clauseText,
                 playbook_id: playbookId,
                 jurisdiction,
+                party_side: partySide,
             }),
         });
     }
@@ -542,14 +569,18 @@ class ContraRedAPI {
     /**
      * Research relevant Indian case law for a clause.
      */
-    async researchClause(clauseText: string, clauseType?: string): Promise<{
+    async researchClause(clauseText: string, clauseType?: string, jurisdiction?: string): Promise<{
         cases: Array<{ case_name: string; citation: string; year: number; court: string; holding: string; relevance: string }>;
         legal_principle: string;
         disclaimer: string;
     }> {
         return this.request('/documents/research-clause', {
             method: 'POST',
-            body: JSON.stringify({ clause_text: clauseText, clause_type: clauseType }),
+            body: JSON.stringify({
+                clause_text: clauseText,
+                clause_type: clauseType,
+                jurisdiction,
+            }),
         });
     }
 
@@ -557,13 +588,19 @@ class ContraRedAPI {
      * Generate a contract clause using AI.
      * Returns generated clause text + reasoning.
      */
-    async generateClause(clauseType: string, playbookId?: string, contractContext?: string): Promise<{ clause_text: string; reasoning: string }> {
+    async generateClause(
+        clauseType: string,
+        playbookId?: string,
+        contractContext?: string,
+        jurisdiction?: string,
+    ): Promise<{ clause_text: string; reasoning: string }> {
         return this.request('/documents/generate-clause', {
             method: 'POST',
             body: JSON.stringify({
                 clause_type: clauseType,
                 playbook_id: playbookId,
                 contract_context: contractContext,
+                jurisdiction,
             }),
         });
     }
@@ -581,6 +618,7 @@ class ContraRedAPI {
         surroundingContext?: string;
         playbookId?: string;
         contractText?: string;
+        jurisdiction?: string;
     }): Promise<{
         fix_text: string;
         fix_edits?: Array<{find: string; replace: string}>;
@@ -600,6 +638,7 @@ class ContraRedAPI {
                 surrounding_context: params.surroundingContext,
                 playbook_id: params.playbookId,
                 contract_text: params.contractText,
+                jurisdiction: params.jurisdiction,
             }),
         });
     }
@@ -622,14 +661,32 @@ class ContraRedAPI {
         return this.request(`/playbooks/${playbookId}`);
     }
 
-    async createPlaybook(name: string, description?: string, category?: string): Promise<Playbook> {
+    async createPlaybook(
+        name: string,
+        description?: string,
+        category?: string,
+        partySide: 'buyer' | 'seller' | 'neutral' = 'neutral',
+    ): Promise<Playbook> {
         return this.request('/playbooks/', {
             method: 'POST',
-            body: JSON.stringify({ name, description, category: category || 'custom' }),
+            body: JSON.stringify({
+                name,
+                description,
+                category: category || 'custom',
+                party_side: partySide,
+            }),
         });
     }
 
-    async updatePlaybook(playbookId: string, data: { name?: string; description?: string; category?: string }): Promise<Playbook> {
+    async updatePlaybook(
+        playbookId: string,
+        data: {
+            name?: string;
+            description?: string;
+            category?: string;
+            party_side?: 'buyer' | 'seller' | 'neutral';
+        },
+    ): Promise<Playbook> {
         return this.request(`/playbooks/${playbookId}`, {
             method: 'PUT',
             body: JSON.stringify(data),

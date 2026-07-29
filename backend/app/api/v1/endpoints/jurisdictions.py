@@ -9,7 +9,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -17,7 +17,7 @@ from sqlalchemy.orm import selectinload
 from app.db.session import get_db
 from app.api.v1.endpoints.auth import get_current_user
 from app.models.user import User
-from app.models.jurisdiction import Jurisdiction, JurisdictionRuleOverride
+from app.models.jurisdiction import Jurisdiction
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -35,8 +35,7 @@ class JurisdictionSummary(BaseModel):
     is_active: bool
     sort_order: int
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RuleOverrideResponse(BaseModel):
@@ -47,8 +46,7 @@ class RuleOverrideResponse(BaseModel):
     note: Optional[str] = None
     statute_reference: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class JurisdictionDetail(BaseModel):
@@ -68,8 +66,7 @@ class JurisdictionDetail(BaseModel):
     sort_order: int
     rule_overrides: List[RuleOverrideResponse] = []
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ---------------------------------------------------------------------------

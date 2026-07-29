@@ -9,7 +9,7 @@ answers from real data instead of requiring manual input.
 
 import logging
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List
 
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -202,7 +202,7 @@ class ConsentComplianceBridge:
     async def _get_purpose_stats(self, db: AsyncSession, organization_id=None) -> List[Dict]:
         """Get per-purpose consent statistics."""
         purposes_result = await db.execute(
-            select(ConsentPurpose).where(ConsentPurpose.is_active == True)
+            select(ConsentPurpose).where(ConsentPurpose.is_active.is_(True))
         )
         purposes = purposes_result.scalars().all()
 
@@ -211,7 +211,7 @@ class ConsentComplianceBridge:
             # Count grants for this purpose
             grant_query = select(func.count(ConsentPurposeGrant.id)).where(
                 ConsentPurposeGrant.purpose_code == purpose.purpose_code,
-                ConsentPurposeGrant.granted == True,
+                ConsentPurposeGrant.granted.is_(True),
             )
             grant_result = await db.execute(grant_query)
             grant_count = grant_result.scalar() or 0
@@ -228,7 +228,7 @@ class ConsentComplianceBridge:
 
     async def _get_all_purposes(self, db: AsyncSession) -> List[ConsentPurpose]:
         result = await db.execute(
-            select(ConsentPurpose).where(ConsentPurpose.is_active == True)
+            select(ConsentPurpose).where(ConsentPurpose.is_active.is_(True))
         )
         return list(result.scalars().all())
 

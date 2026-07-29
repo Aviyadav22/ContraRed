@@ -1,20 +1,23 @@
 """
-DPDP Remediation Agent — AI-generated compliant content.
+DPDP Remediation Agent — AI-generated draft content for legal review.
 
 Generates:
-  - DPDP-compliant contract clauses
+  - DPDP-oriented contract clauses
   - Data Processing Agreements (DPAs)
   - Privacy notices (Section 5)
   - Consent collection templates
   - Breach notification templates (DPB + data principals + CERT-In)
   - Policy update recommendations
 
-All output in English + Hindi (DPDP requirement).
+Outputs may be generated in a requested supported language. The DPDP Act
+requires a language-access option; it does not require every artifact to be
+bilingual.
 """
 
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from app.services.dpdp.models import (
     RemediationRequest,
@@ -26,12 +29,13 @@ from app.services.dpdp.models import (
 )
 
 logger = logging.getLogger(__name__)
+_IST = ZoneInfo("Asia/Kolkata")
 
 
 # Pre-built templates for deterministic fallback (no AI needed)
 _TEMPLATES = {
     RemediationType.PRIVACY_NOTICE: {
-        "title": "Privacy Notice — DPDP Act 2023 Compliant",
+        "title": "Privacy Notice — DPDP Act 2023 Draft for Legal Review",
         "sections": [
             {
                 "heading": "1. Data Fiduciary Information",
@@ -43,15 +47,15 @@ _TEMPLATES = {
             },
             {
                 "heading": "3. Purpose of Processing",
-                "content": "We process your personal data for the following purposes:\n{{PURPOSE_LIST}}\n\nWe will not process your data for any purpose other than those stated above without obtaining fresh consent.",
+                "content": "We process personal data for the following specified purposes and stated legal bases:\n{{PURPOSE_LIST}}\n\nIf we propose a new or incompatible consent-based purpose, we will provide the required notice and request fresh affirmative consent before that processing begins.",
             },
             {
                 "heading": "4. Consent",
-                "content": "We collect your consent for each processing purpose individually. You may:\n- Grant or deny consent for each purpose separately\n- Withdraw consent at any time through {{WITHDRAWAL_METHOD}}\n- Withdrawal of consent is as easy as giving consent\n- Withdrawal does not affect the lawfulness of processing done before withdrawal",
+                "content": "Where processing relies on consent, we request consent for the specified purpose and only the personal data necessary for it. You may:\n- Grant or deny each optional consent-based purpose\n- Withdraw consent at any time through {{WITHDRAWAL_METHOD}}\n- Withdraw consent as easily as it was given\n- Review what service consequence, if any, follows from refusing data necessary for a requested service\n- Rely on the lawfulness of processing completed before withdrawal",
             },
             {
                 "heading": "5. Your Rights as Data Principal",
-                "content": "Under the DPDP Act 2023, you have the following rights:\n\n(a) Right to Information (Section 11): You may request a summary of your personal data being processed, the processing activities, and identities of all entities your data has been shared with.\n\n(b) Right to Correction and Erasure (Section 12): You may request correction of inaccurate data, completion of incomplete data, updating of outdated data, and erasure of data no longer necessary for the stated purpose.\n\n(c) Right to Grievance Redressal (Section 13): You may file a complaint with our Grievance Officer. We will acknowledge within 48 hours and resolve within 30 days.\n\n(d) Right to Nominate (Section 14): You may nominate another person to exercise your rights in case of your death or incapacity.\n\nTo exercise any right, contact: {{GRIEVANCE_OFFICER_EMAIL}}",
+                "content": "Under the DPDP Act 2023, you have the following rights:\n\n(a) Right to Information (Section 11): You may request a summary of your personal data being processed and the processing activities, together with the prescribed sharing information.\n\n(b) Right to Correction and Erasure (Section 12): You may request correction of inaccurate or misleading data, completion of incomplete data, updating, and erasure where retention is not necessary for the specified purpose or compliance with law.\n\n(c) Right to Grievance Redressal (Section 13): You may file a grievance with our Grievance Officer. We aim to acknowledge within 48 hours and resolve within 30 days as internal service targets; our published response period will not exceed the applicable prescribed maximum.\n\n(d) Right to Nominate (Section 14): You may nominate another individual to exercise your rights in the event of your death or incapacity.\n\nTo exercise any right, contact: {{GRIEVANCE_OFFICER_EMAIL}}",
             },
             {
                 "heading": "6. Data Retention",
@@ -59,21 +63,21 @@ _TEMPLATES = {
             },
             {
                 "heading": "7. Data Security",
-                "content": "We implement reasonable security safeguards as required by Section 8(4) of the DPDP Act, including encryption, access controls, audit logging, and regular security assessments.",
+                "content": "We implement appropriate technical and organisational measures under Section 8(4) and reasonable security safeguards under Section 8(5). Deployment-specific controls, retention, and residual risks should be described accurately rather than assumed from this template.",
             },
             {
                 "heading": "8. Cross-Border Transfer",
-                "content": "Your personal data may be transferred to countries/territories notified by the Central Government under Section 16 of the DPDP Act. We do not transfer data to restricted jurisdictions.",
+                "content": "Personal data may be processed outside India subject to any transfer restriction notified by the Central Government under Section 16, any Rule 15 requirement, and any stricter applicable Indian law. We review current notifications before enabling a destination.",
             },
             {
                 "heading": "9. Grievance Officer",
-                "content": "Name: {{GRIEVANCE_OFFICER_NAME}}\nEmail: {{GRIEVANCE_OFFICER_EMAIL}}\nAddress: {{ADDRESS}}\n\nYou may also file a complaint with the Data Protection Board of India if you are not satisfied with our response.",
+                "content": "Name: {{GRIEVANCE_OFFICER_NAME}}\nEmail: {{GRIEVANCE_OFFICER_EMAIL}}\nAddress: {{ADDRESS}}\n\nAfter exhausting this grievance process, you may approach the Data Protection Board of India through its current official channel.",
             },
         ],
         "applicable_sections": ["section_5", "section_6", "section_11", "section_12", "section_13", "section_14"],
     },
     RemediationType.CONSENT_FORM: {
-        "title": "Consent Collection Form — DPDP Act 2023",
+        "title": "Consent Collection Form — DPDP Act 2023 Draft for Legal Review",
         "sections": [
             {
                 "heading": "Consent Notice",
@@ -81,7 +85,7 @@ _TEMPLATES = {
             },
             {
                 "heading": "Processing Purposes",
-                "content": "Please grant or deny consent for each purpose:\n\n[ ] Account Management — Required for service delivery (REQUIRED)\n[ ] AI-Powered Analysis — To provide AI-driven contract analysis\n[ ] Product Analytics — To improve our services\n[ ] Marketing Communications — To send product updates\n[ ] Third-Party Sharing — To share data with authorized partners\n\nNote: Each purpose can be individually toggled. We do not bundle consent.",
+                "content": "Configure this list from the actual data inventory; do not use these examples without verification:\n\n[ ] Account Management — identify necessary data and the consequence of refusal\n[ ] AI-Powered Analysis — identify contract data, provider, purpose, and retention\n[ ] Product Analytics — identify metrics and whether the purpose is optional\n[ ] Marketing Communications — optional, with a separate withdrawal control\n[ ] Third-Party Sharing — identify each recipient category, data, and purpose\n\nOptional consent-based purposes must not be bundled with a requested service. The interface may use controls other than checkboxes if it still records a clear affirmative action.",
             },
             {
                 "heading": "Privacy Policy",
@@ -95,7 +99,7 @@ _TEMPLATES = {
         "applicable_sections": ["section_6"],
     },
     RemediationType.DPA_TEMPLATE: {
-        "title": "Data Processing Agreement — DPDP Act 2023 Compliant",
+        "title": "Data Processing Agreement — DPDP Act 2023 Draft for Legal Review",
         "sections": [
             {
                 "heading": "1. Definitions",
@@ -107,15 +111,15 @@ _TEMPLATES = {
             },
             {
                 "heading": "3. Processor Obligations (Section 8(2))",
-                "content": "The Data Processor shall:\n(a) Process personal data only per the Data Fiduciary's documented instructions;\n(b) Implement reasonable security safeguards as required by Section 8(4);\n(c) Not engage sub-processors without prior written consent of the Data Fiduciary;\n(d) Assist the Data Fiduciary in responding to Data Principal rights requests;\n(e) Delete or return all personal data upon termination of this agreement;\n(f) Make available all information necessary to demonstrate compliance;\n(g) Allow and contribute to audits by the Data Fiduciary or its authorized auditor.",
+                "content": "The Data Processor shall:\n(a) Process personal data only per the Data Fiduciary's documented instructions;\n(b) Implement appropriate technical and organisational measures and reasonable security safeguards supporting the Data Fiduciary's Sections 8(4) and 8(5) obligations;\n(c) Not engage sub-processors without prior written consent of the Data Fiduciary;\n(d) Assist the Data Fiduciary in responding to Data Principal rights requests;\n(e) Delete or return all personal data upon termination of this agreement, subject to documented legal retention;\n(f) Make available the information reasonably necessary to demonstrate compliance;\n(g) Allow and contribute to proportionate audits under the agreed audit procedure.",
             },
             {
-                "heading": "4. Security Safeguards (Section 8(4))",
-                "content": "The Data Processor shall implement:\n(a) Encryption of personal data at rest and in transit (AES-256 minimum);\n(b) Access controls with role-based permissions and multi-factor authentication;\n(c) Audit logging of all access to and operations on personal data;\n(d) Regular vulnerability assessments and penetration testing;\n(e) Incident detection and response capabilities;\n(f) Employee training on data protection obligations.",
+                "heading": "4. Security Measures and Safeguards (Sections 8(4) and 8(5))",
+                "content": "The Data Processor shall implement security safeguards appropriate to the nature and risk of the processing, including:\n(a) Appropriate encryption, masking, obfuscation, tokenisation, or equivalent protection where suitable;\n(b) Access controls with role-based permissions and multi-factor authentication where appropriate;\n(c) Logging, monitoring, and review sufficient to detect unauthorised access;\n(d) Risk-based vulnerability assessment and penetration testing;\n(e) Incident detection, response, resilience, and recovery capabilities;\n(f) Personnel confidentiality and data-protection training.\n\nAny mandatory algorithms, key lengths, testing frequencies, and recovery targets must be specified in the security schedule and verified against the deployed system.",
             },
             {
                 "heading": "5. Breach Notification (Section 8(6))",
-                "content": "The Data Processor shall:\n(a) Notify the Data Fiduciary of any personal data breach within 24 hours of discovery;\n(b) Provide sufficient information for the Data Fiduciary to notify the DPB and affected Data Principals;\n(c) Cooperate with the Data Fiduciary in breach investigation and remediation;\n(d) Maintain records of all breaches including facts, effects, and remedial actions.",
+                "content": "The Data Processor shall:\n(a) Notify the Data Fiduciary without undue delay and, as a negotiated internal deadline, no later than 24 hours after becoming aware of a personal data breach;\n(b) Provide sufficient information for the Data Fiduciary's initial notices without delay and its detailed Board update within the prescribed period;\n(c) Cooperate with the Data Fiduciary in breach investigation, affected-principal notification, and remediation;\n(d) Maintain records of all breaches including facts, effects, and remedial actions.",
             },
             {
                 "heading": "6. Data Principal Rights (Sections 11-14)",
@@ -123,7 +127,7 @@ _TEMPLATES = {
             },
             {
                 "heading": "7. Cross-Border Transfer (Section 16)",
-                "content": "The Data Processor shall not transfer personal data outside India except to countries/territories notified by the Central Government. Any cross-border transfer must be:\n(a) Documented with destination country, data categories, and safeguards;\n(b) Subject to adequate protection measures;\n(c) Reported to the Data Fiduciary.",
+                "content": "The Data Processor shall not transfer personal data outside India without the Data Fiduciary's prior written authorisation. Each authorised transfer must:\n(a) Be documented with destination country or territory, data categories, purpose, recipients, and safeguards;\n(b) Comply with any restriction notified under Section 16, any Rule 15 requirement, and stricter applicable Indian law;\n(c) Be notified to the Data Fiduciary before the destination or material transfer arrangement changes.",
             },
             {
                 "heading": "8. Data Retention and Deletion (Section 8(7))",
@@ -135,7 +139,7 @@ _TEMPLATES = {
             },
             {
                 "heading": "10. Liability and Indemnification",
-                "content": "The Data Processor shall indemnify the Data Fiduciary against:\n(a) Penalties imposed by the Data Protection Board due to Processor's non-compliance (up to Rs 250 crore per violation);\n(b) Claims by Data Principals arising from Processor's breach of this agreement;\n(c) Costs of breach notification and remediation caused by Processor's actions;\n(d) Third-party claims arising from unauthorized processing by the Processor.",
+                "content": "Subject to the negotiated liability cap, its agreed carve-outs, causation standards, and applicable law, the Data Processor shall indemnify the Data Fiduciary against losses to the extent caused by the Processor's breach of this agreement, including:\n(a) Regulatory amounts that may lawfully be allocated or recovered between the parties;\n(b) Third-party claims arising from unauthorised processing by the Processor;\n(c) Reasonable breach-notification, investigation, and remediation costs caused by the Processor's acts or omissions.\n\nThe parties must expressly decide whether this indemnity and data-protection claims sit inside the general cap, under a super-cap, or outside the cap. The DPDP statutory schedule must not be described as a fixed contractual amount or a per-violation entitlement.",
             },
             {
                 "heading": "11. Term and Termination",
@@ -151,7 +155,7 @@ _TEMPLATES = {
 
 
 class RemediationAgent:
-    """Generates DPDP-compliant remediation content."""
+    """Generates DPDP-oriented drafts that require legal and factual review."""
 
     async def generate(self, request: RemediationRequest) -> RemediationOutput:
         """Generate remediation content based on type.
@@ -195,46 +199,59 @@ class RemediationAgent:
     async def generate_breach_notification(
         self, input_data: BreachNotificationInput
     ) -> BreachNotification:
-        """Generate dual breach notifications (DPB + data principals + CERT-In)."""
+        """Generate staged Board, affected-principal, and conditional CERT-In templates."""
         from datetime import timedelta
 
         discovery_time = input_data.breach_discovered_at
+        if discovery_time.tzinfo is None:
+            discovery_time = discovery_time.replace(tzinfo=timezone.utc)
+        now = datetime.now(timezone.utc)
+        now_ist = now.astimezone(_IST)
+        discovery_ist = discovery_time.astimezone(_IST)
         cert_in_deadline = discovery_time + timedelta(hours=6)
-        dpb_deadline = discovery_time + timedelta(hours=72)
+        detailed_board_deadline = discovery_time + timedelta(hours=72)
 
         # Deterministic template
-        dpb_text = f"""PERSONAL DATA BREACH NOTIFICATION
+        dpb_text = f"""INITIAL PERSONAL DATA BREACH NOTICE — SEND WITHOUT DELAY
 To: Data Protection Board of India
-Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S IST')}
+Date: {now_ist.strftime('%Y-%m-%d %H:%M:%S IST')}
 
-1. NATURE OF BREACH
+1. NATURE, EXTENT, TIMING, AND LOCATION
 {input_data.breach_description}
+Location: [INSERT LOCATION OR SYSTEM]
 
-2. CATEGORIES OF DATA AFFECTED
-{', '.join(input_data.data_categories_affected) or 'Under investigation'}
+2. LIKELY IMPACT
+{input_data.estimated_records_affected or 'Number under investigation'} records may be affected.
+Data categories: {', '.join(input_data.data_categories_affected) or 'Under investigation'}
 
-3. ESTIMATED RECORDS AFFECTED
-{input_data.estimated_records_affected or 'Under investigation'}
+This initial notice is submitted without delay under DPDP Rule 7(2)(a).
 
-4. DATE AND TIME OF DISCOVERY
-{discovery_time.strftime('%Y-%m-%d %H:%M:%S IST')}
+---
+DETAILED BOARD UPDATE — DUE WITHIN 72 HOURS UNLESS EXTENDED
 
-5. CURRENT STATUS
+1. DATE AND TIME OF AWARENESS
+{discovery_ist.strftime('%Y-%m-%d %H:%M:%S IST')}
+
+2. UPDATED DESCRIPTION AND CURRENT STATUS
 {'Ongoing — containment in progress' if input_data.is_ongoing else 'Contained'}
 
-6. CONTAINMENT MEASURES TAKEN
+3. EVENTS, CIRCUMSTANCES, AND REASONS
+[INSERT INVESTIGATION FINDINGS]
+
+4. MITIGATION MEASURES
 {input_data.containment_measures or 'Immediate investigation initiated'}
 
-7. POTENTIAL CONSEQUENCES
-Impact assessment in progress. Affected Data Principals will be notified separately.
+5. FINDINGS ABOUT THE PERSON RESPONSIBLE, IF KNOWN
+[INSERT FINDINGS OR STATE UNKNOWN]
 
-8. REMEDIAL ACTIONS
+6. RECURRENCE-PREVENTION MEASURES
 - Incident response team activated
 - Forensic investigation initiated
 - Affected systems isolated
 - Enhanced monitoring deployed
 
-This notification is submitted in compliance with Section 8(6) of the Digital Personal Data Protection Act, 2023."""
+7. AFFECTED DATA PRINCIPAL NOTIFICATION REPORT
+[INSERT NUMBER NOTIFIED, CHANNELS, TIMES, FAILURES, AND RETRY STEPS]"""
 
         principal_text = f"""IMPORTANT: NOTICE OF PERSONAL DATA BREACH
 
@@ -249,12 +266,12 @@ WHAT DATA WAS AFFECTED:
 {', '.join(input_data.data_categories_affected) or 'We are still investigating the full scope'}
 
 WHEN IT HAPPENED:
-The breach was discovered on {discovery_time.strftime('%B %d, %Y')}.
+The breach was discovered on {discovery_ist.strftime('%B %d, %Y')}.
 
 WHAT WE ARE DOING:
 {input_data.containment_measures or 'We have initiated immediate containment and investigation measures.'}
 
-We have notified the Data Protection Board of India as required by the DPDP Act 2023.
+We are providing the notices required by the DPDP framework and documenting delivery.
 
 WHAT YOU CAN DO:
 - Change your passwords if login credentials may be affected
@@ -262,23 +279,24 @@ WHAT YOU CAN DO:
 - Contact our Grievance Officer for questions or concerns
 
 YOUR RIGHTS:
-Under the DPDP Act 2023, you have the right to:
-- Request information about the breach (Section 11)
+Under the DPDP Act 2023, you may:
+- Request the information about your personal data and its processing described in Section 11
 - File a grievance with our Grievance Officer (Section 13)
-- Escalate to the Data Protection Board of India
+- Approach the Data Protection Board of India after exhausting the available grievance process
 
 CONTACT:
 Grievance Officer: [INSERT CONTACT]
-Data Protection Board of India: https://www.dpb.gov.in
+Board complaint channel: [INSERT CURRENT OFFICIAL DIGITAL-OFFICE LINK]
 
 We sincerely apologize for this incident and are taking all necessary steps to prevent recurrence."""
 
         cert_in_text = f"""CYBER SECURITY INCIDENT REPORT
 To: CERT-In (Indian Computer Emergency Response Team)
-Reporting Deadline: Within 6 hours of discovery
+Scope warning: Use this template only if the incident is within the CERT-In Directions' reportable categories.
+Reporting Deadline if in scope: Within 6 hours of noticing the incident or being brought to notice
 
 1. Type of Incident: Personal Data Breach
-2. Date/Time of Discovery: {discovery_time.strftime('%Y-%m-%d %H:%M:%S IST')}
+2. Date/Time of Discovery: {discovery_ist.strftime('%Y-%m-%d %H:%M:%S IST')}
 3. Systems Affected: [INSERT AFFECTED SYSTEMS]
 4. Description: {input_data.breach_description}
 5. Estimated Impact: {input_data.estimated_records_affected} records
@@ -295,20 +313,22 @@ This report is filed per CERT-In Directions dated April 28, 2022."""
             timeline={
                 "breach_discovered": discovery_time.isoformat(),
                 "cert_in_deadline": cert_in_deadline.isoformat(),
-                "dpb_deadline": dpb_deadline.isoformat(),
+                "initial_board_notice_due": "without_delay",
+                "detailed_board_deadline": detailed_board_deadline.isoformat(),
                 "cert_in_hours_remaining": max(
-                    0, (cert_in_deadline - datetime.now()).total_seconds() / 3600
+                    0, (cert_in_deadline - now).total_seconds() / 3600
                 ),
-                "dpb_hours_remaining": max(
-                    0, (dpb_deadline - datetime.now()).total_seconds() / 3600
+                "detailed_board_hours_remaining": max(
+                    0, (detailed_board_deadline - now).total_seconds() / 3600
                 ),
             },
             recommended_actions=[
                 "Activate incident response team immediately",
                 "Isolate affected systems",
-                f"File CERT-In report by {cert_in_deadline.strftime('%H:%M IST')} (6-hour window)",
-                f"Notify DPB by {dpb_deadline.strftime('%Y-%m-%d %H:%M IST')} (72-hour window)",
-                "Notify affected Data Principals without undue delay",
+                "Send the initial Board notice without delay",
+                f"Complete the detailed Board update by {detailed_board_deadline.astimezone(_IST).strftime('%Y-%m-%d %H:%M IST')}, unless extended",
+                "Notify affected Data Principals without delay",
+                f"If the incident is within CERT-In's specified categories, report by {cert_in_deadline.astimezone(_IST).strftime('%H:%M IST')}",
                 "Preserve evidence for forensic investigation",
                 "Engage external forensic experts if needed",
                 "Prepare for potential DPB inquiry",
@@ -378,7 +398,12 @@ Return the customized document as a JSON object with:
   "notes": ["any important notes about this document"]
 }}
 
-Keep all DPDP Act references and section numbers accurate. Fill in placeholders with appropriate values from context. If language is "hi", provide Hindi translation alongside English."""
+Use the supplied template as a drafting aid, not as proof of compliance. Keep the
+verified statutory structure intact, distinguish statutory deadlines from
+negotiated service targets, do not invent notifications or legal requirements,
+and leave an explicit placeholder where facts or current law are unverified.
+Fill only placeholders supported by the supplied context. If language is "hi",
+provide Hindi alongside English and flag the translation for legal review."""
 
         try:
             model = get_generative_model(settings.GEMINI_MODEL)
@@ -432,10 +457,12 @@ Context:
 - Additional context: {json.dumps(request.context, default=str)}
 
 Requirements:
-1. Must comply with DPDP Act 2023 (all relevant sections)
-2. Include specific DPDP section references
-3. Be legally sound and practically implementable
-4. If language is "hi", include Hindi alongside English
+1. Produce a draft for legal and factual review; do not claim that generation proves compliance
+2. Include a DPDP section reference only when confident it supports the proposition
+3. Distinguish statutory duties from recommended controls and negotiated service targets
+4. Mark facts, current notifications, sectoral-law issues, and unsupported legal conclusions for verification
+5. Be practically implementable and avoid promising controls not supplied in the context
+6. If language is "hi", include Hindi alongside English and flag the translation for review
 
 Return as JSON:
 {{

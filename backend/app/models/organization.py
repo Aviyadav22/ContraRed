@@ -4,13 +4,17 @@ Organization and Subscription models.
 
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import TYPE_CHECKING, Optional, List
 from sqlalchemy import String, Boolean, DateTime, Enum as SQLEnum, Integer, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 import enum
 
 from app.db.session import Base
+
+if TYPE_CHECKING:
+    from app.models.playbook import Playbook
+    from app.models.user import User
 
 
 class PlanType(str, enum.Enum):

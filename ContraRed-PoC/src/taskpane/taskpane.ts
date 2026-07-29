@@ -192,8 +192,6 @@ function editsDiff(originalText: string, edits: Array<{find: string; replace: st
 
     // Apply edits sequentially, tracking positions for rendering
     let text = originalText;
-    const markers: Array<{start: number; end: number; type: 'del' | 'ins'; text: string}> = [];
-
     // Sort edits by position in text (first occurrence) for stable rendering
     const positionedEdits = edits
         .map(e => ({ ...e, pos: text.indexOf(e.find) }))
@@ -721,7 +719,7 @@ async function toggleTemplatePicker(): Promise<void> {
         if (templateId) applyTemplate(templateId, playbookId || undefined);
       });
     });
-  } catch (error) {
+  } catch {
     list.innerHTML = '<div class="generate-error">Failed to load templates</div>';
   }
 }
@@ -815,7 +813,18 @@ async function handleCreatePlaybook(): Promise<void> {
   if (submitBtn) submitBtn.disabled = true;
 
   try {
-    await api.createPlaybook(name, descInput?.value?.trim() || undefined, categorySelect?.value || 'custom');
+    const selectedSide = (document.getElementById('partySideSelect') as HTMLSelectElement)?.value;
+    const partySide = (
+      selectedSide === 'buyer' || selectedSide === 'seller' || selectedSide === 'neutral'
+        ? selectedSide
+        : 'neutral'
+    );
+    await api.createPlaybook(
+      name,
+      descInput?.value?.trim() || undefined,
+      categorySelect?.value || 'custom',
+      partySide,
+    );
     // Close modal and refresh playbooks
     const modal = document.getElementById('createPlaybookModal');
     if (modal) modal.style.display = 'none';
@@ -1175,9 +1184,9 @@ async function scanDocument(): Promise<void> {
     }
 
     const partySideSelect = document.getElementById('partySideSelect') as HTMLSelectElement;
-    const selectedPartySide = partySideSelect?.value || 'buyer';
+    const selectedPartySide = partySideSelect?.value || undefined;
     const jurisdictionSelect = document.getElementById('jurisdictionSelect') as HTMLSelectElement;
-    const selectedJurisdiction = jurisdictionSelect?.value || 'IN';
+    const selectedJurisdiction = jurisdictionSelect?.value || undefined;
 
     // Phase 6 — negotiation tier + deal context (optional)
     const tierSelect = document.getElementById('tierPreferenceSelect') as HTMLSelectElement | null;
@@ -1275,9 +1284,20 @@ async function scanSelection(): Promise<void> {
 
     // Step 2: Call clause analysis API
     const selectedPlaybookId = (document.getElementById('playbookSelect') as HTMLSelectElement)?.value || undefined;
+    const selectedPartySide = (
+      document.getElementById('partySideSelect') as HTMLSelectElement
+    )?.value as 'buyer' | 'seller' | 'neutral' | undefined;
+    const selectedJurisdiction = (
+      document.getElementById('jurisdictionSelect') as HTMLSelectElement
+    )?.value || undefined;
     log.info('Starting selection scan...', { length: selectedText.length });
 
-    const result: ClauseAnalysisResult = await api.analyzeClause(selectedText, selectedPlaybookId);
+    const result: ClauseAnalysisResult = await api.analyzeClause(
+      selectedText,
+      selectedPlaybookId,
+      selectedJurisdiction,
+      selectedPartySide,
+    );
 
     // Step 3: Handle results
     if (!result.risks || result.risks.length === 0) {
@@ -1385,7 +1405,18 @@ async function reScanClause(riskId: string, originalText: string): Promise<void>
     if (textToScan.length < 20) { showToastOnCard(card, 'Not enough text to re-scan.'); return; }
 
     const selectedPlaybookId = (document.getElementById('playbookSelect') as HTMLSelectElement)?.value || undefined;
-    const result = await api.analyzeClause(textToScan, selectedPlaybookId);
+    const selectedPartySide = (
+      document.getElementById('partySideSelect') as HTMLSelectElement
+    )?.value as 'buyer' | 'seller' | 'neutral' | undefined;
+    const selectedJurisdiction = (
+      document.getElementById('jurisdictionSelect') as HTMLSelectElement
+    )?.value || undefined;
+    const result = await api.analyzeClause(
+      textToScan,
+      selectedPlaybookId,
+      selectedJurisdiction,
+      selectedPartySide,
+    );
 
     if (result.risks.length === 0) {
       card.classList.add('fixed');
@@ -1734,9 +1765,10 @@ function displayAIResults(result: AnalysisResult): void {
   // not the primary AI output. Mirrors AnalysisPanel.tsx in the dashboard.
   const aiDown = result.ai_used === false;
   const partialIncomplete = result.pipeline_partial === true && !aiDown;
+  const coverageIncomplete = result.playbook_coverage && !result.playbook_coverage.complete;
   const existingBanner = document.getElementById('aiStatusBanner');
   if (existingBanner) existingBanner.remove();
-  if (aiDown || partialIncomplete) {
+  if (aiDown || partialIncomplete || coverageIncomplete) {
     const banner = document.createElement('div');
     banner.id = 'aiStatusBanner';
     banner.setAttribute('role', 'alert');
@@ -1754,6 +1786,10 @@ function displayAIResults(result: AnalysisResult): void {
     detail.textContent = aiDown
       ? 'Risk explanations and automatic fixes will be limited. The AI path is primary; this is the secondary fallback. Please retry.'
       : 'Some findings may be missing. Please retry to get the full analysis.';
+    if (coverageIncomplete && !aiDown) {
+      title.textContent = `Playbook coverage incomplete: ${result.playbook_coverage!.assessed_rules} of ${result.playbook_coverage!.total_rules} rules assessed.`;
+      detail.textContent = 'One or more selected playbook rules did not receive an explicit outcome. Review those rules manually or retry before relying on the analysis.';
+    }
     body.appendChild(title);
     body.appendChild(detail);
     banner.appendChild(icon);
@@ -1920,9 +1956,8 @@ function renderRedlineList(): void {
     list.setAttribute('aria-label', `${filtered.length} risks found`);
   }
 
-  const docId = currentAIAnalysis?.document_id || '';
   filtered.forEach((redline) => {
-    const card = createAIRedlineCard(redline, docId);
+    const card = createAIRedlineCard(redline);
     if (fixedRisks.has(redline.id)) card.classList.add('fixed');
     // Collapse LOW confidence items by default
     if (redline.confidence_level === 'LOW') {
@@ -2046,7 +2081,7 @@ class FocusTrap {
 /**
  * Create a risk card for an AI redline item.
  */
-function createAIRedlineCard(redline: RedlineItem, _documentId: string): HTMLElement {
+function createAIRedlineCard(redline: RedlineItem): HTMLElement {
   const card = document.createElement('article');
   card.className = 'risk-card';
   card.id = `risk-${redline.id}`;
@@ -2229,6 +2264,9 @@ function createAIRedlineCard(redline: RedlineItem, _documentId: string): HTMLEle
       // Get surrounding context from Word document for better fix quality
       const surroundingContext = await getSurroundingContext(redline.clause_text);
       const currentPlaybookId = playbookSelect()?.value || undefined;
+      const currentJurisdiction = (
+        document.getElementById('jurisdictionSelect') as HTMLSelectElement | null
+      )?.value || undefined;
 
       const result = await api.generateFix({
         originalText: redline.clause_text,
@@ -2239,6 +2277,7 @@ function createAIRedlineCard(redline: RedlineItem, _documentId: string): HTMLEle
         surroundingContext,
         playbookId: currentPlaybookId,
         contractText: lastScannedText || undefined,
+        jurisdiction: currentJurisdiction,
       });
 
       // Store generated fix on card element
@@ -2379,7 +2418,14 @@ function createAIRedlineCard(redline: RedlineItem, _documentId: string): HTMLEle
     researchPanel.innerHTML = '<div class="research-loading">Researching case law...</div>';
 
     try {
-      const result = await api.researchClause(redline.clause_text, redline.rule_name);
+      const currentJurisdiction = (
+        document.getElementById('jurisdictionSelect') as HTMLSelectElement | null
+      )?.value || undefined;
+      const result = await api.researchClause(
+        redline.clause_text,
+        redline.rule_name,
+        currentJurisdiction,
+      );
 
       researchPanel.innerHTML = '';
 
@@ -2501,9 +2547,14 @@ async function highlightAIText(searchText: string, riskLevel: 'RED' | 'YELLOW' |
       const result = await findTextInDocument(searchText, context);
 
       if (result.range) {
-        let color: string;
         // Light gray highlight just marks location — risk level shown in taskpane
-        color = 'Silver';
+        const color = redlineType === 'missing'
+          ? 'Turquoise'
+          : riskLevel === 'RED'
+            ? 'Red'
+            : riskLevel === 'YELLOW'
+              ? 'Yellow'
+              : 'BrightGreen';
         result.range.font.highlightColor = color;
         result.range.select();
         await context.sync();
@@ -2643,7 +2694,7 @@ async function findContentControlByTag(
   // CC tags are prefixed with 'cr-' to avoid collision with other add-ins
   const prefixedTag = tag.startsWith('cr-') ? tag : `cr-${tag}`;
   const ccCollection = context.document.contentControls.getByTag(prefixedTag);
-  ccCollection.load('items');
+  ccCollection.load('items,items/length');
   await context.sync();
   if (ccCollection.items.length > 0) {
     const cc = ccCollection.items[0];
@@ -2715,7 +2766,6 @@ async function highlightAIRedlines(redlines: RedlineItem[]): Promise<void> {
             try {
               const targetPara = paragraphs.items[redline.paragraph_index];
               if (targetPara) {
-                const targetParaRange = targetPara.getRange();
                 // Check each result to see which one is in the target paragraph
                 for (const item of results.items) {
                   const parentPara = item.paragraphs.getFirst();
@@ -2758,48 +2808,6 @@ async function highlightAIRedlines(redlines: RedlineItem[]): Promise<void> {
   } catch (error) {
     log.error('Bulk highlight error:', error);
   }
-}
-
-/**
- * Compute word-level diffs between original and replacement text.
- * Uses a greedy LCS-like approach to identify keep/replace/delete/insert operations.
- * Returns operations suitable for surgical Word API search+replace.
- */
-function computeWordDiffs(original: string, replacement: string): Array<{type: 'keep'|'replace'|'delete'|'insert', oldText: string, newText: string}> {
-  const origWords = original.split(/(\s+)/);
-  const replWords = replacement.split(/(\s+)/);
-  const diffs: Array<{type: 'keep'|'replace'|'delete'|'insert', oldText: string, newText: string}> = [];
-  let i = 0, j = 0;
-  while (i < origWords.length && j < replWords.length) {
-    if (origWords[i] === replWords[j]) {
-      diffs.push({type: 'keep', oldText: origWords[i], newText: replWords[j]});
-      i++; j++;
-    } else {
-      // Find next matching word in both sequences (look ahead up to 10 tokens)
-      let foundOrig = -1, foundRepl = -1;
-      for (let k = i + 1; k < Math.min(i + 10, origWords.length); k++) {
-        if (origWords[k] === replWords[j]) { foundOrig = k; break; }
-      }
-      for (let k = j + 1; k < Math.min(j + 10, replWords.length); k++) {
-        if (replWords[k] === origWords[i]) { foundRepl = k; break; }
-      }
-      if (foundOrig >= 0 && (foundRepl < 0 || foundOrig - i <= foundRepl - j)) {
-        // Delete words from original until match
-        for (let k = i; k < foundOrig; k++) diffs.push({type: 'delete', oldText: origWords[k], newText: ''});
-        i = foundOrig;
-      } else if (foundRepl >= 0) {
-        // Insert words from replacement until match
-        for (let k = j; k < foundRepl; k++) diffs.push({type: 'insert', oldText: '', newText: replWords[k]});
-        j = foundRepl;
-      } else {
-        diffs.push({type: 'replace', oldText: origWords[i], newText: replWords[j]});
-        i++; j++;
-      }
-    }
-  }
-  while (i < origWords.length) { diffs.push({type: 'delete', oldText: origWords[i++], newText: ''}); }
-  while (j < replWords.length) { diffs.push({type: 'insert', oldText: '', newText: replWords[j++]}); }
-  return diffs;
 }
 
 /**
@@ -3234,6 +3242,9 @@ async function applyAllRedlines(): Promise<void> {
       try {
         const surroundingContext = await getSurroundingContext(redline.clause_text);
         const currentPlaybookId = playbookSelect()?.value || undefined;
+        const currentJurisdiction = (
+          document.getElementById('jurisdictionSelect') as HTMLSelectElement | null
+        )?.value || undefined;
 
         const result = await api.generateFix({
           originalText: redline.clause_text,
@@ -3243,6 +3254,8 @@ async function applyAllRedlines(): Promise<void> {
           redlineType: redline.redline_type || 'violation',
           surroundingContext,
           playbookId: currentPlaybookId,
+          contractText: lastScannedText || undefined,
+          jurisdiction: currentJurisdiction,
         });
 
         // Store on card and show in generate panel

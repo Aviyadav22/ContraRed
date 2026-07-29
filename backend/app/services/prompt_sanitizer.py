@@ -78,6 +78,22 @@ def sanitize_for_prompt(text: str, max_length: int = 50000) -> str:
     return cleaned[:max_length]
 
 
+def sanitize_evidence_for_prompt(
+    text: str, max_length: int = 50000
+) -> str:
+    """Prepare source evidence without changing legally significant wording.
+
+    Contract text can contain phrases that resemble prompt injection. Replacing
+    those words breaks verbatim quote anchoring, so evidence is control-cleaned
+    and length-bounded only. Prompt templates must place it in a clearly
+    labelled evidence boundary.
+    """
+    if not text or not isinstance(text, str):
+        return ""
+    cleaned = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+    return cleaned[:max_length]
+
+
 def validate_contract_length(
     text: str,
     max_chars: int = 1_000_000,

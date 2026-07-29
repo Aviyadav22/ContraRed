@@ -1,5 +1,5 @@
 import pytest
-from app.services.drafting.models import DraftRequest, PartyInfo, NDADetails, SaaSDetails
+from app.services.drafting.models import DraftRequest
 
 
 @pytest.mark.asyncio

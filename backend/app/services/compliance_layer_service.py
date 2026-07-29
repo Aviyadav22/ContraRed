@@ -3,8 +3,10 @@ Compliance Layer Service.
 Handles loading, seeding, and merging of compliance layer rules with playbook rules.
 """
 
+import copy
 import logging
-from typing import Dict, List, Optional
+from datetime import date, datetime
+from typing import Any, Dict, List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +37,19 @@ async def get_active_layers(db: AsyncSession) -> List[Dict]:
             "description": layer.description,
             "jurisdiction": layer.jurisdiction,
             "version": layer.version,
+            "source_url": layer.source_url,
+            "gazette_date": (
+                layer.gazette_date.isoformat()
+                if layer.gazette_date else None
+            ),
+            "effective_date": (
+                layer.effective_date.isoformat()
+                if layer.effective_date else None
+            ),
+            "last_verified_at": (
+                layer.last_verified_at.isoformat()
+                if layer.last_verified_at else None
+            ),
             "rule_count": len(layer.rules),
         }
         for layer in layers
@@ -59,9 +74,19 @@ async def get_layer_rules_as_dicts(db: AsyncSession, layer_code: str) -> List[Di
         return []
 
     rules = []
+    provenance_context = (
+        f"Official legal source: {layer.source_url or 'not recorded'}. "
+        f"Gazette date: {layer.gazette_date.isoformat() if layer.gazette_date else 'not recorded'}. "
+        f"Main effective date for this layer: "
+        f"{layer.effective_date.isoformat() if layer.effective_date else 'not recorded'}. "
+        "Assess applicability from the contract facts and the law's phased "
+        "commencement; do not assume every obligation is currently operative."
+    )
     for rule in sorted(layer.rules, key=lambda r: r.sort_order):
         rules.append({
+            "id": f"compliance:{layer.code}:{rule.id}",
             "name": rule.clause_type,
+            "clause_type": rule.clause_type,
             "risk_level": rule.risk_level.upper() if rule.risk_level else "YELLOW",
             "primary_position": rule.primary_position or "",
             "fallback_position": rule.fallback_position or "",
@@ -71,10 +96,27 @@ async def get_layer_rules_as_dicts(db: AsyncSession, layer_code: str) -> List[Di
             "acceptable_position": rule.acceptable_position or "",
             "unacceptable_signals": rule.unacceptable_signals or [],
             "acceptable_signals": rule.acceptable_signals or [],
-            "clause_context": "",
-            "verification_prompt": "",
+            "clause_context": provenance_context,
+            "verification_prompt": (
+                "Based only on the supplied contract evidence, is this legal "
+                "rule applicable, and is the stated obligation satisfied? "
+                "Identify the exact supporting or conflicting text."
+            ),
+            "detection_patterns": copy.deepcopy(
+                rule.detection_patterns or {}
+            ),
             # Tag for grouping in results
             "_compliance_layer": layer_code,
+            "_compliance_layers": [layer_code],
+            "_legal_source_url": layer.source_url,
+            "_legal_effective_date": (
+                layer.effective_date.isoformat()
+                if layer.effective_date else None
+            ),
+            "_legal_last_verified_at": (
+                layer.last_verified_at.isoformat()
+                if layer.last_verified_at else None
+            ),
         })
     return rules
 
@@ -107,7 +149,7 @@ def merge_rules(
     # Add playbook rules first
     for rule in playbook_rules:
         name = rule.get("name", "")
-        merged[name] = rule
+        merged[name] = copy.deepcopy(rule)
 
     # Overlay compliance layer rules
     for rule in layer_rules:
@@ -126,12 +168,21 @@ def merge_rules(
             new_severity = _RISK_SEVERITY.get(rule.get("risk_level", "GREEN"), 0)
 
             if new_severity >= existing_severity:
-                # Compliance layer is stricter or equal — replace
-                merged[existing_key] = rule
-            # else: playbook rule is stricter — keep it
+                # Compliance layer is stricter or equal - replace.
+                merged[existing_key] = copy.deepcopy(rule)
+            else:
+                # Preserve statutory provenance even when a firmer client
+                # playbook position is the effective obligation.
+                existing_copy = copy.deepcopy(existing)
+                layers = set(existing_copy.get("_compliance_layers") or [])
+                layer_code = str(rule.get("_compliance_layer") or "")
+                if layer_code:
+                    layers.add(layer_code)
+                existing_copy["_compliance_layers"] = sorted(layers)
+                merged[existing_key] = existing_copy
         else:
             # Unique compliance layer rule — add it
-            merged[name] = rule
+            merged[name] = copy.deepcopy(rule)
 
     return list(merged.values())
 
@@ -184,17 +235,29 @@ def calculate_compliance_score(layer_results: List[Dict]) -> Dict:
             "partial": 0,
             "non_compliant": 0,
             "not_applicable": 0,
+            "unassessed": 0,
             "total_rules": 0,
             "deal_breakers_failing": 0,
+            "complete": False,
+            "status": "not_assessed",
         }
 
     compliant = 0
     partial = 0
     non_compliant = 0
     not_applicable = 0
+    unassessed = 0
     deal_breakers_failing = 0
 
     for result in layer_results:
+        assessment_status = str(result.get("status") or "").lower()
+        if assessment_status == "not_applicable":
+            not_applicable += 1
+            continue
+        if assessment_status in {"unassessed", "unverified"}:
+            unassessed += 1
+            continue
+
         risk = result.get("risk_level", "").upper()
         is_deal_breaker = result.get("is_deal_breaker", False)
 
@@ -207,7 +270,7 @@ def calculate_compliance_score(layer_results: List[Dict]) -> Dict:
             if is_deal_breaker:
                 deal_breakers_failing += 1
         else:
-            not_applicable += 1
+            unassessed += 1
 
     total = len(layer_results)
     applicable = total - not_applicable
@@ -221,13 +284,70 @@ def calculate_compliance_score(layer_results: List[Dict]) -> Dict:
         "partial": partial,
         "non_compliant": non_compliant,
         "not_applicable": not_applicable,
+        "unassessed": unassessed,
         "total_rules": total,
         "deal_breakers_failing": deal_breakers_failing,
+        "complete": unassessed == 0,
+        "status": "complete" if unassessed == 0 else "incomplete",
     }
 
 
+def build_compliance_layer_score(
+    layer_code: str,
+    effective_rules: List[Dict[str, Any]],
+    pipeline_result,
+) -> Dict:
+    """Score every effective obligation, including silent/unassessed rules."""
+    tagged_rules = [
+        rule for rule in effective_rules
+        if layer_code in set(
+            rule.get("_compliance_layers")
+            or [rule.get("_compliance_layer")]
+        )
+    ]
+    coverage = pipeline_result.playbook_coverage or {}
+    statuses = coverage.get("rule_statuses", {})
+    unresolved = set(coverage.get("unverified_finding_rule_ids", []))
+    redlines_by_rule: Dict[str, List[Any]] = {}
+    for redline in pipeline_result.redlines:
+        redlines_by_rule.setdefault(str(redline.rule_id or ""), []).append(
+            redline
+        )
+
+    rows: List[Dict[str, Any]] = []
+    for rule in tagged_rules:
+        rule_id = str(rule.get("id") or rule.get("rule_id") or "")
+        assessment_status = statuses.get(rule_id, "unassessed")
+        if rule_id in unresolved:
+            assessment_status = "unverified"
+        redlines = redlines_by_rule.get(rule_id, [])
+        if assessment_status == "compliant":
+            risk_level = "GREEN"
+        elif assessment_status == "not_applicable":
+            risk_level = ""
+        elif redlines:
+            risk_level = max(
+                (item.risk_level for item in redlines),
+                key=lambda risk: _RISK_SEVERITY.get(risk, 0),
+            )
+        elif assessment_status in {"violation", "missing"}:
+            risk_level = str(rule.get("risk_level") or "YELLOW").upper()
+        else:
+            risk_level = ""
+        rows.append({
+            "rule_id": rule_id,
+            "status": assessment_status,
+            "risk_level": risk_level,
+            "is_deal_breaker": bool(rule.get("is_deal_breaker")),
+        })
+
+    score = calculate_compliance_score(rows)
+    score["layer_code"] = layer_code
+    return score
+
+
 async def seed_compliance_layers(db: AsyncSession) -> int:
-    """Seed default compliance layers if they don't exist. Returns count of layers seeded."""
+    """Create or upgrade built-in legal layers by source version."""
     from scripts.compliance_layers.dpdp import DPDP_LAYER
 
     all_layers = [DPDP_LAYER]
@@ -236,47 +356,91 @@ async def seed_compliance_layers(db: AsyncSession) -> int:
     for layer_def in all_layers:
         code = layer_def["code"]
 
-        # Check if already exists
-        existing = await db.execute(
+        existing_result = await db.execute(
             select(ComplianceLayer).where(ComplianceLayer.code == code)
         )
-        if existing.scalar_one_or_none() is not None:
-            logger.info(f"Compliance layer '{code}' already exists, skipping")
+        layer = existing_result.scalar_one_or_none()
+        source_version = int(layer_def.get("version", 1))
+        if layer is not None and layer.version >= source_version:
+            logger.info(
+                "Compliance layer '%s' is current at version %d",
+                code,
+                layer.version,
+            )
             continue
 
-        # Create layer
-        layer = ComplianceLayer(
-            code=code,
-            name=layer_def["name"],
-            description=layer_def["description"],
-            jurisdiction=layer_def.get("jurisdiction"),
-            version=1,
-            is_active=True,
-        )
-        db.add(layer)
-        await db.flush()  # Get layer.id
-
-        # Create rules
-        for rule_def in layer_def["rules"]:
-            rule = ComplianceLayerRule(
-                layer_id=layer.id,
-                clause_type=rule_def["clause_type"],
-                primary_position=rule_def["primary_position"],
-                fallback_position=rule_def.get("fallback_position"),
-                risk_level=rule_def.get("risk_level", "YELLOW"),
-                is_deal_breaker=rule_def.get("is_deal_breaker", False),
-                detection_patterns=rule_def.get("detection_patterns"),
-                detection_mode=rule_def.get("detection_mode", "ai_with_keywords"),
-                risk_description=rule_def.get("risk_description"),
-                acceptable_position=rule_def.get("acceptable_position"),
-                unacceptable_signals=rule_def.get("unacceptable_signals"),
-                acceptable_signals=rule_def.get("acceptable_signals"),
-                sort_order=rule_def.get("sort_order", 0),
+        if layer is None:
+            layer = ComplianceLayer(
+                code=code,
+                name=layer_def["name"],
+                description=layer_def["description"],
+                jurisdiction=layer_def.get("jurisdiction"),
+                version=source_version,
+                is_active=True,
             )
-            db.add(rule)
+            db.add(layer)
+            await db.flush()
+
+        layer.name = layer_def["name"]
+        layer.description = layer_def["description"]
+        layer.jurisdiction = layer_def.get("jurisdiction")
+        layer.version = source_version
+        layer.source_url = layer_def.get("source_url")
+        layer.gazette_date = (
+            date.fromisoformat(layer_def["gazette_date"])
+            if layer_def.get("gazette_date") else None
+        )
+        layer.effective_date = (
+            date.fromisoformat(layer_def["effective_date"])
+            if layer_def.get("effective_date") else None
+        )
+        layer.last_verified_at = (
+            datetime.fromisoformat(layer_def["last_verified_at"])
+            if layer_def.get("last_verified_at") else None
+        )
+        layer.is_active = True
+
+        current_rules_result = await db.execute(
+            select(ComplianceLayerRule).where(
+                ComplianceLayerRule.layer_id == layer.id
+            )
+        )
+        current_rules = {
+            rule.clause_type: rule
+            for rule in current_rules_result.scalars().all()
+        }
+
+        for rule_def in layer_def["rules"]:
+            clause_type = rule_def["clause_type"]
+            rule = current_rules.get(clause_type)
+            if rule is None:
+                rule = ComplianceLayerRule(
+                    layer_id=layer.id,
+                    clause_type=clause_type,
+                )
+                db.add(rule)
+            rule.primary_position = rule_def["primary_position"]
+            rule.fallback_position = rule_def.get("fallback_position")
+            rule.risk_level = rule_def.get("risk_level", "YELLOW")
+            rule.is_deal_breaker = rule_def.get("is_deal_breaker", False)
+            rule.detection_patterns = rule_def.get("detection_patterns")
+            rule.detection_mode = rule_def.get(
+                "detection_mode",
+                "ai_with_keywords",
+            )
+            rule.risk_description = rule_def.get("risk_description")
+            rule.acceptable_position = rule_def.get("acceptable_position")
+            rule.unacceptable_signals = rule_def.get("unacceptable_signals")
+            rule.acceptable_signals = rule_def.get("acceptable_signals")
+            rule.sort_order = rule_def.get("sort_order", 0)
 
         await db.commit()
         seeded += 1
-        logger.info(f"Seeded compliance layer '{code}' with {len(layer_def['rules'])} rules")
+        logger.info(
+            "Created or upgraded compliance layer '%s' to version %d with %d rules",
+            code,
+            source_version,
+            len(layer_def["rules"]),
+        )
 
     return seeded

@@ -1,6 +1,5 @@
 """Tests for NDA Mutual and Unilateral drafting playbooks."""
 
-import pytest
 
 
 def test_nda_mutual_playbook_exists():

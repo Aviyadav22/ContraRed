@@ -10,14 +10,21 @@ Provides REST API for the 5-agent DPDP compliance system:
 """
 
 import logging
-from typing import Optional
+from datetime import datetime, timezone
+from typing import List, Literal, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_current_user
+from app.core.permissions import require_role
 from app.db.session import get_db
+from app.models.consent import Grievance, RightsRequest
+from app.models.user import User, UserRole
+from app.services.breach_notification_service import breach_notification_service
 from app.services.dpdp.orchestrator import get_dpdp_orchestrator
 from app.services.dpdp.models import (
     ContractScanRequest,
@@ -125,17 +132,17 @@ async def run_assessment(
 # ---- Remediation ----
 
 
-@router.post("/remediate", summary="Generate DPDP-compliant document")
+@router.post("/remediate", summary="Generate DPDP-oriented draft for legal review")
 async def generate_remediation(
     request: RemediationRequest,
     current_user=Depends(get_current_user),
 ):
-    """Generate DPDP-compliant remediation content.
+    """Generate DPDP-oriented remediation content for legal and factual review.
 
     Supported types:
-    - contract_clause: Compliant contract language
-    - dpa_template: Full Data Processing Agreement
-    - privacy_notice: DPDP Section 5 compliant notice
+    - contract_clause: Draft contract language addressing selected gaps
+    - dpa_template: Data Processing Agreement draft
+    - privacy_notice: Notice draft aligned to DPDP Section 5 / Rule 3
     - consent_form: Granular consent collection form
     - breach_notification_template: DPB + data principal templates
     - policy_update: Privacy policy update recommendations
@@ -151,18 +158,72 @@ async def generate_breach_notification(
     input_data: BreachNotificationInput,
     current_user=Depends(get_current_user),
 ):
-    """Generate dual breach notifications for DPB (72hr) and CERT-In (6hr).
+    """Generate staged DPDP notices and a conditional CERT-In template.
 
-    Produces three separate notifications:
-    1. Data Protection Board notification (Section 8(6))
-    2. Affected Data Principals notification
-    3. CERT-In incident report (6-hour window)
+    Produces:
+    1. Initial Board notice due without delay
+    2. Detailed Board update due within 72 hours unless extended
+    3. Affected Data Principal notice due without delay
+    4. CERT-In template for incidents within its specified reportable categories
 
-    Also calculates remaining time for each deadline.
+    Also calculates the remaining time for the detailed and conditional reports.
     """
     orchestrator = get_dpdp_orchestrator()
     notification = await orchestrator.generate_breach_notification(input_data)
     return notification.model_dump()
+
+
+class BreachReportRequest(BaseModel):
+    breach_type: str = Field(..., min_length=3, max_length=100)
+    description: str = Field(..., min_length=10, max_length=4000)
+    affected_user_ids: List[UUID] = Field(..., min_length=1, max_length=1000)
+    discovered_at: Optional[datetime] = None
+    severity: Literal["low", "medium", "high", "critical"] = "high"
+
+
+@router.post("/breaches/report", summary="Report and notify affected account holders")
+async def report_personal_data_breach(
+    report: BreachReportRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """Create an auditable breach workflow and send affected-user notices."""
+    discovered_at = report.discovered_at
+    if discovered_at:
+        if discovered_at.tzinfo is None:
+            discovered_at = discovered_at.replace(tzinfo=timezone.utc)
+        if discovered_at > datetime.now(timezone.utc):
+            raise HTTPException(status_code=400, detail="discovered_at cannot be in the future")
+
+    user_result = await db.execute(
+        select(User.id, User.organization_id).where(
+            User.id.in_(report.affected_user_ids)
+        )
+    )
+    matched = {row.id: row.organization_id for row in user_result.all()}
+    if set(report.affected_user_ids) != set(matched):
+        raise HTTPException(status_code=400, detail="One or more affected users do not exist")
+    if (
+        current_user.role != UserRole.SUPER_ADMIN
+        and (
+            current_user.organization_id is None
+            or any(
+                org_id is None
+                or org_id != current_user.organization_id
+                for org_id in matched.values()
+            )
+        )
+    ):
+        raise HTTPException(status_code=403, detail="Affected users must belong to your organization")
+
+    return await breach_notification_service.report_breach(
+        db=db,
+        breach_type=report.breach_type,
+        description=report.description,
+        affected_user_ids=report.affected_user_ids,
+        discovered_at=discovered_at,
+        severity=report.severity,
+    )
 
 
 @router.get("/remediate/templates", summary="List available remediation templates")
@@ -183,9 +244,9 @@ async def list_templates(
 
 
 _TEMPLATE_DESCRIPTIONS = {
-    "contract_clause": "Generate DPDP-compliant contract clauses to address specific gaps",
-    "dpa_template": "Full Data Processing Agreement template compliant with Section 8(2)",
-    "privacy_notice": "Privacy Notice compliant with DPDP Section 5 (English + Hindi)",
+    "contract_clause": "Generate DPDP-oriented contract clauses for legal review",
+    "dpa_template": "Data Processing Agreement draft aligned to Section 8(2), for legal review",
+    "privacy_notice": "Privacy Notice draft aligned to DPDP Section 5 in the requested supported language",
     "consent_form": "Granular consent collection form with per-purpose toggles",
     "breach_notification_template": "Breach notification templates for DPB, data principals, and CERT-In",
     "policy_update": "Recommendations for updating existing privacy policies to DPDP standards",
@@ -204,7 +265,7 @@ async def get_dashboard(
     """Get real-time DPDP compliance posture dashboard.
 
     Includes:
-    - Upcoming deadlines (consent manager Nov 2026, enforcement May 2027)
+    - Upcoming deadlines (Consent Manager provisions Nov 2026, substantive phase May 2027)
     - Active alerts and recommendations
     - Pending rights requests and grievances
     - Contracts scanned count
@@ -220,7 +281,7 @@ async def get_dashboard(
 # ---- Rights Management ----
 
 
-@router.post("/rights/request", summary="Submit a Data Principal rights request")
+@router.post("/rights/request", summary="Submit a Data Principal rights request", deprecated=True)
 async def submit_rights_request(
     input_data: RightsRequestInput,
     db: AsyncSession = Depends(get_db),
@@ -228,7 +289,7 @@ async def submit_rights_request(
 ):
     """Submit a DPDP rights request (access, correction, erasure, nomination, portability).
 
-    Automatically sets 90-day resolution deadline and logs to audit trail.
+    Applies the service's internal 90-day target and logs to the audit trail.
     """
     orchestrator = get_dpdp_orchestrator()
     org_id = getattr(current_user, "organization_id", None)
@@ -240,7 +301,7 @@ async def submit_rights_request(
     )
 
 
-@router.get("/rights/requests", summary="List rights requests")
+@router.get("/rights/requests", summary="List rights requests", deprecated=True)
 async def list_rights_requests(
     status: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -253,9 +314,15 @@ async def list_rights_requests(
     """
     orchestrator = get_dpdp_orchestrator()
     org_id = getattr(current_user, "organization_id", None)
-    role = getattr(current_user, "role", "viewer")
+    role = current_user.role
 
-    if role in ("admin", "super_admin"):
+    if role == UserRole.SUPER_ADMIN:
+        return await orchestrator.get_rights_requests(
+            db,
+            organization_id=None,
+            status_filter=status,
+        )
+    if role == UserRole.ADMIN and org_id is not None:
         return await orchestrator.get_rights_requests(
             db,
             organization_id=str(org_id) if org_id else None,
@@ -276,7 +343,7 @@ class RightsRequestUpdate(BaseModel):
     resolution_notes: Optional[str] = None
 
 
-@router.patch("/rights/requests/{request_id}", summary="Update a rights request")
+@router.patch("/rights/requests/{request_id}", summary="Update a rights request", deprecated=True)
 async def update_rights_request(
     request_id: str,
     update: RightsRequestUpdate,
@@ -284,25 +351,46 @@ async def update_rights_request(
     current_user=Depends(get_current_user),
 ):
     """Update a rights request status (admin only)."""
-    role = getattr(current_user, "role", "viewer")
-    if role not in ("admin", "super_admin"):
+    role = current_user.role
+    if role not in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    orchestrator = get_dpdp_orchestrator()
-    return await orchestrator.update_rights_request(
-        db,
-        request_id=request_id,
-        new_status=update.status,
-        response_details=update.response_details,
-        assigned_to=update.assigned_to,
-        resolution_notes=update.resolution_notes,
+    try:
+        request_uuid = UUID(request_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid request ID")
+    request_result = await db.execute(
+        select(RightsRequest).where(RightsRequest.id == request_uuid)
     )
+    rights_request = request_result.scalar_one_or_none()
+    if not rights_request or (
+        role != UserRole.SUPER_ADMIN
+        and (
+            current_user.organization_id is None
+            or rights_request.organization_id is None
+            or rights_request.organization_id != current_user.organization_id
+        )
+    ):
+        raise HTTPException(status_code=404, detail="Rights request not found")
+
+    orchestrator = get_dpdp_orchestrator()
+    try:
+        return await orchestrator.update_rights_request(
+            db,
+            request_id=request_id,
+            new_status=update.status,
+            response_details=update.response_details,
+            assigned_to=update.assigned_to,
+            resolution_notes=update.resolution_notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 # ---- Grievances ----
 
 
-@router.post("/grievances", summary="File a DPDP grievance")
+@router.post("/grievances", summary="File a DPDP grievance", deprecated=True)
 async def file_grievance(
     input_data: GrievanceInput,
     db: AsyncSession = Depends(get_db),
@@ -310,7 +398,8 @@ async def file_grievance(
 ):
     """File a DPDP Section 13 grievance.
 
-    Auto-sets 30-day response deadline. Acknowledgment expected within 48 hours.
+    Applies the service's internal 30-day response target. Any acknowledgment
+    target is operational policy, not a separate DPDP statutory deadline.
     """
     orchestrator = get_dpdp_orchestrator()
     org_id = getattr(current_user, "organization_id", None)
@@ -322,7 +411,7 @@ async def file_grievance(
     )
 
 
-@router.get("/grievances", summary="List grievances")
+@router.get("/grievances", summary="List grievances", deprecated=True)
 async def list_grievances(
     status: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -331,9 +420,15 @@ async def list_grievances(
     """List grievances. Admin sees org-wide, users see their own."""
     orchestrator = get_dpdp_orchestrator()
     org_id = getattr(current_user, "organization_id", None)
-    role = getattr(current_user, "role", "viewer")
+    role = current_user.role
 
-    if role in ("admin", "super_admin"):
+    if role == UserRole.SUPER_ADMIN:
+        return await orchestrator.get_grievances(
+            db,
+            organization_id=None,
+            status_filter=status,
+        )
+    if role == UserRole.ADMIN and org_id is not None:
         return await orchestrator.get_grievances(
             db,
             organization_id=str(org_id) if org_id else None,
@@ -353,7 +448,7 @@ class GrievanceUpdate(BaseModel):
     resolution_notes: Optional[str] = None
 
 
-@router.patch("/grievances/{grievance_id}", summary="Update a grievance")
+@router.patch("/grievances/{grievance_id}", summary="Update a grievance", deprecated=True)
 async def update_grievance(
     grievance_id: str,
     update: GrievanceUpdate,
@@ -361,18 +456,39 @@ async def update_grievance(
     current_user=Depends(get_current_user),
 ):
     """Update grievance status (admin only)."""
-    role = getattr(current_user, "role", "viewer")
-    if role not in ("admin", "super_admin"):
+    role = current_user.role
+    if role not in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    orchestrator = get_dpdp_orchestrator()
-    return await orchestrator.update_grievance(
-        db,
-        grievance_id=grievance_id,
-        new_status=update.status,
-        assigned_to=update.assigned_to,
-        resolution_notes=update.resolution_notes,
+    try:
+        grievance_uuid = UUID(grievance_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid grievance ID")
+    grievance_result = await db.execute(
+        select(Grievance).where(Grievance.id == grievance_uuid)
     )
+    grievance = grievance_result.scalar_one_or_none()
+    if not grievance or (
+        role != UserRole.SUPER_ADMIN
+        and (
+            current_user.organization_id is None
+            or grievance.organization_id is None
+            or grievance.organization_id != current_user.organization_id
+        )
+    ):
+        raise HTTPException(status_code=404, detail="Grievance not found")
+
+    orchestrator = get_dpdp_orchestrator()
+    try:
+        return await orchestrator.update_grievance(
+            db,
+            grievance_id=grievance_id,
+            new_status=update.status,
+            assigned_to=update.assigned_to,
+            resolution_notes=update.resolution_notes,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 # ---- Nominations ----
@@ -385,7 +501,7 @@ class NominationCreate(BaseModel):
     relationship: Optional[str] = None
 
 
-@router.post("/nominations", summary="Create a nomination")
+@router.post("/nominations", summary="Create a nomination", deprecated=True)
 async def create_nomination(
     data: NominationCreate,
     db: AsyncSession = Depends(get_db),
@@ -406,7 +522,7 @@ async def create_nomination(
     )
 
 
-@router.get("/nominations", summary="List nominations")
+@router.get("/nominations", summary="List nominations", deprecated=True)
 async def list_nominations(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(get_current_user),
@@ -416,7 +532,7 @@ async def list_nominations(
     return await orchestrator.get_nominations(db, str(current_user.id))
 
 
-@router.delete("/nominations/{nomination_id}", summary="Revoke a nomination")
+@router.delete("/nominations/{nomination_id}", summary="Revoke a nomination", deprecated=True)
 async def revoke_nomination(
     nomination_id: str,
     db: AsyncSession = Depends(get_db),
@@ -439,14 +555,23 @@ async def get_overdue(
 ):
     """Get all overdue rights requests and grievances (admin only).
 
-    Helps compliance teams track SLA violations.
+    Helps compliance teams track missed published service targets.
     """
-    role = getattr(current_user, "role", "viewer")
-    if role not in ("admin", "super_admin"):
+    role = current_user.role
+    if role not in (UserRole.ADMIN, UserRole.SUPER_ADMIN):
         raise HTTPException(status_code=403, detail="Admin access required")
 
     orchestrator = get_dpdp_orchestrator()
-    org_id = getattr(current_user, "organization_id", None)
+    org_id = (
+        None
+        if role == UserRole.SUPER_ADMIN
+        else getattr(current_user, "organization_id", None)
+    )
+    if role != UserRole.SUPER_ADMIN and org_id is None:
+        raise HTTPException(
+            status_code=403,
+            detail="Organization membership is required for the overdue queue.",
+        )
     return await orchestrator.get_overdue_requests(
         db, organization_id=str(org_id) if org_id else None
     )

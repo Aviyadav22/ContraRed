@@ -1,7 +1,6 @@
 """Tests for institutional memory (org learning) service."""
 import uuid
 import pytest
-import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.org_learning import (

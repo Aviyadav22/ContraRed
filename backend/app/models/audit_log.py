@@ -18,14 +18,16 @@ The chain can be verified with GET /audit-logs/verify.
 import hashlib
 import json
 import logging
-import re
 import uuid
 from datetime import datetime, timezone
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from sqlalchemy import String, DateTime, ForeignKey, Text, BigInteger
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 from app.db.session import Base
 

@@ -4,11 +4,20 @@ ContraRed Backend - AI Contract Redlining API
 Main application entry point.
 """
 
+from contextlib import asynccontextmanager
 import logging
+import os
 import re
 import time
-import traceback
 import uuid
+
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.middleware.gzip import GZipMiddleware
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 # ---------------------------------------------------------------------------
 # Sensitive Data Log Filter — must be installed BEFORE any logger is used
@@ -52,8 +61,7 @@ class SensitiveDataFilter(logging.Filter):
 
 # Install the filter on the root logger so ALL loggers inherit it
 _sensitive_filter = SensitiveDataFilter()
-import os as _os
-_log_level = getattr(logging, _os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
+_log_level = getattr(logging, os.environ.get("LOG_LEVEL", "INFO").upper(), logging.INFO)
 logging.basicConfig(
     level=_log_level,
     format='{"timestamp":"%(asctime)s","level":"%(levelname)s","module":"%(name)s","function":"%(funcName)s","message":"%(message)s"}',
@@ -61,18 +69,16 @@ logging.basicConfig(
 )
 logging.getLogger().addFilter(_sensitive_filter)
 
-from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
-from contextlib import asynccontextmanager
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
-
-from app.core.config import settings
-from app.api.v1.router import api_router
-from app.db.session import init_db
+# Application imports deliberately follow log-filter installation so startup
+# messages from imported modules receive the same secret/PII redaction.
+from app.api.v1.endpoints.auth import limiter  # noqa: E402
+from app.api.v1.router import api_router  # noqa: E402
+from app.core.config import settings  # noqa: E402
+from app.db.session import init_db  # noqa: E402
+from app.middleware.consent_middleware import (  # noqa: E402
+    ConsentEnforcementMiddleware,
+)
+from app.middleware.tenant_context import TenantContextMiddleware  # noqa: E402
 
 APP_VERSION = "1.4.0"
 
@@ -229,7 +235,19 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Token blacklist init failed: %s — revocation disabled", e)
 
-    # Startup - seed default playbooks if missing (non-fatal, time-bounded)
+    # Startup - attach the consent event bus to the shared Redis connection.
+    # Database consent_events remain the durable audit trail if Redis is absent.
+    try:
+        from app.services.cache_service import get_cache
+        from app.services.consent_event_bus import consent_event_bus
+        cache = await get_cache()
+        redis_client = getattr(cache, "_redis", None) if cache.is_connected else None
+        if redis_client:
+            await consent_event_bus.connect(redis_client)
+    except Exception as e:
+        logger.warning("Consent event bus init failed: %s — DB audit trail remains active", e)
+
+    # Startup - create or version-upgrade default playbooks (non-fatal, time-bounded)
     # Hard 3s cap: seeding is best-effort. On a slow/cold DB connection, the
     # inner loop can blow startup to 5+ min (30s asyncpg timeout × 10 playbooks),
     # leaving the container unreachable during its own wake. Playbooks missing
@@ -243,11 +261,29 @@ async def lifespan(app: FastAPI):
                 return await seed_default_playbooks(session)
         n = await _asyncio.wait_for(_do_seed(), timeout=3.0)
         if n:
-            logger.info("Seeded %d default playbook(s)", n)
+            logger.info("Created or upgraded %d default playbook(s)", n)
     except _asyncio.TimeoutError:
         logger.warning("Default playbook seeding exceeded 3s budget — skipping to keep startup fast")
     except Exception as e:
         logger.warning("Default playbook seeding failed: %s — app continues", e)
+
+    # Startup - seed built-in compliance layers used by batch/single analysis.
+    try:
+        import asyncio as _asyncio
+        from app.services.compliance_layer_service import seed_compliance_layers
+        from app.db.session import AsyncSessionLocal
+
+        async def _do_compliance_seed():
+            async with AsyncSessionLocal() as session:
+                return await seed_compliance_layers(session)
+
+        seeded_layers = await _asyncio.wait_for(_do_compliance_seed(), timeout=3.0)
+        if seeded_layers:
+            logger.info("Seeded %d compliance layer(s)", seeded_layers)
+    except _asyncio.TimeoutError:
+        logger.warning("Compliance layer seeding exceeded 3s budget — skipping")
+    except Exception as e:
+        logger.warning("Compliance layer seeding failed: %s — app continues", e)
 
     # Startup - seed DPDP consent purposes and privacy policy (non-fatal)
     try:
@@ -391,11 +427,9 @@ class MaxBodySizeMiddleware(BaseHTTPMiddleware):
 app.add_middleware(MaxBodySizeMiddleware)
 
 # 0.5. Consent enforcement (blocks requests missing required consent)
-from app.middleware.consent_middleware import ConsentEnforcementMiddleware
 app.add_middleware(ConsentEnforcementMiddleware)
 
 # 1. Tenant context for RLS (sets PG session vars from JWT)
-from app.middleware.tenant_context import TenantContextMiddleware
 app.add_middleware(TenantContextMiddleware)
 
 # 1.1. Security headers on all responses
@@ -425,11 +459,9 @@ _trusted = [h.strip() for h in settings.TRUSTED_PROXY_HOSTS.split(",") if h.stri
 app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=_trusted)
 
 # 5. GZip compression (outermost — compresses final response body >= 500 bytes)
-from starlette.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # Rate limiting exception handler with logging
-from app.api.v1.endpoints.auth import limiter
 app.state.limiter = limiter
 
 

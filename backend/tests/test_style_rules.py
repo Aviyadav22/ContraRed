@@ -1,5 +1,4 @@
 from __future__ import annotations
-import pytest
 from app.services.drafting.style_rules import (
     normalize_shall_will,
     normalize_number_words,

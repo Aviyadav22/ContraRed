@@ -9,7 +9,7 @@
  * This is a data processing consent notice per DPDP Act Section 5/6.
  */
 
-import { useState, useEffect, type CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getConsentStatus, grantConsent, type ConsentStatus } from '@/api/client';
 import { Button } from '@/components/ui';
@@ -34,7 +34,6 @@ const bannerStyle: CSSProperties = {
 export function ConsentBanner() {
     const queryClient = useQueryClient();
     const [dismissed, setDismissed] = useState(false);
-    const [visible, setVisible] = useState(false);
 
     const { data: consentStatus } = useQuery<ConsentStatus>({
         queryKey: ['consent-status'],
@@ -43,40 +42,26 @@ export function ConsentBanner() {
         retry: false,
     });
 
-    useEffect(() => {
-        if (!consentStatus) return;
-        // Show banner if user hasn't made any consent choices yet
-        // or if there are unganted optional purposes they haven't seen
-        if (!consentStatus.has_consent_record) {
-            setVisible(true);
-            return;
-        }
-        // Check if any optional AI purposes are not granted and were never explicitly toggled
-        const aiPurposes = consentStatus.purposes.filter(p =>
+    const ungrantedAI = consentStatus?.purposes.filter(p =>
             !p.is_required &&
             !p.granted &&
             !p.withdrawn_at &&
             ['contract_analysis', 'ai_drafting', 'risk_assessment'].includes(p.code)
-        );
-        if (aiPurposes.length > 0) {
-            setVisible(true);
-        }
-    }, [consentStatus]);
+        ) || [];
+    const visible = Boolean(
+        consentStatus &&
+        (!consentStatus.has_consent_record || ungrantedAI.length > 0)
+    );
 
     const grantMutation = useMutation({
         mutationFn: (codes: string[]) => grantConsent(codes),
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ['consent-status'] });
-            setVisible(false);
+            setDismissed(true);
         },
     });
 
     if (!visible || dismissed) return null;
-
-    const ungrantedAI = consentStatus?.purposes.filter(p =>
-        !p.is_required && !p.granted &&
-        ['contract_analysis', 'ai_drafting', 'risk_assessment'].includes(p.code)
-    ) || [];
 
     return (
         <div style={bannerStyle}>

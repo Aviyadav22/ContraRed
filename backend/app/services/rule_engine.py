@@ -14,10 +14,14 @@ Rule Engine 2.0 adds the SmartRule system:
     AND (uncapped OR covers all losses)
 """
 
+from dataclasses import dataclass, field
+from enum import Enum
 import logging
 import re
 import hashlib
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
+
+from app.services.text_normalizer import normalize_text
 
 
 def _safe_compile_regex(pattern: str, timeout_ms: int = 100) -> re.Pattern:
@@ -36,10 +40,6 @@ def _safe_compile_regex(pattern: str, timeout_ms: int = 100) -> re.Pattern:
     if len(pattern) > 500:
         raise ValueError(f"Regex pattern too long ({len(pattern)} chars, max 500)")
     return re.compile(pattern, re.IGNORECASE)
-from dataclasses import dataclass, field
-from enum import Enum
-
-from app.services.text_normalizer import normalize_text
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,11 @@ class RuleMatch:
     # Rule Engine 2.0: track whether escalation/de-escalation was applied
     original_risk_level: Optional[RiskLevel] = None  # Set when escalation changes level
     escalation_reason: Optional[str] = None
+    # Whether this match is itself a deterministic violation or only a
+    # candidate that still needs semantic AI review.  Playbook rules marked
+    # ``ai_with_keywords`` must not become false-positive fallback findings
+    # merely because their topic is mentioned in the contract.
+    detection_mode: str = "keywords_only"
 
     def cache_key(self) -> str:
         """Generate cache key for AI responses."""
@@ -487,7 +492,7 @@ class RuleEngine:
                             if new_risk != effective_risk:
                                 original_risk = effective_risk
                                 effective_risk = new_risk
-                                escalation_reason = f"De-escalated: context matches de-escalation pattern"
+                                escalation_reason = "De-escalated: context matches de-escalation pattern"
                                 logger.debug(
                                     "Rule %s de-escalated %s -> %s",
                                     rule.id, original_risk.value, effective_risk.value,
@@ -502,7 +507,7 @@ class RuleEngine:
                                 if new_risk != effective_risk:
                                     original_risk = effective_risk
                                     effective_risk = new_risk
-                                    escalation_reason = f"Escalated: context matches escalation pattern"
+                                    escalation_reason = "Escalated: context matches escalation pattern"
                                     logger.debug(
                                         "Rule %s escalated %s -> %s",
                                         rule.id, original_risk.value, effective_risk.value,
@@ -522,6 +527,11 @@ class RuleEngine:
                     is_deal_breaker=rule.is_deal_breaker,
                     original_risk_level=original_risk,
                     escalation_reason=escalation_reason,
+                    detection_mode=(
+                        rule.detection_mode
+                        if isinstance(rule, SmartRule)
+                        else "keywords_only"
+                    ),
                 ))
 
         # De-duplicate across ALL rules (same text matched by different rules)
@@ -568,20 +578,24 @@ class RuleEngine:
     
     def _dedupe_cross_rule_matches(self, matches: List[RuleMatch]) -> List[RuleMatch]:
         """
-        Remove duplicate detections where the SAME expanded text was matched.
-        
-        This prevents showing 'Reverse Engineering' 4 times for the same clause.
+        Remove duplicate detections of the SAME RULE on the same expanded text.
+
+        A single contract clause can contain several independent legal issues
+        (for example, an indemnity scope problem and an uncapped-liability
+        problem).  De-duplicating on text alone silently discarded those
+        separate issues and produced materially incomplete reviews.
         """
-        seen_texts = set()
+        seen = set()
         unique = []
         
         for m in matches:
             # Normalize text for comparison (lowercase, collapse whitespace)
             normalized = ' '.join(m.match_text.lower().split())
-            
-            if normalized not in seen_texts:
+            key = (m.rule_id, normalized)
+
+            if key not in seen:
                 unique.append(m)
-                seen_texts.add(normalized)
+                seen.add(key)
         
         return unique
     
@@ -769,4 +783,97 @@ class RuleEngine:
                     is_deal_breaker=rule.is_deal_breaker,
                 ))
 
-        return cls(rules=rules) if rules else cls()
+        # An all-AI playbook legitimately produces an engine with zero regex
+        # rules.  Falling back to the generic engine here made a selected
+        # playbook appear wired while actually evaluating unrelated defaults.
+        return cls(rules=rules)
+
+    @classmethod
+    def from_rule_dicts(cls, playbook_rules: list) -> "RuleEngine":
+        """Create a rule engine from the dictionaries sent to the AI pipeline.
+
+        The live analysis endpoint serializes SQLAlchemy ``PlaybookRule`` rows
+        before handing them to :class:`AnalysisPipeline`.  Previously Stage 2
+        ignored those dictionaries, so user-authored detection patterns never
+        ran.  This mirrors :meth:`from_playbook_rules` without requiring a DB
+        model or session.
+        """
+        rules: List[RulePattern] = []
+        risk_map = {
+            "red": RiskLevel.RED,
+            "yellow": RiskLevel.YELLOW,
+            "green": RiskLevel.GREEN,
+        }
+
+        for data in playbook_rules or []:
+            if not isinstance(data, dict):
+                continue
+
+            rule_id = str(data.get("id") or data.get("rule_id") or data.get("name") or "")
+            name = str(data.get("name") or data.get("rule_name") or data.get("clause_type") or "Unknown Rule")
+            clause_type = str(data.get("clause_type") or name)
+            detection_mode = str(data.get("detection_mode") or "keywords_only")
+
+            detection = data.get("detection_patterns") or {}
+            if isinstance(detection, list):
+                detection = {"patterns": detection, "match_type": data.get("match_type", "exact")}
+            if not isinstance(detection, dict):
+                detection = {}
+
+            raw_patterns = detection.get("patterns", [])
+            if not isinstance(raw_patterns, list):
+                raw_patterns = []
+            match_type = str(detection.get("match_type") or data.get("match_type") or "exact")
+
+            safe_patterns: List[str] = []
+            if detection_mode != "ai_only":
+                for pattern in raw_patterns:
+                    if not isinstance(pattern, str) or not pattern.strip():
+                        continue
+                    try:
+                        if match_type == "exact":
+                            safe_patterns.append(r"\b" + re.escape(pattern.strip()) + r"\b")
+                        elif match_type == "fuzzy":
+                            safe_patterns.append(r"\b" + re.escape(pattern.strip()))
+                        else:
+                            _safe_compile_regex(pattern)
+                            safe_patterns.append(pattern)
+                    except (re.error, ValueError) as exc:
+                        logger.warning("Invalid regex pattern '%s' in rule %s: %s", pattern, rule_id, exc)
+
+            # AI-only rules intentionally have no regex representation.  Rules
+            # with an empty/broken keyword set also cannot contribute to Stage 2.
+            if not safe_patterns:
+                continue
+
+            risk_raw = data.get("risk_level", "yellow")
+            risk_value = getattr(risk_raw, "value", risk_raw)
+            risk_level = risk_map.get(str(risk_value).lower(), RiskLevel.YELLOW)
+
+            def _list_field(key: str) -> List[str]:
+                value = detection.get(key, [])
+                return [str(v) for v in value] if isinstance(value, list) else []
+
+            try:
+                context_window = int(detection.get("context_window", 500))
+            except (TypeError, ValueError):
+                context_window = 500
+            context_window = max(50, min(context_window, 5000))
+
+            rules.append(SmartRule(
+                id=rule_id or name,
+                name=name,
+                clause_type=clause_type,
+                risk_level=risk_level,
+                patterns=safe_patterns,
+                primary_position=str(data.get("primary_position") or ""),
+                fallback_position=data.get("fallback_position") or None,
+                is_deal_breaker=bool(data.get("is_deal_breaker", False)),
+                negative_patterns=_list_field("negative_patterns"),
+                context_window=context_window,
+                escalation_conditions=_list_field("escalation_conditions"),
+                de_escalation_conditions=_list_field("de_escalation_conditions"),
+                detection_mode=detection_mode,
+            ))
+
+        return cls(rules=rules)

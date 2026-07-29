@@ -1,5 +1,5 @@
 import { useLocation, useNavigate, Link } from 'react-router-dom';
-import { useTheme } from '@/contexts/ThemeContext';
+import { useTheme } from '@/contexts/theme';
 import { isAdmin } from '@/api/client';
 import { Tooltip } from '@/components/ui/Tooltip';
 import {

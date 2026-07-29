@@ -12,7 +12,7 @@ from typing import Optional, List
 from uuid import UUID
 from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, case, cast, Float
+from sqlalchemy import case, func, or_, select
 
 from app.db.session import get_db
 from app.api.dependencies import get_current_user
@@ -77,18 +77,42 @@ async def submit_feedback(
     # Validate that the playbook rule belongs to user's org or is public
     if feedback.playbook_rule_id:
         from app.models.playbook import PlaybookRule
+        access_conditions = [
+            Playbook.is_public.is_(True),
+            Playbook.created_by == current_user.id,
+        ]
+        if current_user.organization_id is not None:
+            access_conditions.append(
+                Playbook.organization_id == current_user.organization_id
+            )
         rule_result = await db.execute(
             select(PlaybookRule)
             .join(Playbook, PlaybookRule.playbook_id == Playbook.id)
             .where(PlaybookRule.id == feedback.playbook_rule_id)
-            .where(
-                (Playbook.is_public == True) |
-                (Playbook.organization_id == current_user.organization_id) |
-                (Playbook.created_by == current_user.id)
-            )
+            .where(or_(*access_conditions))
         )
         if not rule_result.scalar_one_or_none():
             raise HTTPException(status_code=403, detail="Access denied to the specified playbook rule")
+
+    if feedback.document_id:
+        from app.models.document import Document
+
+        document_conditions = [Document.user_id == current_user.id]
+        if current_user.organization_id is not None:
+            document_conditions.append(
+                Document.organization_id == current_user.organization_id
+            )
+        document_result = await db.execute(
+            select(Document.id).where(
+                Document.id == feedback.document_id,
+                or_(*document_conditions),
+            )
+        )
+        if document_result.scalar_one_or_none() is None:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied to the specified document",
+            )
 
     entry = RuleFeedback(
         organization_id=current_user.organization_id,
@@ -146,7 +170,11 @@ async def list_feedback(
     db: AsyncSession = Depends(get_db),
 ):
     """List feedback for the current organization with pagination."""
-    base_filter = RuleFeedback.organization_id == current_user.organization_id
+    base_filter = (
+        RuleFeedback.organization_id == current_user.organization_id
+        if current_user.organization_id is not None
+        else RuleFeedback.user_id == current_user.id
+    )
 
     # Build filter conditions
     filters = [base_filter]
@@ -198,9 +226,13 @@ async def get_rule_effectiveness(
 
     try:
         # Subquery: playbook IDs belonging to user's org
+        playbook_scope = (
+            Playbook.organization_id == current_user.organization_id
+            if current_user.organization_id is not None
+            else Playbook.created_by == current_user.id
+        )
         org_playbook_ids = (
-            select(Playbook.id)
-            .where(Playbook.organization_id == current_user.organization_id)
+            select(Playbook.id).where(playbook_scope)
         ).scalar_subquery()
 
         # Aggregate feedback per rule

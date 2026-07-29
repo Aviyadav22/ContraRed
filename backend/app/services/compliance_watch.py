@@ -11,17 +11,14 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from uuid import UUID
 
-from sqlalchemy import select, and_
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.document import Document, DocumentRisk
-from app.services.analysis_pipeline import analysis_pipeline, PipelineResult
 from app.services.compliance_layer_service import (
     get_layer_rules_as_dicts,
-    merge_rules,
     calculate_compliance_score,
 )
-from app.services.playbook_cache import load_default_playbook_for_type
 
 logger = logging.getLogger(__name__)
 
@@ -126,7 +123,10 @@ class ComplianceWatchAgent:
 
         # Find affected documents
         documents = await self.find_affected_documents(org_id, compliance_layer_code)
-        report.total_documents_scanned = len(documents)
+        # Source contract bodies are intentionally not retained. This endpoint
+        # can identify reassessment candidates, but it cannot truthfully claim
+        # that those contracts were re-scanned.
+        report.total_documents_scanned = 0
 
         if not documents:
             report.summary = "No documents found for organization."
@@ -140,24 +140,31 @@ class ComplianceWatchAgent:
                 document_name=doc.filename or str(doc.id),
             )
 
-            # Get old compliance score from existing risks
-            if old_risks:
-                old_layer_results = [
-                    {"risk_level": r.risk_level.value if r.risk_level else "GREEN"}
-                    for r in old_risks
-                ]
-                doc_delta.old_score = calculate_compliance_score(old_layer_results)
-
-            # Compute deltas between old and new risk profile
-            # (Full re-scan requires document text which may not be stored;
-            #  for now, compare existing risks against updated layer rules)
             layer_rules = await get_layer_rules_as_dicts(self.db, compliance_layer_code)
             if layer_rules:
+                old_by_type = {
+                    risk.clause_type: risk for risk in old_risks
+                    if risk.clause_type
+                }
+                old_layer_results = []
+                for rule in layer_rules:
+                    old_risk = old_by_type.get(rule.get("clause_type"))
+                    old_layer_results.append({
+                        "status": "violation" if old_risk else "unassessed",
+                        "risk_level": (
+                            old_risk.risk_level.value.upper()
+                            if old_risk and old_risk.risk_level else ""
+                        ),
+                        "is_deal_breaker": bool(
+                            rule.get("is_deal_breaker")
+                        ),
+                    })
+                doc_delta.old_score = calculate_compliance_score(
+                    old_layer_results
+                )
                 deltas = self._compute_rule_deltas(old_risks, layer_rules)
                 doc_delta.deltas = deltas
-                doc_delta.newly_non_compliant = any(
-                    d.change in ("new_risk", "risk_increased") for d in deltas
-                )
+                doc_delta.newly_non_compliant = False
 
             if doc_delta.deltas:
                 report.document_deltas.append(doc_delta)
@@ -166,7 +173,7 @@ class ComplianceWatchAgent:
             1 for d in report.document_deltas if d.newly_non_compliant
         )
 
-        report.summary = self._build_summary(report)
+        report.summary = self._build_summary(report, len(documents))
         return report
 
     async def _get_existing_risks(self, document_id: UUID) -> List[DocumentRisk]:
@@ -181,59 +188,38 @@ class ComplianceWatchAgent:
         old_risks: List[DocumentRisk],
         new_layer_rules: List[Dict[str, Any]],
     ) -> List[ComplianceDelta]:
-        """Compare old risks against new compliance layer rules."""
-        deltas = []
-        old_by_type = {}
-        for r in old_risks:
-            if r.clause_type:
-                old_by_type[r.clause_type] = r.risk_level.value if r.risk_level else "GREEN"
-
-        risk_order = {"RED": 3, "YELLOW": 2, "GREEN": 1}
-
+        """List rules that require a real source-text reassessment."""
+        deltas: List[ComplianceDelta] = []
+        old_types = {risk.clause_type for risk in old_risks if risk.clause_type}
         for rule in new_layer_rules:
             clause_type = rule.get("clause_type", "")
-            new_risk = rule.get("risk_level", "GREEN")
-            old_risk = old_by_type.get(clause_type)
-
-            if old_risk is None:
-                # New rule — not previously assessed
-                if new_risk in ("RED", "YELLOW"):
-                    deltas.append(ComplianceDelta(
-                        clause_type=clause_type,
-                        old_risk_level=None,
-                        new_risk_level=new_risk,
-                        change="new_risk",
-                        explanation=f"New compliance rule: {rule.get('rule_name', clause_type)}",
-                    ))
-            elif risk_order.get(new_risk, 0) > risk_order.get(old_risk, 0):
-                deltas.append(ComplianceDelta(
-                    clause_type=clause_type,
-                    old_risk_level=old_risk,
-                    new_risk_level=new_risk,
-                    change="risk_increased",
-                    explanation=f"Risk increased from {old_risk} to {new_risk}",
-                ))
-            elif risk_order.get(new_risk, 0) < risk_order.get(old_risk, 0):
-                deltas.append(ComplianceDelta(
-                    clause_type=clause_type,
-                    old_risk_level=old_risk,
-                    new_risk_level=new_risk,
-                    change="risk_decreased",
-                    explanation=f"Risk decreased from {old_risk} to {new_risk}",
-                ))
+            deltas.append(ComplianceDelta(
+                clause_type=clause_type,
+                old_risk_level=(
+                    "finding_recorded" if clause_type in old_types else None
+                ),
+                new_risk_level="UNASSESSED",
+                change="reassessment_required",
+                explanation=(
+                    "Supply the source contract and assess it against the "
+                    "current rule before assigning compliance status."
+                ),
+            ))
 
         return deltas
 
-    def _build_summary(self, report: ComplianceWatchReport) -> str:
+    def _build_summary(
+        self,
+        report: ComplianceWatchReport,
+        documents_considered: Optional[int] = None,
+    ) -> str:
         """Build human-readable summary of compliance watch results."""
+        if documents_considered is None:
+            documents_considered = report.total_documents_scanned
         parts = [
             f"Compliance Watch: {report.compliance_layer_code}.",
-            f"Scanned {report.total_documents_scanned} document(s).",
+            f"Identified {documents_considered} document(s) for reassessment.",
+            "No contract bodies were re-scanned because source text is not "
+            "retained; no new non-compliance determination has been made.",
         ]
-        if report.newly_non_compliant_count > 0:
-            parts.append(
-                f"{report.newly_non_compliant_count} document(s) newly non-compliant."
-            )
-        else:
-            parts.append("No new compliance issues detected.")
         return " ".join(parts)

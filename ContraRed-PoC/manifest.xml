@@ -2,6 +2,7 @@
 <OfficeApp
   xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
   xsi:type="TaskPaneApp">
 
   <Id>c7d8e9f0-a1b2-4c3d-8e5f-6a7b8c9d0e1f</Id>
@@ -11,7 +12,7 @@
   <DisplayName DefaultValue="ContraRed"/>
   <Description DefaultValue="AI-powered contract redlining and review for Microsoft Word"/>
 
-  <IconUrl DefaultValue="https://contrared-addin.netlify.app/assets/logo.png"/>
+  <IconUrl DefaultValue="https://contrared-addin.netlify.app/assets/icon-32.png"/>
   <HighResolutionIconUrl DefaultValue="https://contrared-addin.netlify.app/assets/icon-80.png"/>
   <SupportUrl DefaultValue="https://contrared.com/support"/>
 
@@ -98,9 +99,5 @@
           </bt:LongStrings>
       </Resources>
   </VersionOverrides>
-
-  <!-- Store listing URLs (required for AppSource certification) -->
-  <PrivacyUrl DefaultValue="https://contrared-addin.netlify.app/privacy.html"/>
-  <TermsOfUseUrl DefaultValue="https://contrared-addin.netlify.app/terms.html"/>
 
 </OfficeApp>

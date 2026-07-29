@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import io
 import logging
+import re as _re
+import time as _time
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.api.v1.endpoints.auth import get_current_user
 from app.services.drafting.orchestrator import drafting_orchestrator
 from app.services.drafting.renderer.docx_renderer import render_docx
 from app.services.drafting.renderer.addin_renderer import render_addin_payload
@@ -32,14 +35,9 @@ router = APIRouter()
 # Auth dependency — gracefully degrade in test environments
 # ---------------------------------------------------------------------------
 
-from app.api.v1.endpoints.auth import get_current_user
-
 # ---------------------------------------------------------------------------
 # In-memory draft store (replace with DB persistence when ready)
 # ---------------------------------------------------------------------------
-
-import re as _re
-import time as _time
 
 _draft_store: Dict[str, Any] = {}
 _draft_timestamps: Dict[str, float] = {}

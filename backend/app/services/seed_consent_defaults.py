@@ -1,11 +1,10 @@
 """
 Seed default consent purposes and initial privacy policy for ContraRed.
 
-Called during app startup to ensure all 8 DPDP-required consent purposes exist.
+Called during app startup to ensure the product's processing purposes exist.
 Idempotent: safe to run on every startup.
 """
 
-import hashlib
 import logging
 
 from sqlalchemy import select
@@ -47,7 +46,10 @@ CONSENT_PURPOSES = [
             "in-memory and never stored permanently on our servers (Zero Data Retention mode)."
         ),
         "personal_data_categories": ["contract_content", "document_metadata"],
-        "third_parties": ["Google Vertex AI (US)", "Azure OpenAI (US)"],
+        "third_parties": [
+            "Google Cloud Vertex AI (configured region)",
+            "Azure OpenAI (configured region)",
+        ],
         "retention_period": "Not stored (processed in-memory only)",
         "is_required": False,
         "translations": {
@@ -69,7 +71,10 @@ CONSENT_PURPOSES = [
             "is sent to AI services to generate alternative clause language and fix suggestions."
         ),
         "personal_data_categories": ["contract_content", "clause_context"],
-        "third_parties": ["Google Vertex AI (US)", "Azure OpenAI (US)"],
+        "third_parties": [
+            "Google Cloud Vertex AI (configured region)",
+            "Azure OpenAI (configured region)",
+        ],
         "retention_period": "Not stored (processed in-memory only)",
         "is_required": False,
         "translations": {
@@ -90,8 +95,13 @@ CONSENT_PURPOSES = [
             "legal standards and your organisation's playbook to generate risk ratings (Red/Yellow/Green)."
         ),
         "personal_data_categories": ["contract_content", "risk_metadata"],
-        "third_parties": ["Google Vertex AI (US)", "Azure OpenAI (US)"],
-        "retention_period": "Risk scores retained for 1 year; contract text not stored",
+        "third_parties": [
+            "Google Cloud Vertex AI (configured region)",
+            "Azure OpenAI (configured region)",
+        ],
+        "retention_period": (
+            "Not stored in Zero Data Retention mode; deployment policy applies when ZDR is disabled"
+        ),
         "is_required": False,
         "translations": {
             "hi": {
@@ -113,7 +123,7 @@ CONSENT_PURPOSES = [
         ),
         "personal_data_categories": ["payment_customer_id", "transaction_references"],
         "third_parties": ["Razorpay (India)", "Stripe (US)"],
-        "retention_period": "Duration of subscription + 7 years (tax compliance)",
+        "retention_period": "Applicable tax, accounting, chargeback, and dispute-retention schedule",
         "is_required": False,
         "translations": {
             "hi": {
@@ -152,13 +162,13 @@ CONSENT_PURPOSES = [
         "purpose_code": "error_monitoring",
         "name": "Error Monitoring",
         "description": (
-            "Error tracking using Sentry to identify and fix bugs. All personally identifiable "
-            "information is stripped before errors are sent. Your email, contract text, and "
-            "authentication tokens are never included in error reports."
+            "Error tracking using Sentry to identify and fix bugs. The integration is configured "
+            "to scrub personal data and not intentionally send email, contract text, or "
+            "authentication tokens; residual diagnostic-data risk is monitored."
         ),
         "personal_data_categories": ["anonymised_error_context"],
         "third_parties": ["Sentry (US)"],
-        "retention_period": "90 days",
+        "retention_period": "Up to 90 days, subject to the configured provider schedule",
         "is_required": False,
         "translations": {
             "hi": {
@@ -196,12 +206,12 @@ CONSENT_PURPOSES = [
 
 # Default privacy policy (v1)
 DEFAULT_PRIVACY_POLICY = {
-    "version": 1,
-    "title": "ContraRed Privacy Policy v1.0",
+    "version": 2,
+    "title": "ContraRed Privacy Policy v2.0",
     "language": "en",
     "content": """ContraRed Privacy Policy
 
-Effective Date: April 2026
+Effective Date: July 2026
 
 1. DATA CONTROLLER
 ContraRed ("we", "us") processes your personal data as a Data Fiduciary under India's Digital Personal Data Protection Act, 2023 (DPDP Act).
@@ -217,8 +227,8 @@ ContraRed ("we", "us") processes your personal data as a Data Fiduciary under In
 We process your data only for the specific purposes you have consented to. Each purpose can be independently controlled from your Privacy Settings.
 
 4. THIRD-PARTY PROCESSORS
-- Google Vertex AI (US): AI contract analysis and drafting
-- Azure OpenAI (US): Alternative AI processing
+- Google Cloud Vertex AI (configured region): AI contract analysis and drafting
+- Azure OpenAI (configured region): Alternative AI processing
 - Razorpay (India): INR payment processing
 - Stripe (US): International payment processing
 - Sentry (US): Error monitoring (PII-stripped)
@@ -228,8 +238,8 @@ We process your data only for the specific purposes you have consented to. Each 
 - Account data: Duration of account + 90 days
 - Contract text: Not stored (Zero Data Retention mode)
 - Usage logs: 1 year
-- Payment records: 7 years (tax compliance)
-- Consent records: 7 years (DPDP Act requirement)
+- Payment records: Applicable tax, accounting, chargeback, and dispute-retention schedule
+- Consent evidence: Deployment retention policy; the 7-year minimum applies only if ContraRed is a registered Consent Manager
 
 6. YOUR RIGHTS (DPDP Act Sections 11-14)
 - Right to access your personal data
@@ -239,35 +249,48 @@ We process your data only for the specific purposes you have consented to. Each 
 - Right to grievance redressal
 
 7. CROSS-BORDER TRANSFERS
-Contract text is processed by AI services located in the United States. This transfer is based on your explicit consent.
+Provider regions depend on the deployment configuration. Transfers are subject to current Government restrictions, Rule 15 requirements when effective, contractual safeguards, and any stricter applicable Indian sectoral law. Consent alone does not override a transfer restriction.
 
 8. DATA SECURITY
-We implement AES-256 encryption, TLS 1.3, role-based access control, and immutable audit trails.
+We use transport encryption, role-based access control, hash-chained audit records, and field-level encryption when configured. Deployment-specific controls and residual risks are described in the security schedule.
 
 9. GRIEVANCE OFFICER
-For privacy concerns, contact our Data Protection Officer via the Grievance Redressal section in your account settings.
+For privacy concerns, use the Grievance Redressal section in account settings to contact our privacy contact or, where applicable, our Data Protection Officer.
 
 10. CHANGES TO THIS POLICY
-We will notify you of material changes via email and in-app notification. Continued use after notification constitutes acceptance.
+We will notify you of material changes via email or in-app notification. If a change introduces a new or incompatible consent-based purpose, we will request fresh affirmative consent before that processing begins.
 """,
 }
 
 
 async def seed_consent_purposes(db: AsyncSession) -> None:
-    """Seed default consent purposes if they don't exist. Idempotent."""
+    """Seed version 2 purpose definitions without overwriting historical versions."""
     created_count = 0
+    purpose_version = 2
 
     for purpose_data in CONSENT_PURPOSES:
-        # Check if this purpose code already exists
+        # Keep the old definition for auditability and add a new active version.
         result = await db.execute(
             select(ConsentPurpose)
-            .where(ConsentPurpose.purpose_code == purpose_data["purpose_code"])
+            .where(
+                ConsentPurpose.purpose_code == purpose_data["purpose_code"],
+                ConsentPurpose.version == purpose_version,
+            )
             .limit(1)
         )
         existing = result.scalar()
 
         if not existing:
-            purpose = ConsentPurpose(**purpose_data)
+            prior_result = await db.execute(
+                select(ConsentPurpose).where(
+                    ConsentPurpose.purpose_code == purpose_data["purpose_code"],
+                    ConsentPurpose.is_active.is_(True),
+                )
+            )
+            for prior in prior_result.scalars().all():
+                prior.is_active = False
+
+            purpose = ConsentPurpose(**purpose_data, version=purpose_version)
             db.add(purpose)
             created_count += 1
 
@@ -279,10 +302,13 @@ async def seed_consent_purposes(db: AsyncSession) -> None:
 
 
 async def seed_consent_policy(db: AsyncSession) -> None:
-    """Seed default privacy policy v1 if it doesn't exist. Idempotent."""
+    """Seed the current privacy policy version if it doesn't exist."""
     result = await db.execute(
         select(ConsentPolicy)
-        .where(ConsentPolicy.version == 1, ConsentPolicy.language == "en")
+        .where(
+            ConsentPolicy.version == DEFAULT_PRIVACY_POLICY["version"],
+            ConsentPolicy.language == DEFAULT_PRIVACY_POLICY["language"],
+        )
         .limit(1)
     )
     existing = result.scalar()
@@ -300,7 +326,10 @@ async def seed_consent_policy(db: AsyncSession) -> None:
         await db.commit()
         logger.info("Seeded default privacy policy v%d", policy.version)
     else:
-        logger.debug("Privacy policy v1 already exists")
+        logger.debug(
+            "Privacy policy v%d already exists",
+            DEFAULT_PRIVACY_POLICY["version"],
+        )
 
 
 async def seed_all_consent_defaults(db: AsyncSession) -> None:

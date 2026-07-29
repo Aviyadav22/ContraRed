@@ -13,7 +13,7 @@ import {
     dpdpGetAssessmentQuestions, dpdpRunAssessment,
     type DPDPDashboard, type DPDPScanResult, type DPDPContractFinding,
     type DPDPRemediationOutput, type DPDPDeadline, type DPDPAlert,
-    type DPDPAssessmentQuestion,
+    type DPDPAssessmentQuestion, type DPDPGapAssessment, type DPDPGeneratedReport,
 } from '@/api/client';
 
 type Tab = 'overview' | 'scan' | 'assess' | 'remediate' | 'report';
@@ -41,7 +41,7 @@ export default function DPDPCommandCenter() {
             </div>
             <p style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 24 }}>
                 AI-powered compliance engine for India's Digital Personal Data Protection Act 2023.
-                Scan contracts, assess gaps, generate compliant documents, and track deadlines.
+                Scan contracts, assess gaps, generate drafts for legal review, and track deadlines.
             </p>
 
             {/* Tabs */}
@@ -119,7 +119,7 @@ function OverviewTab() {
                     label="Rights Requests"
                     value={String(dashboard?.pending_rights_requests || 0)}
                     color="var(--accent)"
-                    sub="Pending (90-day SLA)"
+                    sub="Tracked to service target"
                 />
                 <StatCard
                     icon={<AlertTriangle size={18} />}
@@ -160,13 +160,13 @@ function OverviewTab() {
                 <QuickAction
                     icon={<Wrench size={20} />}
                     title="Generate DPA"
-                    description="Create a DPDP-compliant Data Processing Agreement in seconds"
+                    description="Create a DPDP-oriented agreement draft for legal review"
                     color="var(--info)"
                 />
                 <QuickAction
                     icon={<Scale size={20} />}
                     title="Privacy Notice"
-                    description="Generate Section 5 compliant privacy notice (English + Hindi)"
+                    description="Generate a Section 5 / Rule 3 notice draft for legal review"
                     color="var(--green, #22C55E)"
                 />
             </div>
@@ -352,7 +352,7 @@ function RemediateTab() {
             {!selectedType ? (
                 <>
                     <p style={{ fontSize: 14, color: 'var(--text-muted)', marginBottom: 20 }}>
-                        Generate DPDP Act 2023 compliant documents instantly. Select a template to get started.
+                        Generate DPDP-oriented drafts for legal and factual review. Select a template to get started.
                     </p>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
                         {templates.map(t => (
@@ -611,7 +611,7 @@ function AssessTab() {
     const [sdf, setSdf] = useState(false);
     const [crossBorder, setCrossBorder] = useState(false);
     const [answers, setAnswers] = useState<Record<string, string>>({});
-    const [result, setResult] = useState<any>(null);
+    const [result, setResult] = useState<DPDPGapAssessment | null>(null);
 
     const { data: questions, isLoading } = useQuery({
         queryKey: ['dpdp-questions', childrenData, sdf, crossBorder],
@@ -624,7 +624,7 @@ function AssessTab() {
 
     const assessMut = useMutation({
         mutationFn: () => dpdpRunAssessment({
-            org_name: orgName || 'My Organization',
+            organization_name: orgName || 'My Organization',
             industry: industry || undefined,
             answers: Object.entries(answers).map(([qid, ans]) => ({
                 question_id: qid,
@@ -632,7 +632,7 @@ function AssessTab() {
             })),
             processes_children_data: childrenData,
             is_significant_fiduciary: sdf,
-            has_cross_border: crossBorder,
+            has_cross_border_transfers: crossBorder,
         }),
         onSuccess: (data) => setResult(data),
     });
@@ -655,9 +655,7 @@ function AssessTab() {
                             {result.overall_status?.replace('_', ' ').toUpperCase()}
                         </h2>
                         <p style={{ fontSize: 13, color: 'var(--text-muted)', margin: '4px 0 0' }}>
-                            {result.deadline_risk > 0
-                                ? `${result.deadline_risk} days until DPDP enforcement`
-                                : 'DPDP Act is now enforceable'}
+                            {result.deadline_risk}
                         </p>
                     </div>
                     <Button variant="ghost" size="sm" onClick={() => setResult(null)} style={{ marginLeft: 'auto' }}>
@@ -671,9 +669,9 @@ function AssessTab() {
                         <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--red)', marginBottom: 12 }}>
                             Critical Gaps ({result.critical_gaps.length})
                         </h3>
-                        {result.critical_gaps.map((gap: any, i: number) => (
+                        {result.critical_gaps.map((gap, i) => (
                             <div key={i} style={{ padding: 12, borderRadius: 8, border: '1px solid var(--red)', backgroundColor: 'rgba(239,68,68,0.05)', marginBottom: 8, fontSize: 13 }}>
-                                {typeof gap === 'string' ? gap : gap.description || JSON.stringify(gap)}
+                                {gap}
                             </div>
                         ))}
                     </div>
@@ -685,10 +683,10 @@ function AssessTab() {
                         <h3 style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 }}>
                             Recommended Actions
                         </h3>
-                        {result.action_items.map((item: any, i: number) => (
+                        {result.action_items.map((item, i) => (
                             <div key={i} style={{ display: 'flex', gap: 8, padding: '8px 0', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
                                 <span style={{ color: 'var(--accent)', fontWeight: 600, flexShrink: 0 }}>{i + 1}.</span>
-                                <span style={{ color: 'var(--text-primary)' }}>{typeof item === 'string' ? item : item.description || JSON.stringify(item)}</span>
+                                <span style={{ color: 'var(--text-primary)' }}>{item}</span>
                             </div>
                         ))}
                     </div>
@@ -701,7 +699,7 @@ function AssessTab() {
                             Section-by-Section Scores
                         </h3>
                         <div style={{ border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-                            {result.section_scores.map((s: any, i: number) => (
+                            {result.section_scores.map((s, i) => (
                                 <div key={i} style={{
                                     display: 'flex', alignItems: 'center', gap: 12,
                                     padding: '10px 16px', borderBottom: '1px solid var(--border)',
@@ -818,7 +816,7 @@ function AssessTab() {
    ========================================================================= */
 
 function ReportTab() {
-    const [generatedReport, setGeneratedReport] = useState<any>(null);
+    const [generatedReport, setGeneratedReport] = useState<DPDPGeneratedReport | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
 
     const { data: reportHistory } = useQuery({

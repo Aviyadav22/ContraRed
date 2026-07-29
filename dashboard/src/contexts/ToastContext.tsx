@@ -1,20 +1,5 @@
-import { createContext, useContext, useState, useCallback, useRef, type ReactNode } from 'react';
-
-export type ToastVariant = 'success' | 'error' | 'warning' | 'info';
-
-export interface Toast {
-  id: string;
-  message: string;
-  variant: ToastVariant;
-}
-
-interface ToastContextValue {
-  toasts: Toast[];
-  addToast: (message: string, variant: ToastVariant) => void;
-  removeToast: (id: string) => void;
-}
-
-const ToastContext = createContext<ToastContextValue | null>(null);
+import { useState, useCallback, useRef, type ReactNode } from 'react';
+import { ToastContext, type Toast, type ToastVariant } from './toast';
 
 function uuid() {
   return Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
@@ -42,10 +27,4 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       {children}
     </ToastContext.Provider>
   );
-}
-
-export function useToast() {
-  const ctx = useContext(ToastContext);
-  if (!ctx) throw new Error('useToast must be used within ToastProvider');
-  return ctx;
 }

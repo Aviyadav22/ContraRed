@@ -9,8 +9,7 @@ from decimal import Decimal
 from typing import Optional
 
 from sqlalchemy import (
-    String, DateTime, Integer, ForeignKey, Text, Numeric, Boolean, Date, Index,
-    UniqueConstraint,
+    String, DateTime, Integer, ForeignKey, Text, Numeric, Boolean, Date, UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column

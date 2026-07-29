@@ -6,7 +6,7 @@ import hashlib
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Optional, List
+from typing import TYPE_CHECKING, Optional, List
 from sqlalchemy import String, DateTime, Enum as SQLEnum, Text, Integer, ForeignKey, Numeric, Boolean, Index
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -14,6 +14,9 @@ import enum
 
 from app.db.session import Base
 from app.models.enums import RiskLevel
+
+if TYPE_CHECKING:
+    from app.models.user import User
 
 
 class DocumentStatus(str, enum.Enum):

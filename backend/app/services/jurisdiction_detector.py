@@ -11,7 +11,7 @@ Zero AI dependency: purely regex-based detection.
 import re
 import logging
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -110,9 +110,10 @@ INDIA = _register(JurisdictionProfile(
         "encouraged (SIAC, ICC, MCIA)."
     ),
     data_protection_law=(
-        "DPDP Act, 2023 — consent-based processing, data fiduciary obligations, "
-        "cross-border transfer restrictions (government-notified blacklist model), "
-        "significant penalties up to INR 250 crore."
+        "DPDP Act, 2023 and DPDP Rules, 2025 have phased commencement. "
+        "Most substantive fiduciary, consent, rights, and breach provisions commence "
+        "May 13, 2027; contracts spanning that date should allocate readiness duties. "
+        "Section 16 permits Government-notified transfer restrictions."
     ),
     special_considerations=[
         "S.27 — post-termination non-competes are VOID; flag any such clause as RED",
@@ -982,14 +983,24 @@ JURISDICTION_RULE_OVERRIDES: Dict[str, List[RuleOverride]] = {
         RuleOverride(
             rule_id="data_protection",
             risk_level="YELLOW",
-            primary_position="Ensure compliance with DPDP Act 2023: consent-based processing, data fiduciary obligations, 72-hour breach notification to Data Protection Board.",
-            note="Digital Personal Data Protection Act 2023 imposes data fiduciary obligations.",
+            primary_position=(
+                "Future-proof the agreement for DPDP substantive commencement on May 13, 2027: "
+                "allocate fiduciary/processor duties, require affected-principal and initial Board "
+                "notice without delay, and support the detailed Board report due within 72 hours."
+            ),
+            note=(
+                "DPDP Act 2023 and Rules 2025 use phased commencement; do not present "
+                "May 2027 duties as already effective."
+            ),
         ),
         RuleOverride(
             rule_id="cross_border_transfer",
             risk_level="YELLOW",
-            primary_position="DPDP Act 2023 allows cross-border transfers except to government-notified restricted countries. No adequacy framework yet.",
-            note="DPDP Act S.16 — Central Government may restrict transfers to specific countries.",
+            primary_position=(
+                "Permit cross-border processing only subject to current Government restrictions, "
+                "Rule 15 requirements, and any stricter applicable Indian sectoral law."
+            ),
+            note="DPDP Act S.16 permits restrictions by notification; verify current notifications.",
         ),
         RuleOverride(
             rule_id="limitation_period",

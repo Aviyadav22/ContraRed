@@ -1,9 +1,9 @@
 """
 DPDP Act Knowledge Base - Structured regulatory reference for agent grounding.
 
-Provides section-level retrieval of DPDP Act 2023 and DPDP Rules 2025 text.
-Used by agents to ground their AI responses in actual regulatory provisions,
-reducing hallucination and enabling citation in compliance reports.
+Provides section-level retrieval of verified summaries of the DPDP Act 2023
+and DPDP Rules 2025. These are grounding aids, not verbatim statutory text;
+legal output must cite and verify the official Gazette.
 
 This is a lightweight in-memory knowledge base (no external vector DB needed).
 Keyword + section-based retrieval is sufficient for regulatory text where
@@ -24,7 +24,7 @@ class RegulatorySection:
     section_number: str            # "6", "8(6)", "Rule 3"
     title: str
     summary: str                   # One-line summary
-    full_text: str                 # Full section text
+    full_text: str                 # Verified structured paraphrase, not a quotation
     keywords: List[str] = field(default_factory=list)
     related_sections: List[str] = field(default_factory=list)
     penalties: Optional[str] = None
@@ -40,16 +40,16 @@ DPDP_ACT_SECTIONS: List[RegulatorySection] = [
         source="DPDP Act 2023",
         section_number="5",
         title="Notice",
-        summary="Data Fiduciary must give notice before or at the time of collecting personal data",
+        summary="A consent request must be accompanied or preceded by the required notice",
         full_text="""Section 5 - Notice:
-(1) Every Data Fiduciary shall, before or at the time of collection of personal data, give to the Data Principal an itemised notice in clear and plain language containing:
+(1) Every consent request under section 6 must be accompanied or preceded by a notice informing the Data Principal of:
 (a) the personal data and the purpose for which the same is proposed to be processed;
-(b) the manner in which the Data Principal may exercise rights under this Act;
+(b) the manner in which the Data Principal may withdraw consent and use grievance redressal;
 (c) the manner in which the Data Principal may make a complaint to the Board.
 
-(2) Where personal data is collected from a Data Principal before the commencement of this Act, the Data Fiduciary shall give notice as soon as reasonably practicable.
+(2) For consent given before commencement, the Data Fiduciary must provide the corresponding notice as soon as reasonably practicable.
 
-(3) The notice shall be available in English or any language specified in the Eighth Schedule to the Constitution.""",
+(3) The Data Principal must have the option to access the notice in English or any Eighth Schedule language.""",
         keywords=["notice", "collection", "itemised", "plain language", "purpose", "rights"],
         related_sections=["6", "11"],
         penalties="Up to Rs 50 Crore for non-compliance",
@@ -60,19 +60,21 @@ DPDP_ACT_SECTIONS: List[RegulatorySection] = [
         title="Consent",
         summary="Consent must be free, specific, informed, unconditional, and unambiguous with clear affirmative action",
         full_text="""Section 6 - Consent:
-(1) Consent given by the Data Principal shall be free, specific, informed, unconditional and unambiguous with a clear affirmative action, signifying an agreement to the processing of her personal data for the specified purpose.
+(1) Consent must be free, specific, informed, unconditional and unambiguous, use clear affirmative action, relate to a specified purpose, and be limited to necessary personal data.
 
-(2) Consent shall be limited to such personal data as is necessary for the specified purpose.
+(2) A term of consent that infringes the Act, Rules, or another law is invalid to that extent.
 
-(3) Every request for consent shall be presented to the Data Principal in a clear and plain language with an itemised description of the personal data and the purpose of processing.
+(3) The request must use clear and plain language, offer English or an Eighth Schedule language, and provide the applicable privacy contact.
 
 (4) Where consent given by the Data Principal is the basis of processing of personal data, such Data Principal shall have the right to withdraw her consent at any time, with the ease of doing so being comparable to the ease with which such consent was given.
 
 (5) The withdrawal of consent shall not affect the lawfulness of processing of personal data based on consent before its withdrawal.
 
-(6) If the Data Principal withdraws her consent to the processing of personal data, the Data Fiduciary shall, unless retention is required under any law, cease and cause its Data Processors to cease processing the personal data of such Data Principal within a reasonable time.
+(6) After withdrawal, the Data Fiduciary must within a reasonable time cease and cause processors to cease consent-based processing, unless processing without consent is authorised by the DPDP framework or another Indian law.
 
-(7) Consent given by the Data Principal to a Consent Manager shall be deemed to be consent given to the Data Fiduciary.""",
+(7)-(9) A Data Principal may manage consent through a registered Consent Manager, which acts on her behalf and is accountable to her.
+
+(10) If consent is disputed in a proceeding, the Data Fiduciary must prove compliant notice and consent.""",
         keywords=["consent", "free", "specific", "informed", "unconditional", "unambiguous", "withdrawal", "cease processing", "consent manager"],
         related_sections=["5", "7"],
         penalties="Up to Rs 50 Crore for non-compliance",
@@ -100,19 +102,23 @@ A Data Fiduciary may process personal data of a Data Principal for any of the fo
         title="Obligations of Data Fiduciary",
         summary="Data Fiduciaries must ensure accuracy, security, erasure after purpose fulfilled, and grievance redressal",
         full_text="""Section 8 - General Obligations of Data Fiduciary:
-(1) A Data Fiduciary shall make reasonable efforts to ensure completeness, accuracy and consistency of personal data.
+(1) The Data Fiduciary remains responsible for processing by it or on its behalf, irrespective of contrary agreements.
 
-(3) A Data Fiduciary shall implement appropriate technical and organisational measures to ensure effective observance of the provisions of this Act.
+(2) A Data Processor may be engaged for offering goods or services only under a valid contract.
 
-(4) A Data Fiduciary shall protect personal data in its possession or under its control by taking reasonable security safeguards to prevent personal data breach.
+(3) Completeness, accuracy, and consistency are required when data is used for a decision affecting the Data Principal or disclosed to another Data Fiduciary.
 
-(5) In the event of a personal data breach, the Data Fiduciary shall give the Board and each affected Data Principal, intimation of such breach in such form and manner as may be prescribed.
+(4) Appropriate technical and organisational measures must support effective observance.
 
-(6) When personal data is no longer needed for the purpose for which it was collected, or the Data Principal withdraws consent, the Data Fiduciary shall erase such data, unless retention is required under any law.
+(5) Reasonable security safeguards must protect personal data in the Data Fiduciary's possession or control, including processor activity.
 
-(7) The Data Fiduciary shall publish the business contact information of a Data Protection Officer or such other person who is able to answer on behalf of the Data Fiduciary, the questions of the Data Principal about the processing of her personal data.
+(6) A personal data breach must be intimated to the Board and each affected Data Principal in the prescribed manner.
 
-(8) The Data Fiduciary shall establish an effective mechanism to redress the grievances of Data Principals.""",
+(7) Personal data and processor copies must be erased on consent withdrawal or when the specified purpose is no longer served, unless retention is necessary under law.
+
+(9) The applicable DPO or privacy-contact information must be published.
+
+(10) An effective grievance-redressal mechanism must be established.""",
         keywords=["security safeguards", "data breach", "erasure", "accuracy", "grievance redressal", "data protection officer"],
         related_sections=["9", "10", "13"],
         penalties="Up to Rs 250 Crore for security failures, Rs 200 Crore for breach notification failures",
@@ -171,7 +177,9 @@ Note: "Child" means an individual who has not completed the age of eighteen year
         title="Right to Correction and Erasure",
         summary="Data Principals can request correction of inaccurate data and erasure of data no longer needed",
         full_text="""Section 12 - Right to Correction and Erasure of Personal Data:
-(1) The Data Principal shall have the right to correction of inaccurate or misleading personal data, completion of incomplete personal data, updating of personal data, and erasure of personal data unless retention of personal data is necessary for a specified purpose or for compliance with any law in force.""",
+(1)-(2) For covered processing, a Data Principal may request correction of inaccurate or misleading data, completion of incomplete data, and updating; the Data Fiduciary must carry out those actions.
+
+(3) On an erasure request, the Data Fiduciary must erase the personal data unless retention is necessary for the specified purpose or compliance with law.""",
         keywords=["correction", "erasure", "deletion", "right to be forgotten", "inaccurate", "incomplete", "updating"],
         related_sections=["11", "8"],
     ),
@@ -179,9 +187,11 @@ Note: "Child" means an individual who has not completed the age of eighteen year
         source="DPDP Act 2023",
         section_number="13",
         title="Right to Grievance Redressal",
-        summary="Data Principals can file grievances with the Data Fiduciary and escalate to the Board",
+        summary="Readily available grievance redressal must be exhausted before approaching the Board",
         full_text="""Section 13 - Grievance Redressal:
-(1) A Data Principal who is not satisfied with the response of the Data Fiduciary to any grievance raised, may register a complaint with the Board in such manner and having such particulars as may be prescribed.""",
+(1) A Data Principal has the right to readily available grievance redressal concerning a Data Fiduciary's or Consent Manager's obligations and her rights.
+(2) The Data Fiduciary or Consent Manager must respond within the prescribed period.
+(3) The Data Principal must exhaust this grievance opportunity before approaching the Board.""",
         keywords=["grievance", "complaint", "redressal", "data protection board", "escalation"],
         related_sections=["8", "14"],
     ),
@@ -199,11 +209,13 @@ Note: "Child" means an individual who has not completed the age of eighteen year
         source="DPDP Act 2023",
         section_number="16",
         title="Transfer of Personal Data Outside India",
-        summary="Central Government may restrict transfer to notified countries (negative list approach)",
+        summary="Transfers may be restricted by Government notification and remain subject to stricter Indian laws",
         full_text="""Section 16 - Transfer of Personal Data Outside India:
-(1) The Central Government may, after an assessment of such factors as it may consider necessary, notify such countries or territories outside India to which a Data Fiduciary may transfer personal data, in accordance with such terms and conditions as may be specified.
+(1) The Central Government may, by notification, restrict transfer of personal data for processing to a notified country or territory.
 
-Note: India uses a "negative list" approach — all transfers are permitted unless to countries specifically restricted by government notification. No restricted country list has been published as of April 2026.""",
+(2) Indian laws that provide a higher degree of protection or restriction continue to apply.
+Rule 15 also permits Government-specified requirements concerning availability of transferred data to a foreign State, or persons or entities under its control.
+Always check current notifications; a static knowledge base must not assert that no restrictions exist.""",
         keywords=["cross-border", "transfer", "outside India", "negative list", "restricted countries", "data localization"],
         related_sections=["8"],
     ),
@@ -218,15 +230,15 @@ DPDP_RULES_SECTIONS: List[RegulatorySection] = [
         source="DPDP Rules 2025",
         section_number="Rule 3",
         title="Consent and Notice",
-        summary="Individual checkboxes per purpose, no pre-population, privacy center mandatory",
+        summary="Standalone, clear notice with itemised data, purposes, and rights links",
         full_text="""Rule 3 - Notice and Consent:
-Every Data Fiduciary must deploy DPDP-compliant consent/privacy notices at all data collection touchpoints.
-- Notices must be in clear, vernacular language stating what data is collected and why
-- Individual checkboxes or toggles required for each processing purpose
-- Pre-population of consent fields is prohibited
-- A "privacy center" enabling consent withdrawal and complaint submission is mandatory
-- Consent must be refreshed if purposes change""",
-        keywords=["notice", "consent", "checkbox", "toggle", "privacy center", "withdrawal", "pre-population"],
+The notice must be understandable independently of other information and use clear, plain language.
+- Itemise the personal data and each specified processing purpose
+- Describe the goods, services, or uses enabled by the processing
+- Provide a communication link or other means for consent withdrawal, exercise of rights, and complaint to the Board
+- The Act separately requires free, specific, informed, unconditional and unambiguous consent through clear affirmative action
+- Separate purpose controls are a sound implementation pattern, but the Rules do not mandate a particular checkbox or 'privacy center' interface""",
+        keywords=["notice", "consent", "purpose", "affirmative action", "withdrawal", "rights"],
         related_sections=["Rule 4"],
         deadline="May 13, 2027",
     ),
@@ -251,15 +263,16 @@ Consent Managers are registered entities enabling Data Principals to manage cons
         source="DPDP Rules 2025",
         section_number="Rule 6",
         title="Security Safeguards",
-        summary="Six mandatory security measures including encryption, access controls, audit logs, backups",
+        summary="Minimum technical, organisational, logging, resilience, and processor-contract safeguards",
         full_text="""Rule 6 - Reasonable Security Safeguards:
-Six mandatory security safeguards:
-1. Encrypt personal data at rest and in transit
-2. Implement access controls and authentication
-3. Maintain audit logs of all data access and processing
-4. Create regular data backups
-5. Retain breach records for at least one year
-6. Mandate equivalent security in all vendor/processor contracts""",
+At a minimum, a Data Fiduciary must:
+1. Use appropriate data-security measures such as encryption, obfuscation, masking, or virtual tokens
+2. Control access to relevant computer resources
+3. Maintain visibility through appropriate logs, monitoring, and review
+4. Take reasonable continuity measures, such as backups
+5. Retain relevant logs and personal data for one year for detection, investigation, remediation, recurrence prevention, and continuity, unless another law requires otherwise
+6. Put appropriate security-safeguard provisions in processor contracts
+7. Maintain appropriate technical and organisational measures""",
         keywords=["security", "encryption", "access control", "audit log", "backup", "vendor", "processor"],
         penalties="Up to Rs 250 Crore",
         deadline="May 13, 2027",
@@ -268,13 +281,14 @@ Six mandatory security safeguards:
         source="DPDP Rules 2025",
         section_number="Rule 7",
         title="Breach Notification",
-        summary="Notify Board within 72 hours AND affected Data Principals immediately for ALL breaches",
+        summary="Initial Board and affected-principal notices without delay; detailed Board report within 72 hours",
         full_text="""Rule 7 - Personal Data Breach:
-- Notify the Data Protection Board within 72 hours of detecting a breach
-- Notify affected Data Principals immediately with impact details and mitigation steps
-- Unlike GDPR, ALL personal data breaches must be reported regardless of risk assessment
-- Must include: nature of breach, categories of data affected, approximate number of Data Principals affected, measures taken""",
-        keywords=["breach", "notification", "72 hours", "data protection board", "immediate", "all breaches"],
+- Notify each affected Data Principal without delay, using her account or registered communication channel
+- Notify the Board without delay with the nature, extent, timing, location, and likely impact
+- Supply the updated detailed Board report within 72 hours, unless the Board grants more time on written request
+- The detailed report covers events and reasons, mitigation, findings about the person responsible, recurrence prevention, and principal-notification status
+- The final rule does not state a risk threshold that excuses notification""",
+        keywords=["breach", "notification", "72 hours", "without delay", "data protection board"],
         related_sections=["Rule 6"],
         penalties="Up to Rs 200 Crore",
         deadline="May 13, 2027",
@@ -283,13 +297,12 @@ Six mandatory security safeguards:
         source="DPDP Rules 2025",
         section_number="Rule 8",
         title="Data Erasure",
-        summary="Automated deletion with 48-hour pre-deletion notification to Data Principals",
+        summary="Scheduled inactivity erasure for specified large platforms plus one-year processing records",
         full_text="""Rule 8 - Erasure of Personal Data:
-- Data must be erased when the purpose is fulfilled or consent is withdrawn
-- Automated deletion workflows are required
-- 48-hour user warning before automated deletion
-- Data Fiduciaries must maintain complete data logs for a minimum of one year
-- Must cascade deletion to all Data Processors""",
+- The Act separately requires erasure on consent withdrawal or when the specified purpose is no longer served, unless retention is legally necessary
+- Rule 8's inactivity periods and 48-hour warning apply to the classes and purposes listed in the Third Schedule, not universally
+- Rule 8 also requires one-year retention of specified processing data, traffic data, and logs for the Seventh Schedule purposes, unless another law requires longer retention
+- Processor erasure remains the Data Fiduciary's responsibility under section 8(7) of the Act""",
         keywords=["erasure", "deletion", "48 hours", "automated", "cascade", "processor", "retention"],
         deadline="May 13, 2027",
     ),
@@ -297,15 +310,14 @@ Six mandatory security safeguards:
         source="DPDP Rules 2025",
         section_number="Rule 10",
         title="Children's Data",
-        summary="Verifiable parental consent for under-18, age verification mandatory, no profiling of children",
+        summary="Verifiable parental consent using reliable age and identity details, subject to notified exemptions",
         full_text="""Rules 10-11 - Children's Data:
 - Verifiable parental consent required before processing any child's personal data
-- Age verification is mandatory before processing
-- Verification methods: DigiLocker Age Token, existing parent account, government-authorized identity services
-- Prohibited: tracking/behavioral monitoring of children, targeted advertising, profiling
-- Exception: real-time tracking for safety without separate consent
-- Child = under 18 years (stricter than GDPR's 13-16)""",
-        keywords=["children", "under 18", "parental consent", "age verification", "DigiLocker", "profiling", "tracking"],
+- Use reliable identity and age details, or details/virtual tokens issued by an authorised entity; DigiLocker is one permitted route
+- The Act prohibits tracking or behavioural monitoring of children and targeted advertising directed at children
+- Rule 12 and the Fourth Schedule contain class-, purpose-, and condition-specific exemptions; do not assume a blanket safety exception
+- Under the Act, a child is an individual below eighteen years""",
+        keywords=["children", "under 18", "parental consent", "age verification", "DigiLocker", "tracking"],
         penalties="Up to Rs 200 Crore",
         deadline="May 13, 2027",
     ),

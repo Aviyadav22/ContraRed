@@ -79,6 +79,11 @@ async def _normalize_table(
     for r in rows:
         current = r["clause_type"]
         snapped = snap_to_clause_type(current).value
+        if snapped == "unknown" and str(current or "").strip().lower() != "unknown":
+            # Novel organization-specific rule names are valid playbook data;
+            # never collapse all of them into the same literal "unknown" key.
+            snapped = str(current).strip().lower().replace("-", " ")
+            snapped = "_".join(snapped.split())[:100]
         dist[snapped] += 1
         if snapped != (current or ""):
             changed += 1

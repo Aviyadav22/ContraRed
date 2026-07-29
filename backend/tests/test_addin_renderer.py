@@ -1,4 +1,3 @@
-import pytest
 from app.services.drafting.models import (
     RawDraft, DraftSection, DraftMetadata, FinalDraft, QualityReport,
 )

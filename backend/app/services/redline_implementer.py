@@ -18,7 +18,7 @@ from dataclasses import dataclass
 
 from rapidfuzz import fuzz, process
 
-from app.services.structure_extractor import ContractMap, ContractNode
+from app.services.structure_extractor import ContractMap
 from app.core.config import settings
 
 

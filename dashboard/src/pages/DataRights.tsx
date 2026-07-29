@@ -4,46 +4,19 @@ import { AppLayout } from '@/components/layout';
 import { Button, Badge } from '@/components/ui';
 import { Modal } from '@/components/ui/Modal';
 import { TextareaInput, TextInput, SelectInput } from '@/components/ui/Input';
-import { FileText, Trash2, Edit3, UserPlus, AlertCircle } from 'lucide-react';
-const API_BASE_URL = import.meta.env.VITE_API_URL || '';
-
-function apiRequest<T = any>(endpoint: string, options?: RequestInit): Promise<T> {
-    const url = `${API_BASE_URL}${endpoint}`;
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    return fetch(url, { ...options, headers, credentials: 'include' }).then(r => {
-        if (!r.ok) throw new Error('Request failed');
-        return r.json();
-    });
-}
-
-// API functions for rights
-async function listRightsRequests() {
-    return apiRequest<any[]>('/rights/requests');
-}
-async function requestDataAccess(notes?: string) {
-    return apiRequest('/rights/access', { method: 'POST', body: JSON.stringify({ notes }) });
-}
-async function requestDataCorrection(data: { field_name: string; current_value?: string; corrected_value: string; reason?: string }) {
-    return apiRequest('/rights/correction', { method: 'POST', body: JSON.stringify(data) });
-}
-async function requestDataErasure(reason?: string) {
-    return apiRequest('/rights/erasure', { method: 'POST', body: JSON.stringify({ reason, confirm: true }) });
-}
-async function listNominations() {
-    return apiRequest<any[]>('/rights/nominations');
-}
-async function createNomination(data: { nominee_name: string; nominee_email?: string; nominee_phone?: string; relationship?: string }) {
-    return apiRequest('/rights/nomination', { method: 'POST', body: JSON.stringify(data) });
-}
-async function revokeNomination(id: string) {
-    return apiRequest(`/rights/nominations/${id}`, { method: 'DELETE' });
-}
-async function listGrievances() {
-    return apiRequest<any[]>('/grievances/');
-}
-async function submitGrievance(data: { category: string; description: string }) {
-    return apiRequest('/grievances/', { method: 'POST', body: JSON.stringify(data) });
-}
+import { FileText, Trash2, Edit3, UserPlus, AlertCircle, Download } from 'lucide-react';
+import {
+    createNomination,
+    downloadRightsExport,
+    listGrievances,
+    listNominations,
+    listRightsRequests,
+    requestDataAccess,
+    requestDataCorrection,
+    requestDataErasure,
+    revokeNomination,
+    submitGrievance,
+} from '@/api/client';
 
 const sectionStyle: CSSProperties = {
     marginBottom: 32,
@@ -83,6 +56,7 @@ export default function DataRights() {
     const [nomineeRelationship, setNomineeRelationship] = useState('');
     const [grievanceCategory, setGrievanceCategory] = useState('consent_violation');
     const [grievanceDescription, setGrievanceDescription] = useState('');
+    const [downloadingRequestId, setDownloadingRequestId] = useState<string | null>(null);
 
     const { data: requests } = useQuery({ queryKey: ['rights-requests'], queryFn: listRightsRequests });
     const { data: nominations } = useQuery({ queryKey: ['nominations'], queryFn: listNominations });
@@ -109,6 +83,22 @@ export default function DataRights() {
         onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['grievances'] }); setShowGrievanceModal(false); },
     });
 
+    const downloadExport = async (requestId: string) => {
+        setDownloadingRequestId(requestId);
+        try {
+            const blob = await downloadRightsExport(requestId);
+            const url = URL.createObjectURL(blob);
+            const anchor = document.createElement('a');
+            anchor.href = url;
+            anchor.download = `contrared-data-export-${requestId}.json`;
+            anchor.click();
+            URL.revokeObjectURL(url);
+            await queryClient.invalidateQueries({ queryKey: ['rights-requests'] });
+        } finally {
+            setDownloadingRequestId(null);
+        }
+    };
+
     return (
         <AppLayout>
             <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', margin: 0, marginBottom: 8 }}>
@@ -131,13 +121,24 @@ export default function DataRights() {
             {requests && requests.length > 0 && (
                 <div style={sectionStyle}>
                     <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 16 }}>Your Requests</h2>
-                    {requests.map((r: any) => (
+                    {requests.map((r) => (
                         <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--border)' }}>
                             <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: statusColors[r.status] || 'var(--text-muted)' }} />
                             <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', flex: 1 }}>
                                 {r.request_type.toUpperCase()} request
                             </span>
                             <Badge variant="neutral">{r.status}</Badge>
+                            {r.request_type === 'access' && r.status !== 'rejected' && (
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    onClick={() => void downloadExport(r.id)}
+                                    disabled={downloadingRequestId === r.id}
+                                >
+                                    <Download size={14} />
+                                    {downloadingRequestId === r.id ? 'Preparing…' : 'Download'}
+                                </Button>
+                            )}
                             {r.resolution_deadline && (
                                 <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
                                     Due: {new Date(r.resolution_deadline).toLocaleDateString('en-IN')}
@@ -152,7 +153,7 @@ export default function DataRights() {
             {nominations && nominations.length > 0 && (
                 <div style={sectionStyle}>
                     <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 16 }}>Nominations</h2>
-                    {nominations.map((n: any) => (
+                    {nominations.map((n) => (
                         <div key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--border)' }}>
                             <UserPlus size={16} style={{ color: 'var(--accent)' }} />
                             <span style={{ flex: 1, fontSize: 13, color: 'var(--text-primary)' }}>{n.nominee_name} {n.relationship && `(${n.relationship})`}</span>
@@ -168,7 +169,7 @@ export default function DataRights() {
             {grievances && grievances.length > 0 && (
                 <div style={sectionStyle}>
                     <h2 style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 16 }}>Grievances</h2>
-                    {grievances.map((g: any) => (
+                    {grievances.map((g) => (
                         <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0', borderBottom: '1px solid var(--border)' }}>
                             <AlertCircle size={16} style={{ color: statusColors[g.status] || 'var(--text-muted)' }} />
                             <span style={{ flex: 1, fontSize: 13, color: 'var(--text-primary)' }}>{g.category.replace('_', ' ')}</span>
@@ -225,7 +226,7 @@ export default function DataRights() {
                             <AlertCircle size={24} style={{ color: 'var(--red)', flexShrink: 0 }} />
                             <p style={{ fontSize: 14, color: 'var(--text-primary)', margin: 0 }}>
                                 This action is irreversible. Your account will be permanently deactivated and all personal data anonymised.
-                                Anonymised audit and consent logs will be retained for 7 years as required by law.
+                                Minimal anonymised audit and consent-event facts may be retained only under the applicable security, tax, or dispute-retention schedule.
                             </p>
                         </div>
                         <TextareaInput label="Reason (optional)" value={erasureReason} onChange={e => setErasureReason(e.target.value)} placeholder="Help us improve by sharing why you're leaving" />

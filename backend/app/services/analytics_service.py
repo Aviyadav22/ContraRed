@@ -7,7 +7,7 @@ and audit_logs tables.
 
 import logging
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Dict, List, Any
+from typing import Dict, List, Any
 from uuid import UUID
 
 from sqlalchemy import select, func, literal_column
@@ -59,7 +59,7 @@ async def get_org_overview(
     total_risks = total_result.scalar() or 0
 
     # Calculate red/yellow from risk_summary JSONB via SQL aggregation
-    from sqlalchemy import cast, Integer, text as sa_text
+    from sqlalchemy import cast, Integer
     risk_agg = await db.execute(
         select(
             func.sum(cast(Document.risk_summary["red"].as_string(), Integer)).label("red_total"),
@@ -176,8 +176,6 @@ async def get_trend_data(
     weeks: int = 12,
 ) -> List[Dict[str, Any]]:
     """Get time-series usage data (weekly or daily)."""
-    user_ids_subq = select(User.id).where(User.organization_id == org_id).scalar_subquery()
-
     trunc_unit = 'day' if period == "daily" else 'week'
     if period == "daily":
         days_back = min(weeks * 7, 90)

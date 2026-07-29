@@ -5,7 +5,6 @@ Phase 7: Output format support for PDF export.
 Uses fpdf2 for lightweight PDF generation without system dependencies.
 """
 
-import io
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone

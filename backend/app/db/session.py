@@ -12,6 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.pool import NullPool
 
+from app.core.config import settings
+
 
 class _PgBouncerAnonStmtConnection(asyncpg.Connection):
     """asyncpg Connection that forces ANONYMOUS prepared statements.
@@ -38,8 +40,6 @@ class _PgBouncerAnonStmtConnection(asyncpg.Connection):
             use_cache=use_cache,
             record_class=record_class,
         )
-
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 

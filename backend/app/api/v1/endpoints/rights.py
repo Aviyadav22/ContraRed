@@ -6,25 +6,33 @@ Provides endpoints for:
   - Right to Correction
   - Right to Erasure (account deletion)
   - Right to Nomination (authorized representative)
-  - Request status tracking (90-day SLA)
+  - Request status and internal service-target tracking
 """
 
+import json
 import logging
+import uuid
+from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.api.v1.endpoints.auth import get_current_user
-from app.models.user import User
+from app.core.permissions import require_role
+from app.models.audit_log import log_audit_event
+from app.models.user import User, UserRole
 from app.models.consent import (
     RightsRequest, RightsRequestType, RightsRequestStatus,
-    ConsentNomination, ConsentEvent, ConsentEventType,
+    ConsentNomination, ConsentEventType,
 )
 from app.services.consent_service import consent_service
+from app.services.consent_event_bus import consent_event_bus
+from app.services.data_erasure_service import erase_user_data
+from app.services.data_export_service import export_user_data
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +102,7 @@ async def request_data_access(
     """Request a copy of all personal data (DPDP Section 11).
 
     Creates an async export job. The export will be available for
-    download once processed. 90-day SLA applies.
+    download once processed.
     """
     req = RightsRequest(
         subject_id=current_user.id,
@@ -104,6 +112,7 @@ async def request_data_access(
         request_details={"notes": body.notes} if body.notes else {},
     )
     db.add(req)
+    await db.flush()
 
     # Record consent event
     await consent_service._record_event(
@@ -114,6 +123,9 @@ async def request_data_access(
 
     await db.commit()
     await db.refresh(req)
+    await consent_event_bus.publish_rights_request(
+        str(current_user.id), RightsRequestType.ACCESS.value, str(req.id)
+    )
 
     return {
         "id": str(req.id),
@@ -145,8 +157,18 @@ async def request_data_correction(
         },
     )
     db.add(req)
+    await db.flush()
+
+    await consent_service._record_event(
+        db, None, current_user.id,
+        ConsentEventType.RIGHTS_REQUEST.value,
+        details={"request_type": "correction", "request_id": str(req.id)},
+    )
     await db.commit()
     await db.refresh(req)
+    await consent_event_bus.publish_rights_request(
+        str(current_user.id), RightsRequestType.CORRECTION.value, str(req.id)
+    )
 
     return {
         "id": str(req.id),
@@ -167,7 +189,8 @@ async def request_data_erasure(
     """Request erasure of personal data / account deletion (DPDP Section 12).
 
     This does not immediately delete the account. The request is processed
-    according to the 90-day SLA, with legal retention obligations respected.
+    against the service's published target, with legal retention obligations
+    respected.
     """
     if not body.confirm:
         raise HTTPException(
@@ -183,6 +206,7 @@ async def request_data_erasure(
         request_details={"reason": body.reason} if body.reason else {},
     )
     db.add(req)
+    await db.flush()
 
     await consent_service._record_event(
         db, None, current_user.id,
@@ -192,6 +216,9 @@ async def request_data_erasure(
 
     await db.commit()
     await db.refresh(req)
+    await consent_event_bus.publish_rights_request(
+        str(current_user.id), RightsRequestType.ERASURE.value, str(req.id)
+    )
 
     return {
         "id": str(req.id),
@@ -199,7 +226,7 @@ async def request_data_erasure(
         "status": req.status,
         "submitted_at": req.submitted_at.isoformat(),
         "resolution_deadline": req.resolution_deadline.isoformat() if req.resolution_deadline else None,
-        "message": "Your account deletion request has been submitted. Your data will be anonymised within the DPDP-mandated 90-day period.",
+        "message": "Your account deletion request has been submitted for verification and fulfillment.",
     }
 
 
@@ -239,7 +266,6 @@ async def get_rights_request(
     current_user: User = Depends(get_current_user),
 ):
     """Get details of a specific rights request."""
-    import uuid
     try:
         req_uuid = uuid.UUID(request_id)
     except ValueError:
@@ -264,6 +290,157 @@ async def get_rights_request(
         "resolved_at": req.resolved_at.isoformat() if req.resolved_at else None,
         "resolution_deadline": req.resolution_deadline.isoformat() if req.resolution_deadline else None,
         "resolution_notes": req.resolution_notes,
+    }
+
+
+@router.get("/requests/{request_id}/download")
+async def download_access_export(
+    request_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Generate and download an access-request export without persisting a PII copy."""
+    try:
+        req_uuid = uuid.UUID(request_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid request ID")
+
+    result = await db.execute(
+        select(RightsRequest).where(
+            RightsRequest.id == req_uuid,
+            RightsRequest.subject_id == current_user.id,
+        )
+    )
+    req = result.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if req.request_type != RightsRequestType.ACCESS.value:
+        raise HTTPException(status_code=409, detail="Only access requests have downloadable exports")
+    if req.status == RightsRequestStatus.REJECTED.value:
+        raise HTTPException(status_code=409, detail="This access request was rejected")
+
+    export_payload = await export_user_data(db, current_user.id)
+    if "error" in export_payload:
+        raise HTTPException(status_code=404, detail=export_payload["error"])
+
+    now = datetime.now(timezone.utc)
+    req.status = RightsRequestStatus.COMPLETED.value
+    req.acknowledged_at = req.acknowledged_at or now
+    req.resolved_at = now
+    req.response_details = {
+        "format": "json",
+        "generated_at": now.isoformat(),
+        "delivery": "authenticated_download",
+    }
+    await consent_service._record_event(
+        db, None, current_user.id,
+        ConsentEventType.RIGHTS_REQUEST.value,
+        details={
+            "request_type": "access",
+            "request_id": str(req.id),
+            "action": "export_downloaded",
+        },
+    )
+    await log_audit_event(
+        db,
+        user=current_user,
+        action="personal_data_exported",
+        resource_type="rights_request",
+        resource_name=str(req.id),
+    )
+    await db.commit()
+
+    content = json.dumps(export_payload, ensure_ascii=False, indent=2).encode("utf-8")
+    return Response(
+        content=content,
+        media_type="application/json",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="contrared-data-export-{req.id}.json"'
+            )
+        },
+    )
+
+
+@router.post("/requests/{request_id}/fulfill")
+async def fulfill_rights_request(
+    request_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+):
+    """Fulfill an access or erasure request after an administrator verifies it."""
+    try:
+        req_uuid = uuid.UUID(request_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid request ID")
+
+    result = await db.execute(select(RightsRequest).where(RightsRequest.id == req_uuid))
+    req = result.scalar_one_or_none()
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if (
+        current_user.role != UserRole.SUPER_ADMIN
+        and (
+            current_user.organization_id is None
+            or req.organization_id is None
+            or req.organization_id != current_user.organization_id
+        )
+    ):
+        raise HTTPException(status_code=404, detail="Request not found")
+    if req.status in (
+        RightsRequestStatus.COMPLETED.value,
+        RightsRequestStatus.REJECTED.value,
+    ):
+        raise HTTPException(status_code=409, detail="Request is already closed")
+
+    now = datetime.now(timezone.utc)
+    req.acknowledged_at = req.acknowledged_at or now
+    req.status = RightsRequestStatus.IN_PROGRESS.value
+
+    if req.request_type == RightsRequestType.ACCESS.value:
+        req.response_details = {
+            "delivery": "authenticated_download",
+            "download_url": f"/api/v1/rights/requests/{req.id}/download",
+        }
+        await db.commit()
+        return {
+            "request_id": str(req.id),
+            "status": req.status,
+            "download_url": req.response_details["download_url"],
+        }
+
+    if req.request_type != RightsRequestType.ERASURE.value:
+        raise HTTPException(
+            status_code=409,
+            detail="Correction requests require a verified manual correction before completion",
+        )
+
+    erasure_result = await erase_user_data(db, req.subject_id, commit=False)
+    if "error" in erasure_result:
+        await db.rollback()
+        raise HTTPException(status_code=404, detail=erasure_result["error"])
+
+    req.status = RightsRequestStatus.COMPLETED.value
+    req.resolved_at = now
+    req.response_details = {
+        "fulfilled_at": now.isoformat(),
+        "method": "anonymisation_and_session_revocation",
+    }
+    req.resolution_notes = "Verified and fulfilled by an authorized administrator."
+    await log_audit_event(
+        db,
+        user=current_user,
+        action="erasure_request_fulfilled",
+        resource_type="rights_request",
+        resource_name=str(req.id),
+        details=json.dumps({"subject_id": str(req.subject_id)}),
+    )
+    await db.commit()
+
+    return {
+        "request_id": str(req.id),
+        "status": req.status,
+        "erasure": erasure_result,
     }
 
 
@@ -308,7 +485,7 @@ async def list_nominations(
         select(ConsentNomination)
         .where(
             ConsentNomination.subject_id == current_user.id,
-            ConsentNomination.is_active == True,
+            ConsentNomination.is_active.is_(True),
         )
     )
     noms = result.scalars().all()
@@ -333,9 +510,6 @@ async def revoke_nomination(
     current_user: User = Depends(get_current_user),
 ):
     """Revoke a nomination."""
-    import uuid
-    from datetime import datetime, timezone
-
     try:
         nom_uuid = uuid.UUID(nomination_id)
     except ValueError:

@@ -1,4 +1,3 @@
-import asyncio
 import sqlite3
 import uuid
 import pytest
@@ -6,8 +5,8 @@ import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.pool import StaticPool
-from sqlalchemy.dialects.postgresql import JSONB, ARRAY, UUID as PG_UUID
-from sqlalchemy import JSON, String, Uuid, TypeDecorator
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY, INET, UUID as PG_UUID
+from sqlalchemy import ARRAY as SQLARRAY, JSON, String, Uuid, TypeDecorator
 
 from app.db.session import Base, get_db
 import app.models  # noqa: F401 — register all models with Base.metadata
@@ -45,19 +44,15 @@ def _remap_pg_types_for_sqlite(base):
         for column in table.columns:
             if isinstance(column.type, JSONB):
                 column.type = JSON()
-            elif isinstance(column.type, ARRAY):
+            elif isinstance(column.type, (ARRAY, SQLARRAY)):
                 column.type = JSON()
+            elif isinstance(column.type, INET):
+                column.type = String(45)
             elif isinstance(column.type, PG_UUID):
                 column.type = SQLiteUUID()
             elif isinstance(column.type, Uuid):
                 column.type = SQLiteUUID()
 
-
-@pytest.fixture(scope="session")
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 @pytest_asyncio.fixture
 async def db_engine():
@@ -89,12 +84,14 @@ async def client(db_engine):
             yield session
 
     app.dependency_overrides[get_db] = override_get_db
+    app.state.consent_session_factory = session_factory
     # Disable rate limiter for tests
     app.state.limiter.enabled = False
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
     app.state.limiter.enabled = True
+    delattr(app.state, "consent_session_factory")
     app.dependency_overrides.clear()
 
 @pytest.fixture
@@ -115,10 +112,24 @@ def admin_user_data():
 
 
 async def register_and_login(client, user_data) -> str:
-    """Register a user and login, returning the access_token."""
+    """Register/login and grant the purposes required by general API tests."""
     await client.post("/api/v1/auth/register", json=user_data)
     login_resp = await client.post("/api/v1/auth/login", data={
         "username": user_data["email"],
         "password": user_data["password"],
     })
-    return login_resp.json()["access_token"]
+    token = login_resp.json()["access_token"]
+    grant_resp = await client.post(
+        "/api/v1/consent/grant",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "purpose_codes": [
+                "contract_analysis",
+                "ai_drafting",
+                "billing",
+                "sso_integration",
+            ]
+        },
+    )
+    assert grant_resp.status_code == 200, grant_resp.text
+    return token

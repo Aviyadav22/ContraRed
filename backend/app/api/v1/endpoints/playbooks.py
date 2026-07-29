@@ -4,18 +4,22 @@ Full CRUD for playbooks, rules, tiers, conditions, dependencies, versions, marke
 """
 
 import logging
-from typing import List, Optional
+import re
+from datetime import datetime, timezone
+from typing import List, Literal, Optional
 import uuid
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from pydantic import BaseModel, Field, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select, or_, delete
 from sqlalchemy.orm import selectinload
-
-import re
-
-logger = logging.getLogger(__name__)
 
 from app.db.session import get_db
 from app.models.user import User
@@ -25,14 +29,15 @@ from app.services.clause_taxonomy import snap_to_clause_type
 from app.models.playbook import (
     Playbook, PlaybookRule, PlaybookCategory, RiskLevel,
     PlaybookRuleTier, PlaybookCondition, PlaybookRuleOverride,
-    PlaybookRuleDependency, PlaybookVersion,
-    PlaybookMarketplace, PlaybookRating,
+    PlaybookRuleDependency, PlaybookMarketplace, PlaybookRating,
 )
 from app.api.v1.endpoints.auth import get_current_user, limiter
 # Playbook ops are gated by ownership via _get_playbook_or_403, not by role —
 # any authenticated user can create + manage their own playbooks.
 from app.models.audit_log import log_audit_event
 from app.services.playbook_versioning import playbook_versioning_service
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter()
@@ -41,6 +46,95 @@ router = APIRouter()
 # ============================================================================
 # Shared access-check helper
 # ============================================================================
+
+def _playbook_quality_issues(rules: List[PlaybookRule]) -> List[str]:
+    """Return lawyer-facing issues that make a playbook unsafe to publish."""
+    if not rules:
+        return ["Add at least one rule before publishing the playbook."]
+
+    issues: List[str] = []
+    for index, rule in enumerate(rules, start=1):
+        label = rule.clause_type or f"Rule {index}"
+        risk_level = (
+            rule.risk_level.value.upper()
+            if getattr(rule.risk_level, "value", None)
+            else str(rule.risk_level).upper()
+        )
+        if not (rule.primary_position or "").strip():
+            issues.append(f"{label}: add the client's primary position.")
+        if risk_level in {"RED", "YELLOW"} and not (rule.fallback_position or "").strip():
+            issues.append(f"{label}: add a fallback negotiation position.")
+
+        detection_mode = rule.detection_mode or "keywords_only"
+        patterns = (
+            (rule.detection_patterns or {}).get("patterns", [])
+            if isinstance(rule.detection_patterns, dict)
+            else []
+        )
+        keyword_modes = {"keywords_only", "ai_with_keywords", "hybrid"}
+        ai_modes = {"ai_only", "ai_with_keywords", "ai_primary", "hybrid"}
+        if detection_mode not in keyword_modes | ai_modes:
+            issues.append(f"{label}: choose a supported detection mode.")
+        if detection_mode in keyword_modes and not patterns:
+            issues.append(f"{label}: add detection patterns or switch to AI-primary detection.")
+        if detection_mode in ai_modes and not (rule.risk_description or "").strip():
+            issues.append(f"{label}: add a risk description for AI verification.")
+        if detection_mode in ai_modes and not (
+            getattr(rule, "verification_prompt", None) or ""
+        ).strip():
+            issues.append(
+                f"{label}: add a rule-specific verification question."
+            )
+        if rule.is_deal_breaker and risk_level != "RED":
+            issues.append(f"{label}: a deal-breaker must use red risk so escalation is unambiguous.")
+
+    return issues
+
+
+def _playbook_quality_recommendations(rules: List[PlaybookRule]) -> List[str]:
+    """Return non-blocking improvements that make AI review more lawyer-like."""
+    recommendations: List[str] = []
+    ai_modes = {"ai_only", "ai_with_keywords", "ai_primary", "hybrid"}
+    for index, rule in enumerate(rules, start=1):
+        label = rule.clause_type or f"Rule {index}"
+        detection_mode = rule.detection_mode or "keywords_only"
+        if not rule.suggested_language:
+            recommendations.append(
+                f"{label}: add preferred drafting language so proposed fixes stay consistent."
+            )
+        if detection_mode in ai_modes:
+            if not (rule.acceptable_position or "").strip():
+                recommendations.append(
+                    f"{label}: describe an acceptable position to reduce false positives."
+                )
+            if not (rule.clause_context or "").strip():
+                recommendations.append(
+                    f"{label}: add commercial context, dependencies, and exceptions."
+                )
+            if not rule.unacceptable_signals and not rule.acceptable_signals:
+                recommendations.append(
+                    f"{label}: add acceptable or unacceptable signals to anchor the AI comparison."
+                )
+    return recommendations
+
+
+def _require_publishable_playbook(rules: List[PlaybookRule]) -> None:
+    issues = _playbook_quality_issues(rules)
+    if issues:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Complete the playbook before publishing.",
+                "issues": issues,
+            },
+        )
+
+
+def _mark_playbook_changed(playbook: Playbook) -> None:
+    """Version a mutation and require legal-quality review before republishing."""
+    playbook.version += 1
+    playbook.is_public = False
+
 
 async def _get_playbook_or_403(
     db: AsyncSession,
@@ -92,12 +186,14 @@ class PlaybookCreate(BaseModel):
     description: Optional[str] = Field(default=None, max_length=2000)
     category: str = "custom"
     is_public: bool = False
+    party_side: Literal["buyer", "seller", "neutral"] = "neutral"
 
 
 class PlaybookUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     category: Optional[str] = None
+    party_side: Optional[Literal["buyer", "seller", "neutral"]] = None
 
 
 class PlaybookResponse(BaseModel):
@@ -108,22 +204,32 @@ class PlaybookResponse(BaseModel):
     is_public: bool
     is_default: bool
     version: int
+    party_side: Literal["buyer", "seller", "neutral"] = "neutral"
     rules_count: int = 0
     # Whether the requesting user owns this playbook (drives Edit/Delete UI).
     is_owner: bool = False
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
+
+
+def _normalize_rule_label(value: str) -> str:
+    """Canonicalize known types while preserving custom rule identity."""
+    raw = (value or "").strip()
+    snapped = snap_to_clause_type(raw).value
+    if snapped != "unknown" or raw.lower() == "unknown":
+        return snapped
+    slug = re.sub(r"[^a-z0-9]+", "_", raw.lower()).strip("_")
+    return (slug or "custom_rule")[:100]
 
 
 class RuleCreate(BaseModel):
     clause_type: str = Field(..., min_length=1, max_length=200)
     primary_position: str = Field(..., min_length=1, max_length=5000)
     fallback_position: Optional[str] = Field(default=None, max_length=5000)
-    risk_level: str = "yellow"
+    risk_level: Literal["red", "yellow", "green"] = "yellow"
     is_deal_breaker: bool = False
     detection_patterns: List[str] = Field(default_factory=list)
-    match_type: str = "exact"  # exact|fuzzy|regex - 'exact' auto-escapes for non-regex users
+    match_type: Literal["exact", "fuzzy", "regex"] = "exact"
     suggested_language: Optional[str] = Field(default=None, max_length=5000)
     # P2 #29: AI-primary detection fields
     detection_mode: str = "keywords_only"
@@ -132,11 +238,13 @@ class RuleCreate(BaseModel):
     @classmethod
     def normalize_clause_type(cls, v: str) -> str:
         # Phase C1 — snap free strings to canonical taxonomy
-        return snap_to_clause_type(v).value
+        return _normalize_rule_label(v)
 
     @field_validator("detection_mode")
     @classmethod
     def validate_detection_mode(cls, v: str) -> str:
+        aliases = {"ai_primary": "ai_only", "hybrid": "ai_with_keywords"}
+        v = aliases.get(v, v)
         allowed = {"ai_only", "ai_with_keywords", "keywords_only"}
         if v not in allowed:
             raise ValueError(f"detection_mode must be one of {allowed}, got '{v}'")
@@ -146,16 +254,17 @@ class RuleCreate(BaseModel):
     unacceptable_signals: Optional[List[str]] = None
     acceptable_signals: Optional[List[str]] = None
     clause_context: Optional[str] = Field(default=None, max_length=5000)
+    verification_prompt: Optional[str] = Field(default=None, max_length=5000)
 
 
 class RuleUpdate(BaseModel):
     clause_type: Optional[str] = None
     primary_position: Optional[str] = None
     fallback_position: Optional[str] = None
-    risk_level: Optional[str] = None
+    risk_level: Optional[Literal["red", "yellow", "green"]] = None
     is_deal_breaker: Optional[bool] = None
     detection_patterns: Optional[List[str]] = None
-    match_type: Optional[str] = None  # exact|fuzzy|regex
+    match_type: Optional[Literal["exact", "fuzzy", "regex"]] = None
     suggested_language: Optional[str] = None
     # P2 #29: AI-primary detection fields
     detection_mode: Optional[str] = None
@@ -166,12 +275,14 @@ class RuleUpdate(BaseModel):
         # Phase C1 — snap free strings to canonical taxonomy
         if v is None:
             return None
-        return snap_to_clause_type(v).value
+        return _normalize_rule_label(v)
 
     @field_validator("detection_mode")
     @classmethod
     def validate_detection_mode(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
+            aliases = {"ai_primary": "ai_only", "hybrid": "ai_with_keywords"}
+            v = aliases.get(v, v)
             allowed = {"ai_only", "ai_with_keywords", "keywords_only"}
             if v not in allowed:
                 raise ValueError(f"detection_mode must be one of {allowed}, got '{v}'")
@@ -181,6 +292,7 @@ class RuleUpdate(BaseModel):
     unacceptable_signals: Optional[List[str]] = None
     acceptable_signals: Optional[List[str]] = None
     clause_context: Optional[str] = None
+    verification_prompt: Optional[str] = Field(default=None, max_length=5000)
 
 
 class RuleResponse(BaseModel):
@@ -201,9 +313,9 @@ class RuleResponse(BaseModel):
     unacceptable_signals: Optional[List[str]] = None
     acceptable_signals: Optional[List[str]] = None
     clause_context: Optional[str] = None
+    verification_prompt: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class PlaybookDetail(PlaybookResponse):
@@ -233,11 +345,15 @@ async def list_playbooks(
     db: AsyncSession = Depends(get_db)
 ):
     """List available playbooks for the current user."""
-    access_filter = or_(
-        Playbook.is_public == True,
+    access_conditions = [
+        Playbook.is_public.is_(True),
         Playbook.created_by == current_user.id,
-        Playbook.organization_id == current_user.organization_id,
-    )
+    ]
+    if current_user.organization_id is not None:
+        access_conditions.append(
+            Playbook.organization_id == current_user.organization_id
+        )
+    access_filter = or_(*access_conditions)
 
     # Total count
     count_query = select(func.count(Playbook.id)).where(access_filter)
@@ -264,6 +380,7 @@ async def list_playbooks(
                 is_public=p.is_public,
                 is_default=p.is_default,
                 version=p.version,
+                party_side=p.party_side or "neutral",
                 rules_count=len(p.rules_list) if p.rules_list else 0,
                 is_owner=str(p.created_by) == str(current_user.id),
             )
@@ -286,6 +403,15 @@ async def create_playbook(
     """Create a new playbook. Open to any authenticated user — playbooks are
     scoped to the creator and their organization (see _get_playbook_or_403)."""
     
+    if playbook_data.is_public:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Create the playbook privately, add and validate its rules, "
+                "then use the publish action."
+            ),
+        )
+
     try:
         category = PlaybookCategory(playbook_data.category)
     except ValueError:
@@ -297,7 +423,8 @@ async def create_playbook(
         category=category,
         created_by=current_user.id,
         organization_id=current_user.organization_id,
-        is_public=playbook_data.is_public,
+        is_public=False,
+        party_side=playbook_data.party_side,
     )
     
     db.add(playbook)
@@ -318,6 +445,7 @@ async def create_playbook(
         is_public=playbook.is_public,
         is_default=playbook.is_default,
         version=playbook.version,
+        party_side=playbook.party_side or "neutral",
         rules_count=0,
         is_owner=True,
     )
@@ -368,6 +496,7 @@ async def browse_marketplace(
     base_query = (
         select(PlaybookMarketplace)
         .join(Playbook, PlaybookMarketplace.playbook_id == Playbook.id)
+        .where(Playbook.is_public.is_(True))
     )
 
     # Filter by category
@@ -439,6 +568,8 @@ async def fork_playbook(
         raise HTTPException(status_code=404, detail="Marketplace entry not found")
 
     source = mp.playbook
+    if not source.is_public:
+        raise HTTPException(status_code=404, detail="Marketplace entry not found")
 
     # Create new playbook (fork)
     new_pb = Playbook(
@@ -447,6 +578,7 @@ async def fork_playbook(
         category=source.category,
         created_by=current_user.id,
         organization_id=current_user.organization_id,
+        party_side=source.party_side or "neutral",
     )
     db.add(new_pb)
     await db.flush()
@@ -464,6 +596,10 @@ async def fork_playbook(
             detection_patterns=rule.detection_patterns,
             suggested_language=rule.suggested_language,
             order_index=rule.order_index,
+            requires_ai_verification=rule.requires_ai_verification,
+            verification_prompt=rule.verification_prompt,
+            jurisdiction_overrides=rule.jurisdiction_overrides,
+            priority=rule.priority,
             category=rule.category,
             subcategory=rule.subcategory,
             tags=rule.tags,
@@ -497,6 +633,8 @@ async def fork_playbook(
         new_cond = PlaybookCondition(
             id=uuid.uuid4(),
             playbook_id=new_pb.id,
+            name=old_cond.name,
+            description=old_cond.description,
             condition_type=old_cond.condition_type,
             operator=old_cond.operator,
             condition_value=old_cond.condition_value,
@@ -538,11 +676,13 @@ async def fork_playbook(
             if new_source and new_target:
                 new_dep = PlaybookRuleDependency(
                     id=uuid.uuid4(),
+                    playbook_id=new_pb.id,
                     source_rule_id=uuid.UUID(new_source),
                     target_rule_id=uuid.UUID(new_target),
                     trigger_condition=old_dep.trigger_condition,
                     effect=old_dep.effect,
                     effect_params=old_dep.effect_params,
+                    is_active=old_dep.is_active,
                 )
                 db.add(new_dep)
 
@@ -555,7 +695,9 @@ async def fork_playbook(
     return PlaybookResponse(
         id=str(new_pb.id), name=new_pb.name, description=new_pb.description,
         category=new_pb.category.value, is_public=new_pb.is_public,
-        is_default=new_pb.is_default, version=new_pb.version, rules_count=len(source.rules_list or []),
+        is_default=new_pb.is_default, version=new_pb.version,
+        party_side=new_pb.party_side or "neutral",
+        rules_count=len(source.rules_list or []),
         is_owner=True,
     )
 
@@ -574,6 +716,11 @@ async def rate_playbook(
     )
     mp = mp_result.scalar_one_or_none()
     if not mp:
+        raise HTTPException(status_code=404, detail="Marketplace entry not found")
+    playbook_result = await db.execute(
+        select(Playbook.is_public).where(Playbook.id == mp.playbook_id)
+    )
+    if playbook_result.scalar_one_or_none() is not True:
         raise HTTPException(status_code=404, detail="Marketplace entry not found")
 
     # Prevent duplicate ratings from the same user
@@ -621,6 +768,11 @@ async def update_rating(
     mp = mp_result.scalar_one_or_none()
     if not mp:
         raise HTTPException(status_code=404, detail="Marketplace entry not found")
+    playbook_result = await db.execute(
+        select(Playbook.is_public).where(Playbook.id == mp.playbook_id)
+    )
+    if playbook_result.scalar_one_or_none() is not True:
+        raise HTTPException(status_code=404, detail="Marketplace entry not found")
 
     # Find existing rating
     existing_result = await db.execute(
@@ -661,26 +813,13 @@ async def get_playbook(
     db: AsyncSession = Depends(get_db)
 ):
     """Get playbook details including rules."""
+    await _get_playbook_or_403(db, playbook_id, current_user)
     result = await db.execute(
         select(Playbook)
         .options(selectinload(Playbook.rules_list))
         .where(Playbook.id == playbook_id)
     )
     playbook = result.scalar_one_or_none()
-    
-    if not playbook:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Playbook not found"
-        )
-    
-    # Check access
-    if not playbook.is_public:
-        if playbook.created_by != current_user.id and playbook.organization_id != current_user.organization_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied"
-            )
     
     # Sort rules by order_index
     sorted_rules = sorted(playbook.rules_list, key=lambda r: r.order_index) if playbook.rules_list else []
@@ -693,6 +832,7 @@ async def get_playbook(
         is_public=playbook.is_public,
         is_default=playbook.is_default,
         version=playbook.version,
+        party_side=playbook.party_side or "neutral",
         rules_count=len(sorted_rules),
         rules=[
             RuleResponse(
@@ -712,6 +852,7 @@ async def get_playbook(
                 unacceptable_signals=r.unacceptable_signals,
                 acceptable_signals=r.acceptable_signals,
                 clause_context=r.clause_context,
+                verification_prompt=r.verification_prompt,
             )
             for r in sorted_rules
         ],
@@ -750,8 +891,10 @@ async def update_playbook(
             playbook.category = PlaybookCategory(update_data.category)
         except ValueError:
             pass
+    if update_data.party_side is not None:
+        playbook.party_side = update_data.party_side
     
-    playbook.version += 1
+    _mark_playbook_changed(playbook)
 
     await log_audit_event(
         db=db, user=current_user, action="playbook_updated",
@@ -776,6 +919,7 @@ async def update_playbook(
         is_public=playbook.is_public,
         is_default=playbook.is_default,
         version=playbook.version,
+        party_side=playbook.party_side or "neutral",
         rules_count=len(playbook.rules_list) if playbook.rules_list else 0,
         is_owner=str(playbook.created_by) == str(current_user.id),
     )
@@ -811,7 +955,9 @@ async def toggle_publish(
 ):
     """Toggle playbook public/private status. Requires ADMIN role."""
     result = await db.execute(
-        select(Playbook).where(Playbook.id == playbook_id)
+        select(Playbook)
+        .options(selectinload(Playbook.rules_list))
+        .where(Playbook.id == playbook_id)
     )
     playbook = result.scalar_one_or_none()
     
@@ -821,7 +967,11 @@ async def toggle_publish(
     if playbook.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Only the creator can publish this playbook")
     
-    playbook.is_public = not playbook.is_public
+    publishing = not playbook.is_public
+    if publishing:
+        _require_publishable_playbook(list(playbook.rules_list or []))
+
+    playbook.is_public = publishing
     playbook.version += 1
 
     await db.commit()
@@ -842,9 +992,35 @@ async def toggle_publish(
         is_public=playbook.is_public,
         is_default=playbook.is_default,
         version=playbook.version,
+        party_side=playbook.party_side or "neutral",
         rules_count=len(playbook.rules_list) if playbook.rules_list else 0,
         is_owner=str(playbook.created_by) == str(current_user.id),
     )
+
+
+@router.get("/{playbook_id}/quality")
+async def get_playbook_quality(
+    playbook_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Explain whether a playbook contains enough context for reliable analysis."""
+    await _get_playbook_or_403(db, playbook_id, current_user)
+    result = await db.execute(
+        select(Playbook)
+        .options(selectinload(Playbook.rules_list))
+        .where(Playbook.id == playbook_id)
+    )
+    playbook = result.scalar_one()
+    issues = _playbook_quality_issues(list(playbook.rules_list or []))
+    recommendations = _playbook_quality_recommendations(list(playbook.rules_list or []))
+    return {
+        "playbook_id": str(playbook.id),
+        "publishable": not issues,
+        "issues": issues,
+        "recommendations": recommendations,
+        "rules_count": len(playbook.rules_list or []),
+    }
 
 
 # ============================================================================
@@ -909,10 +1085,11 @@ async def add_rule(
         unacceptable_signals=rule_data.unacceptable_signals,
         acceptable_signals=rule_data.acceptable_signals,
         clause_context=rule_data.clause_context,
+        verification_prompt=rule_data.verification_prompt,
     )
 
     db.add(rule)
-    playbook.version += 1
+    _mark_playbook_changed(playbook)
 
     await db.commit()
     await db.refresh(rule)
@@ -934,6 +1111,7 @@ async def add_rule(
         unacceptable_signals=rule.unacceptable_signals,
         acceptable_signals=rule.acceptable_signals,
         clause_context=rule.clause_context,
+        verification_prompt=rule.verification_prompt,
     )
 
 
@@ -978,15 +1156,40 @@ async def update_rule(
     if update_data.fallback_position is not None:
         rule.fallback_position = update_data.fallback_position
     if update_data.risk_level is not None:
-        try:
-            rule.risk_level = RiskLevel(update_data.risk_level.lower())
-        except ValueError:
-            pass
+        rule.risk_level = RiskLevel(update_data.risk_level)
     if update_data.is_deal_breaker is not None:
         rule.is_deal_breaker = update_data.is_deal_breaker
-    if update_data.detection_patterns is not None:
-        existing_match_type = (rule.detection_patterns or {}).get("match_type", "exact")
-        rule.detection_patterns = {"patterns": update_data.detection_patterns, "match_type": update_data.match_type or existing_match_type}
+    if (
+        update_data.detection_patterns is not None
+        or update_data.match_type is not None
+    ):
+        existing_patterns = (rule.detection_patterns or {}).get("patterns", [])
+        existing_match_type = (rule.detection_patterns or {}).get(
+            "match_type", "exact"
+        )
+        new_patterns = (
+            update_data.detection_patterns
+            if update_data.detection_patterns is not None
+            else existing_patterns
+        )
+        new_match_type = update_data.match_type or existing_match_type
+        if new_match_type == "regex":
+            for pattern in new_patterns:
+                try:
+                    _safe_compile_regex(pattern)
+                except (re.error, ValueError) as exc:
+                    logger.warning("Invalid regex pattern submitted: %s", exc)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            "Invalid regex pattern. Please check your "
+                            "pattern syntax."
+                        ),
+                    ) from exc
+        rule.detection_patterns = {
+            "patterns": new_patterns,
+            "match_type": new_match_type,
+        }
     if update_data.suggested_language is not None:
         rule.suggested_language = {"text": update_data.suggested_language}
     # P2 #29: AI-primary detection fields
@@ -1002,8 +1205,10 @@ async def update_rule(
         rule.acceptable_signals = update_data.acceptable_signals
     if update_data.clause_context is not None:
         rule.clause_context = update_data.clause_context
+    if update_data.verification_prompt is not None:
+        rule.verification_prompt = update_data.verification_prompt
 
-    playbook.version += 1
+    _mark_playbook_changed(playbook)
 
     await db.commit()
     await db.refresh(rule)
@@ -1025,6 +1230,7 @@ async def update_rule(
         unacceptable_signals=rule.unacceptable_signals,
         acceptable_signals=rule.acceptable_signals,
         clause_context=rule.clause_context,
+        verification_prompt=rule.verification_prompt,
     )
 
 
@@ -1063,7 +1269,7 @@ async def delete_rule(
         raise HTTPException(status_code=404, detail="Rule not found")
     
     await db.delete(rule)
-    playbook.version += 1
+    _mark_playbook_changed(playbook)
     await db.commit()
 
 
@@ -1088,14 +1294,21 @@ async def reorder_rules(
     if playbook.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Only the creator can reorder rules")
     
-    # Update order indices
     rule_map = {str(r.id): r for r in playbook.rules_list}
-    
+    submitted = reorder_data.rule_ids
+    if len(submitted) != len(set(submitted)) or set(submitted) != set(rule_map):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "rule_ids must contain every rule in this playbook exactly "
+                "once."
+            ),
+        )
+
     for index, rule_id in enumerate(reorder_data.rule_ids):
-        if rule_id in rule_map:
-            rule_map[rule_id].order_index = index
+        rule_map[rule_id].order_index = index
     
-    playbook.version += 1
+    _mark_playbook_changed(playbook)
     await db.commit()
     
     # Return reordered rules
@@ -1119,6 +1332,7 @@ async def reorder_rules(
             unacceptable_signals=r.unacceptable_signals,
             acceptable_signals=r.acceptable_signals,
             clause_context=r.clause_context,
+            verification_prompt=r.verification_prompt,
         )
         for r in sorted_rules
     ]
@@ -1132,7 +1346,7 @@ class TierCreate(BaseModel):
     tier_level: int = Field(..., ge=1, le=4)
     position_text: str = Field(..., min_length=1)
     guidance_notes: Optional[str] = None
-    risk_level_at_tier: str = "yellow"
+    risk_level_at_tier: Literal["red", "yellow", "green"] = "yellow"
 
 
 class TierResponse(BaseModel):
@@ -1142,14 +1356,7 @@ class TierResponse(BaseModel):
     guidance_notes: Optional[str]
     risk_level_at_tier: str
 
-    class Config:
-        from_attributes = True
-
-
-class TierUpdate(BaseModel):
-    position_text: Optional[str] = None
-    guidance_notes: Optional[str] = None
-    risk_level_at_tier: Optional[str] = None
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.get("/{playbook_id}/rules/{rule_id}/tiers", response_model=List[TierResponse])
@@ -1207,6 +1414,13 @@ async def upsert_tiers(
     if not rule:
         raise HTTPException(status_code=404, detail="Rule not found")
 
+    tier_levels = [tier.tier_level for tier in tiers_data]
+    if len(tier_levels) != len(set(tier_levels)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Each negotiation tier level may appear only once.",
+        )
+
     # Delete existing tiers
     await db.execute(delete(PlaybookRuleTier).where(PlaybookRuleTier.rule_id == rule_id))
 
@@ -1226,7 +1440,7 @@ async def upsert_tiers(
     # Snapshot version
     playbook_result = await db.execute(select(Playbook).where(Playbook.id == playbook_id))
     playbook = playbook_result.scalar_one()
-    playbook.version += 1
+    _mark_playbook_changed(playbook)
 
     await db.commit()
     for t in new_tiers:
@@ -1248,8 +1462,14 @@ async def upsert_tiers(
 class ConditionCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     description: Optional[str] = Field(default=None, max_length=2000)
-    condition_type: str = Field(..., min_length=1, max_length=50)
-    operator: str = "equals"
+    condition_type: Literal[
+        "counterparty_type", "deal_size", "jurisdiction",
+        "contract_side", "custom",
+    ]
+    operator: Literal[
+        "equals", "not_equals", "in", "not_in", "contains",
+        "greater_than", "less_than", "between",
+    ] = "equals"
     condition_value: dict = Field(..., max_length=50)  # Max 50 keys in the dict
     is_active: bool = True
     priority: int = 0
@@ -1266,6 +1486,60 @@ class ConditionCreate(BaseModel):
             raise ValueError("condition_value has too many keys (max 50)")
         return v
 
+    @model_validator(mode="after")
+    def validate_operator_and_value(self) -> "ConditionCreate":
+        string_operators = {
+            "equals", "not_equals", "in", "not_in", "contains",
+        }
+        numeric_operators = {
+            "equals", "not_equals", "greater_than", "less_than", "between",
+        }
+        if self.condition_type == "deal_size":
+            if self.operator not in numeric_operators:
+                raise ValueError(
+                    f"Operator '{self.operator}' is not valid for deal_size"
+                )
+            if self.operator == "between":
+                minimum = self.condition_value.get("min")
+                maximum = self.condition_value.get("max")
+                if not isinstance(minimum, (int, float)) or not isinstance(
+                    maximum, (int, float)
+                ):
+                    raise ValueError(
+                        "A between deal-size condition requires numeric min and max"
+                    )
+                if minimum > maximum:
+                    raise ValueError("Deal-size min cannot exceed max")
+            else:
+                threshold = self.condition_value.get(
+                    "threshold",
+                    self.condition_value.get("value"),
+                )
+                if not isinstance(threshold, (int, float)):
+                    raise ValueError(
+                        "A deal-size condition requires a numeric threshold"
+                    )
+            return self
+
+        if self.operator not in string_operators:
+            raise ValueError(
+                f"Operator '{self.operator}' is not valid for "
+                f"{self.condition_type}"
+            )
+        if self.condition_type == "custom" and not self.condition_value.get("key"):
+            raise ValueError("A custom condition requires a key")
+        if self.operator in {"in", "not_in"}:
+            values = self.condition_value.get("values")
+            if not isinstance(values, list) or not values:
+                raise ValueError(
+                    f"Operator '{self.operator}' requires a non-empty values list"
+                )
+        elif "value" not in self.condition_value:
+            raise ValueError(
+                f"Operator '{self.operator}' requires a value"
+            )
+        return self
+
 
 class ConditionResponse(BaseModel):
     id: str
@@ -1278,13 +1552,14 @@ class ConditionResponse(BaseModel):
     priority: int
     overrides_count: int = 0
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class OverrideCreate(BaseModel):
     rule_id: str
-    override_risk_level: Optional[str] = None
+    override_risk_level: Optional[
+        Literal["red", "yellow", "green"]
+    ] = None
     override_position_text: Optional[str] = None
     override_is_deal_breaker: Optional[bool] = None
     override_tier_level: Optional[int] = Field(default=None, ge=1, le=4)
@@ -1303,8 +1578,7 @@ class OverrideResponse(BaseModel):
     suppress_rule: bool
     notes: Optional[str]
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.get("/{playbook_id}/conditions", response_model=List[ConditionResponse])
@@ -1343,7 +1617,9 @@ async def create_condition(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new condition for a playbook."""
-    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+    playbook = await _get_playbook_or_403(
+        db, playbook_id, current_user, require_owner=True
+    )
 
     condition = PlaybookCondition(
         playbook_id=playbook_id,
@@ -1356,6 +1632,7 @@ async def create_condition(
         priority=data.priority,
     )
     db.add(condition)
+    _mark_playbook_changed(playbook)
     await db.commit()
     await db.refresh(condition)
 
@@ -1375,7 +1652,9 @@ async def delete_condition(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a condition and its overrides."""
-    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+    playbook = await _get_playbook_or_403(
+        db, playbook_id, current_user, require_owner=True
+    )
 
     result = await db.execute(
         select(PlaybookCondition).where(
@@ -1387,6 +1666,7 @@ async def delete_condition(
     if not condition:
         raise HTTPException(status_code=404, detail="Condition not found")
     await db.delete(condition)
+    _mark_playbook_changed(playbook)
     await db.commit()
 
 
@@ -1399,7 +1679,9 @@ async def add_override(
     db: AsyncSession = Depends(get_db),
 ):
     """Add a rule override to a condition."""
-    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+    playbook = await _get_playbook_or_403(
+        db, playbook_id, current_user, require_owner=True
+    )
 
     # Verify condition belongs to this playbook
     cond_result = await db.execute(
@@ -1415,6 +1697,16 @@ async def add_override(
         rule_id_val = UUID(data.rule_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid rule_id format")
+    rule_result = await db.execute(
+        select(PlaybookRule.id).where(
+            PlaybookRule.id == rule_id_val,
+            PlaybookRule.playbook_id == playbook_id,
+        )
+    )
+    if rule_result.scalar_one_or_none() is None:
+        raise HTTPException(
+            status_code=404, detail="Rule not found in this playbook"
+        )
 
     override = PlaybookRuleOverride(
         condition_id=condition_id,
@@ -1427,6 +1719,7 @@ async def add_override(
         notes=data.notes,
     )
     db.add(override)
+    _mark_playbook_changed(playbook)
     await db.commit()
     await db.refresh(override)
 
@@ -1449,7 +1742,9 @@ async def delete_override(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a rule override."""
-    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+    playbook = await _get_playbook_or_403(
+        db, playbook_id, current_user, require_owner=True
+    )
 
     # Verify condition belongs to this playbook
     cond_result = await db.execute(
@@ -1471,6 +1766,7 @@ async def delete_override(
     if not override:
         raise HTTPException(status_code=404, detail="Override not found")
     await db.delete(override)
+    _mark_playbook_changed(playbook)
     await db.commit()
 
 
@@ -1481,10 +1777,36 @@ async def delete_override(
 class DependencyCreate(BaseModel):
     source_rule_id: str
     target_rule_id: str
-    trigger_condition: str = Field(..., min_length=1, max_length=50)
-    effect: str = Field(..., min_length=1, max_length=50)
+    trigger_condition: Literal[
+        "source_is_red", "source_is_yellow", "source_missing",
+        "source_uncapped", "source_deal_breaker",
+    ]
+    effect: Literal[
+        "escalate_risk", "add_flag", "change_position", "suppress"
+    ]
     effect_params: Optional[dict] = None
     is_active: bool = True
+
+    @model_validator(mode="after")
+    def validate_effect_parameters(self) -> "DependencyCreate":
+        params = self.effect_params or {}
+        if self.source_rule_id == self.target_rule_id:
+            raise ValueError("A dependency cannot target its own source rule")
+        if self.effect == "escalate_risk":
+            risk = str(params.get("new_risk", "")).upper()
+            if risk not in {"RED", "YELLOW", "GREEN"}:
+                raise ValueError(
+                    "escalate_risk requires new_risk set to RED, YELLOW, or GREEN"
+                )
+        elif self.effect == "add_flag":
+            if not str(params.get("message", "")).strip():
+                raise ValueError("add_flag requires a non-empty message")
+        elif self.effect == "change_position":
+            if not str(params.get("new_position", "")).strip():
+                raise ValueError(
+                    "change_position requires a non-empty new_position"
+                )
+        return self
 
 
 class DependencyResponse(BaseModel):
@@ -1496,8 +1818,7 @@ class DependencyResponse(BaseModel):
     effect_params: Optional[dict]
     is_active: bool
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 @router.get("/{playbook_id}/dependencies", response_model=List[DependencyResponse])
@@ -1531,7 +1852,9 @@ async def create_dependency(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a cross-clause dependency."""
-    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+    playbook = await _get_playbook_or_403(
+        db, playbook_id, current_user, require_owner=True
+    )
 
     try:
         source_rule_id_val = UUID(data.source_rule_id)
@@ -1541,6 +1864,51 @@ async def create_dependency(
         target_rule_id_val = UUID(data.target_rule_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid target_rule_id format")
+    rule_rows = await db.execute(
+        select(PlaybookRule.id).where(
+            PlaybookRule.playbook_id == playbook_id,
+            PlaybookRule.id.in_(
+                [source_rule_id_val, target_rule_id_val]
+            ),
+        )
+    )
+    if set(rule_rows.scalars().all()) != {
+        source_rule_id_val, target_rule_id_val
+    }:
+        raise HTTPException(
+            status_code=404,
+            detail="Source and target rules must belong to this playbook",
+        )
+
+    existing_rows = await db.execute(
+        select(
+            PlaybookRuleDependency.source_rule_id,
+            PlaybookRuleDependency.target_rule_id,
+        ).where(
+            PlaybookRuleDependency.playbook_id == playbook_id,
+            PlaybookRuleDependency.is_active.is_(True),
+        )
+    )
+    adjacency: dict[UUID, set[UUID]] = {}
+    for source_id, target_id in existing_rows.all():
+        adjacency.setdefault(source_id, set()).add(target_id)
+    adjacency.setdefault(source_rule_id_val, set()).add(target_rule_id_val)
+    pending = [target_rule_id_val]
+    visited: set[UUID] = set()
+    while pending:
+        node = pending.pop()
+        if node == source_rule_id_val:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    "This dependency would create a cycle. Remove or reverse "
+                    "an existing dependency first."
+                ),
+            )
+        if node in visited:
+            continue
+        visited.add(node)
+        pending.extend(adjacency.get(node, set()))
 
     dep = PlaybookRuleDependency(
         playbook_id=playbook_id,
@@ -1552,6 +1920,7 @@ async def create_dependency(
         is_active=data.is_active,
     )
     db.add(dep)
+    _mark_playbook_changed(playbook)
     await db.commit()
     await db.refresh(dep)
 
@@ -1570,7 +1939,9 @@ async def delete_dependency(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a dependency."""
-    await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
+    playbook = await _get_playbook_or_403(
+        db, playbook_id, current_user, require_owner=True
+    )
 
     result = await db.execute(
         select(PlaybookRuleDependency).where(
@@ -1582,6 +1953,7 @@ async def delete_dependency(
     if not dep:
         raise HTTPException(status_code=404, detail="Dependency not found")
     await db.delete(dep)
+    _mark_playbook_changed(playbook)
     await db.commit()
 
 
@@ -1596,8 +1968,7 @@ class VersionResponse(BaseModel):
     created_by: Optional[str]
     created_at: str
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class VersionDetailResponse(VersionResponse):
@@ -1667,6 +2038,23 @@ async def diff_versions(
 ):
     """Compare two versions of a playbook."""
     await _get_playbook_or_403(db, playbook_id, current_user)
+    try:
+        version_a = await playbook_versioning_service.get_version(
+            db, version_a_id
+        )
+        version_b = await playbook_versioning_service.get_version(
+            db, version_b_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Version not found") from exc
+    if (
+        str(version_a["playbook_id"]) != str(playbook_id)
+        or str(version_b["playbook_id"]) != str(playbook_id)
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="One or both versions do not belong to this playbook",
+        )
 
     diff = await playbook_versioning_service.diff_versions(db, version_a_id, version_b_id)
     return DiffResponse(**diff)
@@ -1682,8 +2070,13 @@ async def get_version_detail(
     """Get full snapshot for a specific version."""
     await _get_playbook_or_403(db, playbook_id, current_user)
 
-    version_data = await playbook_versioning_service.get_version(db, version_id)
-    if not version_data:
+    try:
+        version_data = await playbook_versioning_service.get_version(
+            db, version_id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Version not found") from exc
+    if str(version_data["playbook_id"]) != str(playbook_id):
         raise HTTPException(status_code=404, detail="Version not found")
     return VersionDetailResponse(
         id=str(version_data["id"]), version_number=version_data["version_number"],
@@ -1704,7 +2097,12 @@ async def rollback_to_version(
     """Rollback a playbook to a previous version."""
     await _get_playbook_or_403(db, playbook_id, current_user, require_owner=True)
 
-    await playbook_versioning_service.rollback(db, playbook_id, version_id, current_user.id)
+    try:
+        await playbook_versioning_service.rollback(
+            db, playbook_id, version_id, current_user.id
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     # Return the new version created by rollback
     versions = await playbook_versioning_service.get_versions(db, playbook_id, 1)
     v = versions[0]
@@ -1737,8 +2135,11 @@ async def publish_to_marketplace(
     if pb.created_by != current_user.id:
         raise HTTPException(status_code=403, detail="Only the creator can publish")
 
-    # Make playbook public
+    _require_publishable_playbook(list(pb.rules_list or []))
+
+    # Make playbook public only after the latest quality gate passes.
     pb.is_public = True
+    pb.version += 1
 
     # Preview: first 5 rules
     preview = [
@@ -1746,13 +2147,25 @@ async def publish_to_marketplace(
         for r in sorted(pb.rules_list, key=lambda r: r.order_index)[:5]
     ] if pb.rules_list else []
 
-    entry = PlaybookMarketplace(
-        playbook_id=playbook_id,
-        publisher_org_id=current_user.organization_id,
-        tags=data.tags,
-        preview_rules=preview,
+    existing_entry = await db.execute(
+        select(PlaybookMarketplace).where(
+            PlaybookMarketplace.playbook_id == playbook_id
+        )
     )
-    db.add(entry)
+    entry = existing_entry.scalar_one_or_none()
+    if entry is None:
+        entry = PlaybookMarketplace(
+            playbook_id=playbook_id,
+            publisher_org_id=current_user.organization_id,
+            tags=data.tags,
+            preview_rules=preview,
+        )
+        db.add(entry)
+    else:
+        entry.publisher_org_id = current_user.organization_id
+        entry.tags = data.tags
+        entry.preview_rules = preview
+        entry.published_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(entry)
 

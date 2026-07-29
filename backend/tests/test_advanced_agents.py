@@ -1,6 +1,5 @@
 """Tests for Advanced Agents — Compliance Watch + Renewal Intelligence."""
 import pytest
-from datetime import datetime, timedelta, timezone
 
 
 # ============================================================
@@ -87,9 +86,10 @@ def test_compliance_watch_rule_deltas():
         {"clause_type": "retention", "risk_level": "GREEN", "rule_name": "Data Retention"},
     ]
     deltas = agent._compute_rule_deltas([], new_rules)
-    # Only RED and YELLOW should appear as new_risk
-    assert len(deltas) == 2
-    assert all(d.change == "new_risk" for d in deltas)
+    # Rule severity alone cannot prove a contract violates the new rule.
+    assert len(deltas) == 3
+    assert all(d.change == "reassessment_required" for d in deltas)
+    assert all(d.new_risk_level == "UNASSESSED" for d in deltas)
     clause_types = {d.clause_type for d in deltas}
     assert "data_protection" in clause_types
     assert "consent" in clause_types
@@ -108,8 +108,7 @@ def test_compliance_watch_build_summary():
     summary = agent._build_summary(report)
     assert "dpdp" in summary
     assert "5" in summary
-    assert "2" in summary
-    assert "non-compliant" in summary
+    assert "no new non-compliance determination" in summary
 
 
 # ============================================================

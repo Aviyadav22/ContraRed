@@ -18,12 +18,10 @@ import hmac
 import hashlib
 import json
 import logging
-import uuid as uuid_mod
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 from typing import Optional, List, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 
@@ -477,7 +475,7 @@ async def _create_razorpay_subscription(user, request, plan_info, db):
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.error("Razorpay subscription creation failed", exc_info=True)
         raise HTTPException(status_code=400, detail={"message": "Subscription creation failed.", "error_code": "payment_error"})
 
@@ -523,7 +521,7 @@ async def _create_stripe_checkout(user, request, plan_info, db):
 
     except ImportError:
         raise HTTPException(status_code=503, detail="Stripe SDK not installed.")
-    except Exception as e:
+    except Exception:
         logger.error("Stripe checkout creation failed", exc_info=True)
         raise HTTPException(status_code=400, detail={"message": "Checkout creation failed.", "error_code": "payment_error"})
 
@@ -574,11 +572,10 @@ async def _verify_razorpay(request, current_user, db):
         tier, plan_name = tier_map[subscription.plan]
         current_user.subscription_tier = tier
 
-        # Verify payment amount matches expected plan price
-        if plan_name in PLAN_CATALOG:
-            expected_price = PLAN_CATALOG[plan_name].get("price_inr", 0)
-            # Allow verification to proceed even if amount isn't verified (Razorpay subscription model)
-            logger.info("Payment verified for plan %s", plan_name)
+        # Subscription amount and plan mapping are verified by the signed
+        # Razorpay webhook. This initial callback verifies only the payment
+        # signature and associates the returned subscription identifiers.
+        logger.info("Payment signature verified for plan %s", plan_name)
 
         # Update existing subscription with Razorpay IDs
         subscription.razorpay_subscription_id = request.razorpay_subscription_id
@@ -721,7 +718,7 @@ async def _verify_stripe(request, current_user, db):
         raise HTTPException(status_code=503, detail="Stripe SDK not installed")
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.error("Stripe verification failed", exc_info=True)
         raise HTTPException(status_code=400, detail="Payment verification failed")
 
@@ -855,7 +852,7 @@ async def razorpay_webhook(
         return {"status": "ok"}
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         logger.error("Webhook processing error", exc_info=True)
         raise HTTPException(status_code=500, detail="Webhook processing error")
 
@@ -958,7 +955,7 @@ async def stripe_webhook(
         raise
     except ImportError:
         raise HTTPException(status_code=500, detail="Stripe SDK not installed")
-    except Exception as e:
+    except Exception:
         logger.error("Stripe webhook error", exc_info=True)
         raise HTTPException(status_code=500, detail="Webhook processing error")
 

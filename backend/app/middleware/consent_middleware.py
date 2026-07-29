@@ -97,17 +97,24 @@ class ConsentEnforcementMiddleware(BaseHTTPMiddleware):
 
         missing_purposes = []
         for purpose_code in required_purposes:
-            granted = await self._check_consent(user_uuid, purpose_code)
+            granted = await self._check_consent(request, user_uuid, purpose_code)
+            if granted is None:
+                logger.error(
+                    "Consent enforcement unavailable for %s %s; blocking protected processing",
+                    request.method,
+                    path,
+                )
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "error": "consent_check_unavailable",
+                        "detail": "Consent could not be verified. Please try again.",
+                    },
+                )
             if not granted:
                 missing_purposes.append(purpose_code)
 
         if missing_purposes:
-            # Auto-grant for existing users who registered before consent system
-            # (they have no consent record at all — implied consent from prior usage)
-            has_any_record = await self._has_any_consent_record(user_uuid)
-            if not has_any_record:
-                await self._auto_grant_existing_user(user_uuid, missing_purposes)
-                return await call_next(request)
             logger.info(
                 "Consent enforcement: blocked %s %s for user %s — missing: %s",
                 request.method, path, user_id, missing_purposes,
@@ -138,85 +145,31 @@ class ConsentEnforcementMiddleware(BaseHTTPMiddleware):
         processing_patterns = ["/documents/analyze", "/drafting/", "/agent/"]
         return any(p in path for p in processing_patterns)
 
-    async def _check_consent(self, user_id, purpose_code: str) -> bool:
-        """Check consent via service (which uses Redis cache internally)."""
+    async def _check_consent(
+        self,
+        request: Request,
+        user_id,
+        purpose_code: str,
+    ) -> Optional[bool]:
+        """Check consent using the application's configured session factory.
+
+        Production falls back to ``AsyncSessionLocal``. Tests and alternate
+        deployments can inject the same session factory used by request
+        dependencies through ``app.state.consent_session_factory`` so consent
+        checks never silently query a different database.
+        """
         try:
             from app.services.consent_service import consent_service
             from app.db.session import AsyncSessionLocal
 
-            async with AsyncSessionLocal() as session:
+            session_factory = getattr(
+                request.app.state,
+                "consent_session_factory",
+                AsyncSessionLocal,
+            )
+            async with session_factory() as session:
                 return await consent_service.check_consent(session, user_id, purpose_code)
         except Exception as e:
-            # Fail open: if consent check fails, allow the request
-            logger.error("Consent check failed (allowing request): %s", e)
-            return True
-
-    async def _has_any_consent_record(self, user_id) -> bool:
-        """Check if user has ANY consent record (new vs legacy user)."""
-        try:
-            from app.db.session import AsyncSessionLocal
-            from sqlalchemy import text
-
-            async with AsyncSessionLocal() as session:
-                result = await session.execute(
-                    text("SELECT COUNT(*) FROM consent_records WHERE subject_id = :uid"),
-                    {"uid": user_id},
-                )
-                count = result.scalar() or 0
-                logger.debug("Consent record count for %s: %d", user_id, count)
-                return count > 0
-        except Exception as e:
-            logger.error("Consent record check failed: %s", e)
-            return False  # If check fails, try auto-grant anyway
-
-    async def _auto_grant_existing_user(self, user_id, purpose_codes: list):
-        """Auto-grant consent for a legacy user who registered before consent system."""
-        try:
-            from app.db.session import AsyncSessionLocal
-            from sqlalchemy import text, select
-            from app.models.consent import (
-                ConsentPurpose, ConsentRecord, ConsentPurposeGrant,
-                ConsentEvent, ConsentStatus,
-            )
-            from datetime import datetime, timezone
-            import uuid as uuid_mod
-
-            now = datetime.now(timezone.utc)
-
-            async with AsyncSessionLocal() as session:
-                # Create consent record directly (bypass service to avoid flush/commit issues)
-                record = ConsentRecord(
-                    subject_id=user_id,
-                    status=ConsentStatus.ACTIVE.value,
-                    collection_method="auto_migration",
-                    expression_method="implied",
-                    consent_metadata={"reason": "legacy_user_auto_migration"},
-                    created_at=now,
-                    updated_at=now,
-                )
-                session.add(record)
-                await session.flush()
-
-                # Get all active purposes
-                result = await session.execute(
-                    select(ConsentPurpose).where(ConsentPurpose.is_active == True)
-                )
-                purposes = result.scalars().all()
-
-                # Grant each purpose
-                for purpose in purposes:
-                    grant = ConsentPurposeGrant(
-                        consent_record_id=record.id,
-                        purpose_id=purpose.id,
-                        purpose_code=purpose.purpose_code,
-                        granted=True,
-                        granted_at=now,
-                        created_at=now,
-                    )
-                    session.add(grant)
-
-                await session.commit()
-
-            logger.info("Auto-granted consent for legacy user %s (%d purposes)", user_id, len(purposes))
-        except Exception as e:
-            logger.error("Auto-grant consent failed for %s: %s", user_id, e, exc_info=True)
+            # Protected processing must not proceed when consent cannot be verified.
+            logger.error("Consent check failed: %s", e)
+            return None

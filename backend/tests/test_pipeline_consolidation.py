@@ -10,7 +10,7 @@ on plain dicts and lightweight stand-ins for the SQLAlchemy models.
 """
 
 from types import SimpleNamespace
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 import pytest
 

@@ -8,8 +8,7 @@ remediation outputs, and portfolio scoring.
 from __future__ import annotations
 
 import enum
-import uuid
-from datetime import datetime, date
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -106,7 +105,7 @@ class ContractScanResult(BaseModel):
     deal_breakers: int = 0
     compliance_score: float = Field(0.0, ge=0, le=100)
     findings: list[ContractFinding] = Field(default_factory=list)
-    scanned_at: datetime = Field(default_factory=lambda: datetime.now())
+    scanned_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class PortfolioReport(BaseModel):
@@ -118,7 +117,7 @@ class PortfolioReport(BaseModel):
     section_coverage: dict[str, ComplianceStatus] = Field(default_factory=dict)
     top_risks: list[str] = Field(default_factory=list)
     contract_results: list[ContractScanResult] = Field(default_factory=list)
-    generated_at: datetime = Field(default_factory=lambda: datetime.now())
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---- Gap Assessor Models ----
@@ -174,8 +173,8 @@ class GapAssessmentResult(BaseModel):
     critical_gaps: list[str] = Field(default_factory=list)
     action_items: list[str] = Field(default_factory=list)
     estimated_remediation_effort: str = ""
-    deadline_risk: str = ""  # How far from May 2027 enforcement
-    assessed_at: datetime = Field(default_factory=lambda: datetime.now())
+    deadline_risk: str = ""  # How far from the May 2027 substantive phase
+    assessed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---- Remediation Agent Models ----
@@ -201,7 +200,7 @@ class RemediationOutput(BaseModel):
     sections: list[dict] = Field(default_factory=list)
     applicable_dpdp_sections: list[DPDPSection] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
-    generated_at: datetime = Field(default_factory=lambda: datetime.now())
+    generated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---- Monitor Agent Models ----
@@ -223,7 +222,7 @@ class ComplianceAlert(BaseModel):
     title: str
     description: str
     action_required: str = ""
-    created_at: datetime = Field(default_factory=lambda: datetime.now())
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class ComplianceDashboard(BaseModel):
@@ -264,15 +263,15 @@ class BreachNotificationInput(BaseModel):
     breach_description: str
     data_categories_affected: list[str] = Field(default_factory=list)
     estimated_records_affected: int = 0
-    breach_discovered_at: datetime = Field(default_factory=lambda: datetime.now())
+    breach_discovered_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     containment_measures: str = ""
     is_ongoing: bool = False
 
 
 class BreachNotification(BaseModel):
-    """Generated breach notification for DPB and data principals."""
+    """Generated staged Board, principal, and conditional CERT-In notices."""
     dpb_notification: str  # For Data Protection Board
     principal_notification: str  # For affected data principals
-    cert_in_notification: str  # For CERT-In (6-hour window)
+    cert_in_notification: str  # Use only after confirming CERT-In scope
     timeline: dict = Field(default_factory=dict)
     recommended_actions: list[str] = Field(default_factory=list)

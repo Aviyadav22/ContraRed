@@ -78,6 +78,7 @@ export function AnalysisPanel({
     // Partial pipeline: AI ran but some stages failed/timed out.
     const partialIncompleteNoFindings = analysis.pipeline_partial && analysis.total_risks === 0 && !aiDown;
     const partialWithFindings = analysis.pipeline_partial && analysis.total_risks > 0 && !aiDown;
+    const coverageIncomplete = analysis.playbook_coverage && !analysis.playbook_coverage.complete;
 
     return (
         <div style={panelStyle}>
@@ -115,6 +116,15 @@ export function AnalysisPanel({
                 }}>
                     <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
                     <span>Some analysis stages did not complete. Results may be incomplete.</span>
+                </div>
+            )}
+
+            {coverageIncomplete && (
+                <div style={{ ...bannerStyle, fontSize: 12 }} role="alert">
+                    <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                    <span>
+                        Playbook coverage incomplete: {analysis.playbook_coverage!.assessed_rules} of {analysis.playbook_coverage!.total_rules} selected rules received an explicit assessment. Review the remaining rules manually or retry.
+                    </span>
                 </div>
             )}
 
@@ -169,6 +179,11 @@ export function AnalysisPanel({
                         )}
                         {analysis.pipeline_partial && (
                             <Badge variant="high" size="sm">Partial</Badge>
+                        )}
+                        {analysis.playbook_coverage && (
+                            <Badge variant={analysis.playbook_coverage.complete ? 'neutral' : 'high'} size="sm">
+                                Playbook {analysis.playbook_coverage.assessed_rules}/{analysis.playbook_coverage.total_rules}
+                            </Badge>
                         )}
                         <div style={{ flex: 1 }} />
                         {summaryExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}

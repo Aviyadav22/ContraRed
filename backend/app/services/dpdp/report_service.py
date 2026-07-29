@@ -8,7 +8,7 @@ use for compliance audits and board presentations.
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional, List
 
 from sqlalchemy import select, desc, func
@@ -154,9 +154,7 @@ class ComplianceReportService:
         self, db: AsyncSession, organization_id: Optional[uuid.UUID] = None, days: int = 90
     ) -> List[Dict]:
         """Get compliance score trend from stored scan results."""
-        cutoff = datetime.now(timezone.utc).replace(
-            day=max(1, datetime.now(timezone.utc).day),
-        )
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, days))
         # Use scan results for trend data
         query = (
             select(
@@ -164,6 +162,7 @@ class ComplianceReportService:
                 func.avg(ComplianceScanResult.compliance_score).label('avg_score'),
                 func.count(ComplianceScanResult.id).label('scan_count'),
             )
+            .where(ComplianceScanResult.scanned_at >= cutoff)
             .group_by('week')
             .order_by('week')
             .limit(13)  # ~3 months of weekly data

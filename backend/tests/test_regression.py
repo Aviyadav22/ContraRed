@@ -155,9 +155,6 @@ def test_reg_services_import():
     """Services: core services import."""
     from app.services.analysis_pipeline import AnalysisPipeline
     from app.services.jurisdiction_detector import JurisdictionDetector
-    from app.services.playbook_cache import get_cached_rules_dicts
-    from app.services.hallucination_guard import HallucinationGuard
-    from app.services.confidence_scorer import ConfidenceScorer
     assert AnalysisPipeline is not None
     assert JurisdictionDetector is not None
 

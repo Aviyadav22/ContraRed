@@ -1,6 +1,5 @@
 """Tests for Smriti MCP Integration — Client, Tools, Pipeline, Endpoint."""
 import pytest
-from unittest.mock import AsyncMock, patch
 
 
 # ============================================================

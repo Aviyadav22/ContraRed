@@ -17,7 +17,6 @@ If Redis is unavailable, the worker exits after a grace period.
 """
 
 import asyncio
-import json
 import logging
 import os
 import signal
@@ -64,6 +63,11 @@ async def process_job(job_id: str) -> None:
         # Reconstruct the job
         from app.workers.tasks import AnalysisJob, _load_phase6_data
         job = AnalysisJob.from_dict(job_data)
+        job.contract_text = await task_queue.get_contract_text(job_id)
+        if not job.contract_text:
+            raise ValueError(
+                "Queued contract payload is missing or expired; resubmit the job."
+            )
 
         # Build deal context + load Phase 6 data so the worker has parity
         # with the sync /analyze surface.
@@ -85,7 +89,10 @@ async def process_job(job_id: str) -> None:
                         await _load_phase6_data(db, job.playbook_id, job.tier_preference)
                     )
             except Exception as exc:
-                logger.warning("Worker: Phase 6 load failed for job %s: %s", job_id, exc)
+                raise RuntimeError(
+                    "Playbook conditions, dependencies, or tiers could not "
+                    "be loaded."
+                ) from exc
 
         # Run the analysis pipeline
         from app.services.analysis_pipeline import analysis_pipeline
@@ -102,13 +109,29 @@ async def process_job(job_id: str) -> None:
             tier_preference=job.tier_preference,
         )
 
+        result_dict = result.to_dict()
+        from app.workers.tasks import attach_compliance_scores
+        attach_compliance_scores(job, result, result_dict)
+        await task_queue.store_job_result(job_id, result_dict)
+        from app.workers.tasks import _persist_document_job_result
+        await _persist_document_job_result(job.document_id, result_dict)
         await task_queue.update_job_status(job_id, JobStatus.COMPLETED)
+        await task_queue.delete_contract_text(job_id)
         logger.info("Job %s completed: %d risks found", job_id, len(result.redlines))
 
     except Exception as e:
         logger.error("Job %s failed: %s", job_id, e, exc_info=True)
-        from app.workers.tasks import task_queue, JobStatus
+        from app.workers.tasks import (
+            _persist_document_job_result,
+            task_queue,
+            JobStatus,
+        )
+        if "job" in locals():
+            await _persist_document_job_result(
+                job.document_id, None, error=str(e)
+            )
         await task_queue.update_job_status(job_id, JobStatus.FAILED, str(e))
+        await task_queue.delete_contract_text(job_id)
 
 
 async def worker_loop() -> None:

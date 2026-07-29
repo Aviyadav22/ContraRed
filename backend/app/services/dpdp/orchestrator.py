@@ -4,7 +4,7 @@ DPDP Compliance Command Center — Orchestrator.
 Central engine that coordinates the 5 specialized DPDP agents:
   1. Scanner Agent — Bulk contract scanning
   2. Gap Assessor Agent — Organization-wide gap analysis
-  3. Remediation Agent — AI-generated compliant content
+  3. Remediation Agent — AI-assisted drafts for legal and factual review
   4. Monitor Agent — Continuous compliance tracking
   5. Rights Agent — Data Principal rights automation
 
@@ -180,7 +180,7 @@ class DPDPOrchestrator:
                 stored = ComplianceAssessment(
                     organization_id=uuid.UUID(organization_id) if organization_id else None,
                     user_id=uuid.UUID(user_id) if user_id else None,
-                    organization_name=request.org_name,
+                    organization_name=request.organization_name,
                     industry=request.industry,
                     overall_score=round(result.overall_score),
                     overall_status=result.overall_status.value if hasattr(result.overall_status, 'value') else str(result.overall_status),
@@ -202,7 +202,7 @@ class DPDPOrchestrator:
     async def generate_remediation(
         self, request: RemediationRequest
     ) -> RemediationOutput:
-        """Generate DPDP-compliant remediation content."""
+        """Generate DPDP-oriented remediation content for legal review."""
         return await self.remediation.generate(request)
 
     async def generate_breach_notification(

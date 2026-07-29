@@ -86,7 +86,10 @@ module.exports = async (env, options) => {
             new CopyWebpackPlugin({
                 patterns: [
                     {
-                        from: "assets/*",
+                        // The manifest uses purpose-sized icons. Keep the
+                        // high-resolution source logo in the repository, but
+                        // do not ship its unused 913 KiB payload.
+                        from: "assets/icon-*.png",
                         to: "assets/[name][ext]",
                         noErrorOnMissing: true,
                     },

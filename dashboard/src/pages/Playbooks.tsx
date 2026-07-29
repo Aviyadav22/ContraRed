@@ -2,9 +2,16 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { useState, type CSSProperties } from 'react';
 import { useFocusTrap } from '@/hooks/useFocusTrap';
-import { listPlaybooks, createPlaybook, deletePlaybook, togglePlaybookPublish, type Playbook } from '@/api/client';
+import {
+    listPlaybooks,
+    createPlaybook,
+    deletePlaybook,
+    togglePlaybookPublish,
+    type CreatePlaybookData,
+    type Playbook,
+} from '@/api/client';
 import { AppLayout } from '@/components/layout';
-import { Button, Badge, Modal, TextInput, TextareaInput } from '@/components/ui';
+import { Button, Badge, Modal, SelectInput, TextInput, TextareaInput } from '@/components/ui';
 import { Plus, Globe, Lock, FileText } from 'lucide-react';
 
 function InlineConfirm({ message, onConfirm, onCancel }: { message: string; onConfirm: () => void; onCancel: () => void }) {
@@ -62,6 +69,7 @@ export default function Playbooks() {
     const [showCreate, setShowCreate] = useState(false);
     const [newName, setNewName] = useState('');
     const [newDescription, setNewDescription] = useState('');
+    const [newPartySide, setNewPartySide] = useState<'buyer' | 'seller' | 'neutral'>('neutral');
     const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
     const modalRef = useFocusTrap(showCreate);
 
@@ -71,12 +79,13 @@ export default function Playbooks() {
     });
 
     const createMutation = useMutation({
-        mutationFn: (data: { name: string; description?: string }) => createPlaybook(data),
+        mutationFn: (data: CreatePlaybookData) => createPlaybook(data),
         onSuccess: (newPlaybook) => {
             queryClient.invalidateQueries({ queryKey: ['playbooks'] });
             setShowCreate(false);
             setNewName('');
             setNewDescription('');
+            setNewPartySide('neutral');
             navigate(`/playbooks/${newPlaybook.id}`);
         },
     });
@@ -93,12 +102,17 @@ export default function Playbooks() {
     const publishMutation = useMutation({
         mutationFn: togglePlaybookPublish,
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['playbooks'] }),
+        onError: (err: Error) => alert(err.message || 'Unable to publish this playbook.'),
     });
 
     const handleCreate = (e: React.FormEvent) => {
         e.preventDefault();
         if (newName.trim()) {
-            createMutation.mutate({ name: newName, description: newDescription || undefined });
+            createMutation.mutate({
+                name: newName,
+                description: newDescription || undefined,
+                party_side: newPartySide,
+            });
         }
     };
 
@@ -149,6 +163,15 @@ export default function Playbooks() {
                             onChange={(e) => setNewDescription(e.target.value)}
                             placeholder="Rules for reviewing SaaS vendor contracts..."
                         />
+                        <SelectInput
+                            label="Review perspective"
+                            value={newPartySide}
+                            onChange={(e) => setNewPartySide(e.target.value as 'buyer' | 'seller' | 'neutral')}
+                        >
+                            <option value="neutral">Neutral issue-spotting</option>
+                            <option value="buyer">Representing buyer / customer</option>
+                            <option value="seller">Representing seller / vendor</option>
+                        </SelectInput>
                     </form>
                 </div>
             </Modal>

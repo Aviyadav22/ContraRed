@@ -29,26 +29,37 @@ router = APIRouter()
 # ---------------------------------------------------------------------------
 
 class AgentReviewRequest(BaseModel):
-    text: str = Field(..., min_length=1, max_length=500000)
+    text: str = Field(..., min_length=50, max_length=500000)
     instructions: Optional[str] = Field(None, max_length=2000, description="Natural language review instructions")
     playbook_id: Optional[str] = None
     compliance_layers: Optional[List[str]] = None
     jurisdiction: Optional[str] = None
+    party_side: Optional[str] = Field(
+        None,
+        pattern=r"^(buyer|seller|neutral)$",
+        description="Represented side. Uses the selected playbook side when omitted.",
+    )
 
 
 class AgentFinding(BaseModel):
     id: str
+    rule_id: Optional[str] = None
     risk_level: str
     clause_type: str
     rule_name: str
+    clause_text: str = ""
     explanation: str
     fix: Optional[str] = None
+    is_deal_breaker: bool = False
+    confidence: Optional[float] = None
+    verification_status: Optional[str] = None
     priority: int
 
 
 class AgentReviewResponse(BaseModel):
     jurisdiction: Optional[str] = None
     contract_type: Optional[str] = None
+    review_perspective: Optional[str] = None
     total_findings: int
     deal_breakers: List[AgentFinding]
     high_risk: List[AgentFinding]
@@ -57,6 +68,8 @@ class AgentReviewResponse(BaseModel):
     compliance_scores: dict = {}
     summary: str
     partial: bool = False
+    ai_used: bool = True
+    playbook_coverage: Optional[dict] = None
 
 
 # ---------------------------------------------------------------------------
@@ -74,7 +87,11 @@ async def agent_review(
     The agent orchestrates: jurisdiction detection → playbook selection →
     compliance layers → analysis → prioritization → fix generation.
     """
-    agent = ReviewAgent(db)
+    agent = ReviewAgent(
+        db,
+        current_user_id=current_user.id,
+        current_user_org_id=current_user.organization_id,
+    )
 
     try:
         result = await agent.review(
@@ -83,10 +100,15 @@ async def agent_review(
             playbook_id=body.playbook_id,
             compliance_layers=body.compliance_layers,
             jurisdiction=body.jurisdiction,
+            party_side=body.party_side,
         )
+    except PermissionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as e:
         logger.error("Agent review failed: %s", e)
-        raise HTTPException(status_code=500, detail="Agent review failed")
+        raise HTTPException(status_code=500, detail="Agent review failed") from e
 
     return AgentReviewResponse(**result.to_dict())
 

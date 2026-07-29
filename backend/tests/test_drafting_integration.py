@@ -14,11 +14,15 @@ async def test_full_nda_pipeline_no_ai():
     from app.services.drafting.orchestrator import DraftingOrchestrator
 
     orch = DraftingOrchestrator()
-    with patch.object(orch.draft_agent, "_ai_adapt_clause", new_callable=AsyncMock) as mock_adapt, \
+    with patch.object(orch.draft_agent, "_ai_generate_clause", new_callable=AsyncMock) as mock_adapt, \
          patch.object(orch.risk_agent, "_ai_review", new_callable=AsyncMock) as mock_risk, \
          patch.object(orch.compliance_agent, "_ai_review", new_callable=AsyncMock) as mock_compliance:
 
-        mock_adapt.side_effect = lambda text, guidance, jv: text
+        mock_adapt.side_effect = lambda clause, tier, context, semaphore: (
+            clause.get(tier, clause.get("acceptable", {})).get("template_text", ""),
+            0,
+            False,
+        )
         mock_risk.return_value = []
         mock_compliance.return_value = []
 
@@ -66,11 +70,15 @@ async def test_full_saas_pipeline_no_ai():
     from app.services.drafting.orchestrator import DraftingOrchestrator
 
     orch = DraftingOrchestrator()
-    with patch.object(orch.draft_agent, "_ai_adapt_clause", new_callable=AsyncMock) as mock_adapt, \
+    with patch.object(orch.draft_agent, "_ai_generate_clause", new_callable=AsyncMock) as mock_adapt, \
          patch.object(orch.risk_agent, "_ai_review", new_callable=AsyncMock) as mock_risk, \
          patch.object(orch.compliance_agent, "_ai_review", new_callable=AsyncMock) as mock_compliance:
 
-        mock_adapt.side_effect = lambda text, guidance, jv: text
+        mock_adapt.side_effect = lambda clause, tier, context, semaphore: (
+            clause.get(tier, clause.get("acceptable", {})).get("template_text", ""),
+            0,
+            False,
+        )
         mock_risk.return_value = []
         mock_compliance.return_value = []
 

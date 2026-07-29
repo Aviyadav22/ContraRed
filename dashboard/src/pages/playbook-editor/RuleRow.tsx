@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { type PlaybookRule, type RuleTier } from '@/api/client';
 import { RISK_LEVELS, TIER_LABELS, inputClass } from './constants';
 
@@ -23,12 +23,18 @@ export function RuleRow({
     onToggleExpand, onEdit, onDelete, onSyncTiers, onTierChange, onSaveTiers, tiersSaving,
 }: RuleRowProps) {
     // Sync tier drafts when tiers finish loading
-    const prevTiersRef = useState<RuleTier[] | undefined>(undefined);
-    if (isExpanded && tiers && tiers !== prevTiersRef[0] && Object.keys(tierDrafts).length === 0) {
-        prevTiersRef[0] = tiers;
-        // schedule sync for next microtask to avoid setState during render
-        Promise.resolve().then(onSyncTiers);
-    }
+    const prevTiersRef = useRef<RuleTier[] | undefined>(undefined);
+    useEffect(() => {
+        if (
+            isExpanded &&
+            tiers &&
+            tiers !== prevTiersRef.current &&
+            Object.keys(tierDrafts).length === 0
+        ) {
+            prevTiersRef.current = tiers;
+            onSyncTiers();
+        }
+    }, [isExpanded, onSyncTiers, tierDrafts, tiers]);
 
     return (
         <>

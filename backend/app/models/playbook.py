@@ -4,7 +4,7 @@ Playbook and ClauseLibrary models.
 
 import uuid
 from datetime import datetime, timezone
-from typing import Optional, List
+from typing import TYPE_CHECKING, Optional, List
 from sqlalchemy import String, Boolean, DateTime, Enum as SQLEnum, Text, Integer, ForeignKey, Numeric, UniqueConstraint, CheckConstraint
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -12,6 +12,9 @@ import enum
 
 from app.db.session import Base
 from app.models.enums import RiskLevel
+
+if TYPE_CHECKING:
+    from app.models.organization import Organization
 
 
 class PlaybookCategory(str, enum.Enum):
@@ -35,7 +38,10 @@ class Playbook(Base):
     is_public: Mapped[bool] = mapped_column(Boolean, default=False)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     version: Mapped[int] = mapped_column(Integer, default=1)
-    party_side: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="buyer")
+    # A missing review perspective must never silently turn into buyer-side
+    # advice. System playbooks set their side explicitly; user playbooks
+    # default to neutral until the owner chooses a represented side.
+    party_side: Mapped[Optional[str]] = mapped_column(String(20), nullable=True, default="neutral")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), onupdate=lambda: datetime.now(timezone.utc))
 

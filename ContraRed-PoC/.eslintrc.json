@@ -1,0 +1,25 @@
+{
+  "env": {
+    "browser": true,
+    "es2020": true,
+    "node": true
+  },
+  "globals": {
+    "Office": "readonly",
+    "Word": "readonly"
+  },
+  "plugins": [
+    "office-addins"
+  ],
+  "extends": [
+    "plugin:office-addins/recommended"
+  ],
+  "parserOptions": {
+    "ecmaVersion": 2020,
+    "sourceType": "module"
+  },
+  "rules": {
+    "no-undef": "off",
+    "prettier/prettier": "off"
+  }
+}

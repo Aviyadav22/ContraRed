@@ -2,14 +2,18 @@ import pytest
 from tests.conftest import register_and_login
 
 @pytest.mark.asyncio
-async def test_create_playbook_requires_admin(client, test_user_data):
-    """REVIEWER role cannot create playbooks (requires playbook.admin permission)."""
+async def test_authenticated_user_can_create_owned_playbook(client, test_user_data):
+    """Any authenticated user can create an owner-scoped playbook."""
     token = await register_and_login(client, test_user_data)
     response = await client.post("/api/v1/playbooks/",
         headers={"Authorization": f"Bearer {token}"},
         json={"name": "Test Playbook", "description": "A test playbook"},
     )
-    assert response.status_code == 403
+    assert response.status_code == 201
+    data = response.json()
+    assert data["name"] == "Test Playbook"
+    assert data["is_owner"] is True
+    assert data["party_side"] == "neutral"
 
 @pytest.mark.asyncio
 async def test_list_playbooks(client, test_user_data):
