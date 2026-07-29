@@ -71,6 +71,7 @@ _asyncpg_kwargs = {k: v for k, v in connect_args.items() if k not in _DIALECT_ON
 
 
 _is_transaction_pooler = ":6543/" in settings.DATABASE_URL
+_is_sqlite = settings.DATABASE_URL.startswith("sqlite")
 
 
 async def _connect_with_retry() -> asyncpg.Connection:
@@ -122,7 +123,15 @@ async def _connect_with_retry() -> asyncpg.Connection:
 #
 # When using a direct connection (port 5432), the standard QueuePool with
 # pre-ping + recycle is fine.
-if _is_transaction_pooler:
+if _is_sqlite:
+    # SQLite's StaticPool does not accept PostgreSQL QueuePool settings, and
+    # the asyncpg connection creator must never be used for an aiosqlite URL.
+    # This path is used by tests and local ephemeral databases.
+    engine = create_async_engine(
+        settings.DATABASE_URL,
+        echo=settings.DEBUG,
+    )
+elif _is_transaction_pooler:
     engine = create_async_engine(
         settings.DATABASE_URL,
         echo=settings.DEBUG,
