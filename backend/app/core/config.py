@@ -163,8 +163,11 @@ class Settings(BaseSettings):
     # lists; the fast list serves the GEMINI_SCOUT_MODEL calls.
     OPENROUTER_API_KEY: str = ""
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-    OPENROUTER_MODEL: str = "google/gemma-4-31b-it:free,nvidia/nemotron-3.5-super-vl:free,openrouter/free"
-    OPENROUTER_FAST_MODEL: str = "google/gemma-4-26b-a4b-it:free,google/gemma-4-31b-it:free,openrouter/free"
+    # Not "openrouter/free": it can route to slow thinking models.
+    OPENROUTER_MODEL: str = "google/gemma-4-31b-it:free,nvidia/nemotron-3.5-super-vl:free,google/gemma-4-26b-a4b-it:free"
+    OPENROUTER_FAST_MODEL: str = "google/gemma-4-26b-a4b-it:free,google/gemma-4-31b-it:free,nvidia/nemotron-3.5-super-vl:free"
+    # Thinking is off by default: free thinking models made single calls take minutes.
+    OPENROUTER_REASONING: bool = False
     # "deny" skips providers that store or train on prompts (contract data).
     OPENROUTER_DATA_COLLECTION: str = "deny"
 

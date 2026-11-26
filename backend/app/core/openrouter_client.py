@@ -140,6 +140,8 @@ class OpenRouterModel:
         }
         if len(self._models) > 1:
             body["models"] = self._models
+        if not settings.OPENROUTER_REASONING:
+            body["reasoning"] = {"enabled": False}
         for ours, theirs in (("temperature", "temperature"), ("top_p", "top_p"),
                              ("top_k", "top_k"), ("max_output_tokens", "max_tokens")):
             if gc.get(ours) is not None:

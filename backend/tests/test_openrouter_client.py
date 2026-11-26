@@ -77,6 +77,7 @@ def test_response_has_the_shape_callers_read(openrouter):
     assert body["temperature"] == 0.2
     assert body["response_format"] == {"type": "json_object"}
     assert body["provider"] == {"data_collection": "deny"}
+    assert body["reasoning"] == {"enabled": False}
 
 
 def test_accepts_genai_config_objects_and_plain_strings(openrouter):
