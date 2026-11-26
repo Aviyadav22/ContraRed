@@ -6,7 +6,7 @@
   xsi:type="TaskPaneApp">
 
   <Id>c7d8e9f0-a1b2-4c3d-8e5f-6a7b8c9d0e1f</Id>
-  <Version>2.0.0.0</Version>
+  <Version>2.0.1.0</Version>
   <ProviderName>ContraRed</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="ContraRed"/>
@@ -19,7 +19,7 @@
   <AppDomains>
     <AppDomain>https://contrared-addin.netlify.app</AppDomain>
     <AppDomain>https://contrared.com</AppDomain>
-    <AppDomain>https://contrared-api.onrender.com</AppDomain>
+    <AppDomain>https://contrared-api.neetiq.in</AppDomain>
   </AppDomains>
 
   <Hosts>

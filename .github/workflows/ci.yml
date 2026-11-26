@@ -126,7 +126,7 @@ jobs:
       - run: npm run lint
       - run: npm run build
         env:
-          VITE_API_URL: "https://contrared-api.onrender.com/api/v1"
+          VITE_API_URL: "https://contrared-api.neetiq.in/api/v1"
 
   addin-build:
     runs-on: ubuntu-latest
@@ -141,4 +141,4 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: npm run build
         env:
-          API_BASE_URL: "https://contrared-api.onrender.com/api/v1"
+          API_BASE_URL: "https://contrared-api.neetiq.in/api/v1"

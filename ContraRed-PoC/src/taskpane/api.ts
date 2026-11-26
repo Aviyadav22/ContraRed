@@ -206,7 +206,7 @@ class ContraRedAPI {
         this.loadUser();
     }
 
-    // The csrf_token cookie is set by contrared-api.onrender.com (different domain
+    // The csrf_token cookie is set by contrared-api.neetiq.in (different domain
     // than the add-in), so document.cookie from this origin can't see it. Capture
     // it from the login/refresh response body instead and keep an in-memory copy.
     private getCsrfToken(): string {
