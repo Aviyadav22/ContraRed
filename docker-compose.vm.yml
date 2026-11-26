@@ -1,0 +1,28 @@
+# ContraRed API on the VM, replacing the Render free instance.
+# One uvicorn process, same as Render: without Redis, analysis jobs and their
+# status live in process memory, so a second worker would lose track of them.
+#
+#   docker compose -f docker-compose.vm.yml up -d --build
+#
+# Secrets live outside the repo in /etc/neetiq/contrared (root-only):
+# api.env for the environment, gcp/service-account.json for Vertex AI.
+
+services:
+  api:
+    build: ./backend
+    image: contrared-api:vm
+    container_name: contrared-api
+    network_mode: host
+    restart: unless-stopped
+    env_file: /etc/neetiq/contrared/api.env
+    environment:
+      PORT: "8100"
+    volumes:
+      - /etc/neetiq/contrared/gcp:/run/secrets/gcp:ro
+    mem_limit: 768m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8100/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
