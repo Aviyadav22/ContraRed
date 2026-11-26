@@ -16,7 +16,7 @@ from typing import Optional, List, Dict, Any
 from dataclasses import dataclass
 
 from app.core.config import settings
-from app.core.vertex_client import get_generative_model, get_backend
+from app.core.vertex_client import ai_configured, get_generative_model, get_backend
 from app.services.jurisdiction_detector import jurisdiction_detector, JurisdictionDetectionResult
 from app.services.defined_terms_resolver import defined_terms_resolver, DefinedTermsResult
 from app.services.prompt_templates import (
@@ -352,7 +352,7 @@ class GeminiAnalyzer:
         """Initialize AI client — Vertex AI only (consumer API prohibited)."""
         self._client = None
         self._analysis_client = None
-        self._enabled: bool = bool(settings.VERTEX_PROJECT_ID)
+        self._enabled: bool = ai_configured()
 
     @property
     def client(self):

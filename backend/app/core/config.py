@@ -155,8 +155,18 @@ class Settings(BaseSettings):
     GEMINI_SCOUT_MODEL: str = "gemini-3-flash-preview"       # Flash for fast clause extraction
     GEMINI_SURGEON_MODEL: str = "gemini-3.1-pro-preview"     # Pro for fix generation (quality matters)
 
-    # AI Provider selection: "gemini" (via Vertex AI) or "azure"
+    # AI Provider selection: "gemini" (via Vertex AI), "azure" or "openrouter"
     AI_PROVIDER: str = "gemini"
+
+    # OpenRouter (AI_PROVIDER=openrouter). No data-residency guarantee — see
+    # app/core/openrouter_client.py. Model settings are comma-separated fallback
+    # lists; the fast list serves the GEMINI_SCOUT_MODEL calls.
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    OPENROUTER_MODEL: str = "google/gemma-4-31b-it:free,nvidia/nemotron-3.5-super-vl:free,openrouter/free"
+    OPENROUTER_FAST_MODEL: str = "google/gemma-4-26b-a4b-it:free,google/gemma-4-31b-it:free,openrouter/free"
+    # "deny" skips providers that store or train on prompts (contract data).
+    OPENROUTER_DATA_COLLECTION: str = "deny"
 
     # Field-level encryption for stored clause text (AES-256 via Fernet)
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"

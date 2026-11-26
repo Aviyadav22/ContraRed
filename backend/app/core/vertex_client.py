@@ -1,5 +1,9 @@
 """
-AI Backend Client — Vertex AI ONLY via google-genai SDK.
+AI Backend Client — Vertex AI via google-genai SDK, or OpenRouter.
+
+AI_PROVIDER=openrouter routes every call through app.core.openrouter_client
+instead; that path has no data-residency guarantee and is meant for demos and
+internal use while Vertex billing is off.
 
 Consumer Gemini API is PROHIBITED — contract data must not transit public
 Google AI endpoints. All AI calls go through Vertex AI with project-level
@@ -137,8 +141,22 @@ def _get_client() -> Any:
         return None
 
 
+def _use_openrouter() -> bool:
+    return settings.AI_PROVIDER == "openrouter"
+
+
+def ai_configured() -> bool:
+    """True when the selected AI backend has credentials (no network call)."""
+    if _use_openrouter():
+        from app.core.openrouter_client import is_configured
+        return is_configured()
+    return bool(settings.VERTEX_PROJECT_ID)
+
+
 def get_backend() -> Optional[str]:
-    """Return 'vertex' if Vertex AI is available, else None."""
+    """Return 'openrouter' or 'vertex' for the available backend, else None."""
+    if _use_openrouter():
+        return "openrouter" if ai_configured() else None
     if _get_client() is not None:
         return "vertex"
     return None
@@ -154,6 +172,12 @@ def get_generative_model(model_name: str) -> Any:
     Raises:
         RuntimeError: If Vertex AI is not configured or available.
     """
+    if _use_openrouter():
+        if not ai_configured():
+            raise RuntimeError("AI_PROVIDER=openrouter but OPENROUTER_API_KEY is not set.")
+        from app.core.openrouter_client import get_model
+        return get_model(model_name)
+
     client = _get_client()
     if client is None:
         raise RuntimeError(
@@ -218,5 +242,7 @@ class _GenaiModelWrapper:
 
 
 def is_available() -> bool:
-    """Return True if Vertex AI is configured and ready."""
+    """Return True if the selected AI backend is configured and ready."""
+    if _use_openrouter():
+        return ai_configured()
     return _get_client() is not None

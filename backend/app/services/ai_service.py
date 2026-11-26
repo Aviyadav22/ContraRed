@@ -14,7 +14,7 @@ import logging
 from typing import Tuple
 
 from app.core.config import settings
-from app.core.vertex_client import get_generative_model, get_backend
+from app.core.vertex_client import ai_configured, get_generative_model, get_backend
 from app.services.prompt_sanitizer import sanitize_for_prompt
 
 logger = logging.getLogger(__name__)
@@ -55,10 +55,10 @@ class AIService:
         self._gemini_client = None
         self._azure_client = None
 
-        # Vertex AI is required for Gemini models
+        # Gemini via Vertex AI, or OpenRouter through the same wrapper
         self._use_gemini: bool = (
-            bool(settings.VERTEX_PROJECT_ID)
-        ) and settings.AI_PROVIDER == "gemini"
+            settings.AI_PROVIDER in ("gemini", "openrouter") and ai_configured()
+        )
         self._use_azure: bool = bool(settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY)
         self._enabled: bool = self._use_gemini or self._use_azure
 

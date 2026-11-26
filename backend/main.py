@@ -571,8 +571,9 @@ async def deep_health_check(response: Response):
 
     # 3. AI Provider (non-critical)
     try:
-        if settings.VERTEX_PROJECT_ID:
-            checks["ai_provider"] = {"status": "configured"}
+        from app.core.vertex_client import ai_configured
+        if ai_configured():
+            checks["ai_provider"] = {"status": "configured", "provider": settings.AI_PROVIDER}
         else:
             checks["ai_provider"] = {"status": "not_configured"}
     except Exception:
